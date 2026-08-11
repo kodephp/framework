@@ -200,3 +200,16 @@ if (!function_exists('lang')) {
         return translator()->trans($key, $parameters, $domain, $locale);
     }
 }
+
+if (!function_exists('route')) {
+    /**
+     * 根据命名路由反向生成 URL（开发者友好助手）。
+     *
+     * 用法：route('user.show', ['id' => 1]);  // → /users/1
+     * 命名路由在 routes.php 里用 ->name('user.show') 声明。
+     */
+    function route(string $name, array $parameters = []): string
+    {
+        return resolve(\Kode\Http\App::class)->url($name, $parameters);
+    }
+}
