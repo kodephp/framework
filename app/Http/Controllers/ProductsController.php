@@ -9,6 +9,7 @@ use Kode\Framework\Http\Attributes\Delete;
 use Kode\Framework\Http\Attributes\Get;
 use Kode\Framework\Http\Attributes\Post;
 use Kode\Framework\Http\Controller;
+use Kode\Limiting\Attribute\RateLimit;
 
 /**
  * 属性路由示例控制器。
@@ -17,15 +18,20 @@ use Kode\Framework\Http\Controller;
  * 框架启动时自动发现并注册，无需在 routes.php 里逐条手写。
  * 方法上的 name 仍支持命名路由（route('product.show', ['id' => 1])）。
  *
+ * 同时演示声明式限流 #[RateLimit]：类级规则对所有方法生效，方法级规则叠加。
+ * 把 config/limiting.php 的 driver 改为 redis 即让这些限额变为分布式。
+ *
  * 可用 `php bin/kode console route:list` 查看自动登记的路由。
  */
 #[RouteController(prefix: '/products')]
+#[RateLimit(capacity: 100, rate: 5.0, key: 'products:{ip}')]
 final class ProductsController extends Controller
 {
     /**
      * GET /products
      */
     #[Get('')]
+    #[RateLimit(capacity: 20, rate: 1.0, key: 'products:list:{ip}')]
     public function index()
     {
         return $this->ok([

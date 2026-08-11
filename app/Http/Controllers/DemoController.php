@@ -75,13 +75,16 @@ final class DemoController extends Controller
     /**
      * 限流演示（kode/limiting）。
      *
-     * 直接消耗一次额度并返回剩余量；连续快速请求可见 remaining 递减。
-     * 另见 /demo/rate-limit（挂了 RateLimitMiddleware，超限返回 429）。
+     * 演示门面 rateLimit() 的「程序化限流」：对某个具体动作（此处按 IP 维度）
+     * 手动消耗额度，返回剩余量。连续快速请求可见 remaining 递减。
+     *
+     * 注：全局 RateLimitMiddleware 已对所有路由统一限流；此处演示的是
+     * 在业务代码里对「特定操作」做细粒度限流（与路由级限流互补）。
      */
     public function rateLimit($req)
     {
         $ip = $req->getServerParams()['REMOTE_ADDR'] ?? 'local';
-        $result = rateLimit()->consume('demo:rate-limit:' . $ip, 1);
+        $result = rateLimit()->consume('demo:op:' . $ip, 1);
 
         return $this->ok([
             'allowed'    => $result->isAllowed(),

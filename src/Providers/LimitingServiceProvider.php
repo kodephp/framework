@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Providers;
 
-use Kode\Framework\Providers\ServiceProvider;
+use Kode\Framework\Http\RateLimit\LimiterFactory;
+use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
+use Kode\Framework\Http\RateLimit\RateLimitRule;
+use Kode\Limiting\Enum\RedisMode;
+use Kode\Limiting\Enum\LimiterType;
 use Kode\Limiting\Limiter;
 use Kode\Limiting\RateLimiterInterface;
 
@@ -12,39 +16,114 @@ use Kode\Limiting\RateLimiterInterface;
  * 限流服务提供者（kode/limiting，PHP 8.3+）
  *
  * 依据 config/limiting.php 构建默认 Limiter 单例并绑定到容器，
- * 门面 RateLimit / 助手 rateLimit() 与 RateLimitMiddleware 均复用它。
- * 支持 memory / apcu / redis / memcached / pdo 多种存储后端。
+ * 门面 RateLimit / 助手 rateLimit() 与全局 RateLimitMiddleware 均复用它。
+ *
+ * 支持 memory / apcu / redis（standalone·sentinel·cluster）/ memcached / pdo
+ * 多种存储后端；把 driver 改为 redis 即得到分布式、跨进程/跨机共享的限流。
  */
 final class LimitingServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->container->singleton(Limiter::class, function (): Limiter {
-            /** @var array<string, mixed> $config */
-            $config = (array) $this->config('limiting', []);
-            $driver = (string) ($config['driver'] ?? 'memory');
-            $algo = (string) ($config['algorithm'] ?? 'token_bucket');
-            $capacity = (int) ($config['capacity'] ?? 10);
-            $rate = (float) ($config['rate'] ?? 1.0);
+        $config = (array) $this->config('limiting', []);
 
-            $store = match ($driver) {
-                'redis' => ['type' => 'redis', ...(array) ($config['redis'] ?? [])],
-                'apcu' => 'apcu',
-                'memcached' => ['type' => 'memcached', ...(array) ($config['redis'] ?? [])],
-                'pdo' => ['type' => 'pdo'],
-                default => null, // memory
-            };
-
-            return match ($algo) {
-                'sliding_window' => Limiter::slidingWindow($capacity, $rate, $store),
-                'counter' => Limiter::counter($capacity, (int) $rate, $store),
-                'leaky_bucket' => Limiter::leakyBucket($capacity, $rate, $store),
-                'sliding_window_counter' => Limiter::slidingWindowCounter($capacity, (int) $rate, $store),
-                default => Limiter::tokenBucket($capacity, $rate, $store),
-            };
+        $this->container->singleton(Limiter::class, function () use ($config): Limiter {
+            return $this->build($config);
         });
+
+        // 限流中间件依赖的工厂（按规则 + 统一存储配置合成 Limiter，按签名缓存连接）。
+        $this->container->singleton(LimiterFactory::class, fn(): LimiterFactory => new LimiterFactory($config));
+
+        $this->container->singleton(RateLimitAttributeReader::class, fn(): RateLimitAttributeReader => new RateLimitAttributeReader());
 
         $this->container->alias(RateLimiterInterface::class, Limiter::class);
         $this->container->alias('rate_limit', Limiter::class);
+    }
+
+    /**
+     * 由框架统一配置构建默认限流器。
+     *
+     * @param array<string, mixed> $config
+     */
+    private function build(array $config): Limiter
+    {
+        $driver = (string) ($config['driver'] ?? 'memory');
+        $type = RateLimitRule::typeFromName((string) ($config['algorithm'] ?? 'token_bucket'));
+        $capacity = (int) ($config['capacity'] ?? 10);
+        $rate = (float) ($config['rate'] ?? 1.0);
+
+        return match ($driver) {
+            'apcu' => Limiter::apcu($type, $capacity, $rate),
+            'memcached' => Limiter::memcached(
+                $type,
+                $capacity,
+                $rate,
+                (string) ($config['redis']['host'] ?? '127.0.0.1'),
+                (int) ($config['redis']['port'] ?? 11211)
+            ),
+            'pdo' => Limiter::pdo(
+                $type,
+                $capacity,
+                $rate,
+                (string) ($config['pdo']['dsn'] ?? 'sqlite::memory:'),
+                isset($config['pdo']['username']) ? (string) $config['pdo']['username'] : null,
+                isset($config['pdo']['password']) ? (string) $config['pdo']['password'] : null,
+                (string) ($config['pdo']['table'] ?? 'limiting')
+            ),
+            'redis' => Limiter::redis(
+                $type,
+                $capacity,
+                $rate,
+                (string) ($config['redis']['host'] ?? '127.0.0.1'),
+                (int) ($config['redis']['port'] ?? 6379),
+                $config['redis']['password'] ?? null,
+                (int) ($config['redis']['database'] ?? 0),
+                $this->redisMode($config),
+                $this->sentinels($config),
+                (string) ($config['redis']['master_name'] ?? 'mymaster'),
+                $this->clusterNodes($config)
+            ),
+            default => $this->memory($type, $capacity, $rate),
+        };
+    }
+
+    private function memory(LimiterType $type, int $capacity, float $rate): Limiter
+    {
+        return match ($type) {
+            LimiterType::SLIDING_WINDOW => Limiter::slidingWindow($capacity, $rate),
+            LimiterType::SLIDING_WINDOW_COUNTER => Limiter::slidingWindowCounter($capacity, (int) $rate),
+            LimiterType::COUNTER => Limiter::counter($capacity, (int) $rate),
+            LimiterType::LEAKY_BUCKET => Limiter::leakyBucket($capacity, $rate),
+            default => Limiter::tokenBucket($capacity, $rate),
+        };
+    }
+
+    private function redisMode(array $config): RedisMode
+    {
+        return match ((string) ($config['redis']['mode'] ?? 'standalone')) {
+            'sentinel' => RedisMode::SENTINEL,
+            'cluster' => RedisMode::CLUSTER,
+            default => RedisMode::STANDALONE,
+        };
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function sentinels(array $config): array
+    {
+        $raw = $config['redis']['sentinels'] ?? ['127.0.0.1:26379'];
+
+        return is_array($raw) ? array_values(array_map('strval', $raw)) : ['127.0.0.1:26379'];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function clusterNodes(array $config): array
+    {
+        $raw = $config['redis']['cluster_nodes'] ?? ['127.0.0.1:7000'];
+
+        return is_array($raw) ? array_values(array_map('strval', $raw)) : ['127.0.0.1:7000'];
     }
 }

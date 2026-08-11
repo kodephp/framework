@@ -268,11 +268,33 @@ event(new \App\Events\UserCreated($user));
 
 ### 8.1 限流（保护自身）
 
+`RateLimitMiddleware` 已作为**全局中间件**默认开启，无需逐条挂载即可对每条路由限流；也可在控制器/方法上用 `#[RateLimit]` 做细粒度声明（类级对所有方法生效，方法级叠加）。
+
 ```php
-$app->get('/api/search', fn() => /* ... */)
-    ->middleware(new \Kode\Framework\Http\Middleware\RateLimitMiddleware());
-// 超过阈值自动 429 + RateLimit 响应头
+// 声明式：类级 + 方法级叠加
+#[Controller(prefix: '/products')]
+#[RateLimit(capacity: 100, rate: 5.0, key: 'products:{ip}')]
+final class ProductsController extends Controller
+{
+    #[Get('')]
+    #[RateLimit(capacity: 20, rate: 1.0, key: 'products:list:{ip}')]
+    public function index() { /* ... */ }
+}
 ```
+
+- 未声明 `#[RateLimit]` 的路由，按 `config/limiting.php` 的 `capacity/rate/algorithm` 限流（维度：路由模板 + 客户端 IP）。
+- 超限返回 **429** + 标准头（`X-RateLimit-Limit` / `Remaining` / `Reset`、`Retry-After`）。
+- **分布式**：存储后端由 `config/limiting.php` 的 `driver` 决定。`memory`（默认）单进程内存；改成 `redis` 即跨进程/跨机共享、变为分布式限流，支持 `mode`：`standalone` / `sentinel` / `cluster`。规则与存储解耦——同一套 `#[RateLimit]` 在单机用内存、上集群切 Redis 即可，业务代码不变。
+
+```dotenv
+RATE_LIMIT_DRIVER=redis
+REDIS_MODE=cluster
+REDIS_CLUSTER_NODES=127.0.0.1:7000,127.0.0.1:7001
+```
+
+> 仍支持旧式写法：对某条显式路由手动 `->middleware(new RateLimitMiddleware())` 会叠加一条路由级限流（注意避免与全局默认重复计数，优先用 `#[RateLimit]`）。
+
+在业务代码里手动限流某个操作，用门面：`rateLimit()->consume('op:'.$ip, 1)`。
 
 ### 8.2 熔断（保护下游）
 

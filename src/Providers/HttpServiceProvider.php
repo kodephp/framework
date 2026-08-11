@@ -14,6 +14,9 @@ use Kode\Framework\Http\Middleware\SecurityHeadersMiddleware;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Providers\ServiceProvider;
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\RateLimit\LimiterFactory;
+use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
+use Kode\Framework\Http\Middleware\RateLimitMiddleware;
 use Kode\Framework\Translation\Translator;
 use Kode\Http\App;
 use Kode\Framework\Validation\ValidationException;
@@ -84,6 +87,22 @@ final class HttpServiceProvider extends ServiceProvider
             $app->use(new LocaleMiddleware((array) $this->config('locale', []), $translator));
         }
 
+        // 全局限流：按路由上的 #[RateLimit] 细粒度限流，否则回落全局默认。
+        // driver=redis 时即为分布式限流。开关见 config/limiting.enabled。
+        if (!empty($this->config('limiting.enabled', true))) {
+            /** @var LimiterFactory $factory */
+            $factory = $this->container->get(LimiterFactory::class);
+            /** @var RouteRegistry $registry */
+            $registry = $this->container->get(RouteRegistry::class);
+
+            $app->use(new RateLimitMiddleware(
+                $app->getRouter(),
+                $registry,
+                $factory,
+                (array) $this->config('limiting', [])
+            ));
+        }
+
         // ---- 框架内置探针（适配 k8s / 负载均衡健康检查）----
         $this->registerHealthEndpoints($app);
 
@@ -98,6 +117,61 @@ final class HttpServiceProvider extends ServiceProvider
         foreach ($this->resolveRouteSources() as $label => $file) {
             $this->loadRoutes($app, $file, $label, $registry);
         }
+
+        // 3) 为显式路由（[类, 方法] / "类@方法" / 类名 等可反射 handler）补充
+        //    #[RateLimit] 规则登记。属性路由已在扫描阶段登记，此处仅处理显式路由。
+        $this->scanExplicitRateLimits($app, $registry);
+    }
+
+    /**
+     * 扫描已注册路由的 handler，对可反射出控制器类/方法的，读取 #[RateLimit]。
+     *
+     * 属性路由（ControllerScanner）注册的 handler 是闭包、已在扫描阶段登记，
+     * 这里跳过闭包、只处理显式路由的可反射 handler，避免重复。
+     */
+    private function scanExplicitRateLimits(App $app, RouteRegistry $registry): void
+    {
+        /** @var RateLimitAttributeReader $reader */
+        $reader = $this->container->get(RateLimitAttributeReader::class);
+
+        foreach ($app->getRouter()->getRoutes() as $route) {
+            // 已由属性路由扫描登记过（闭包 handler）则跳过。
+            if ($registry->rateLimitsOf($route) !== []) {
+                continue;
+            }
+
+            [$class, $method] = $this->resolveHandler($route->getHandler());
+            if ($class === null) {
+                continue;
+            }
+
+            /** @var list<\Kode\Framework\Http\RateLimit\RateLimitRule> $rules */
+            $rules = $reader->read($class, $method);
+            $registry->tagRateLimits($route, $rules);
+        }
+    }
+
+    /**
+     * 把各种形态的路由 handler 解析为 [类名, 方法名]。无法反射的（闭包等）返回 [null, null]。
+     *
+     * @return array{0: ?string, 1: ?string}
+     */
+    private function resolveHandler(mixed $handler): array
+    {
+        if (is_array($handler) && count($handler) === 2 && is_string($handler[0])) {
+            return [$handler[0], is_string($handler[1]) ? $handler[1] : null];
+        }
+
+        if (is_string($handler) && class_exists($handler)) {
+            return [$handler, null];
+        }
+
+        if (is_string($handler) && str_contains($handler, '@')) {
+            [$class, $method] = explode('@', $handler, 2);
+            return [$class, $method];
+        }
+
+        return [null, null];
     }
 
     /**

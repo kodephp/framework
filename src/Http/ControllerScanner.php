@@ -8,6 +8,8 @@ use Kode\Attributes\Reader;
 use Kode\Attributes\Scanner;
 use Kode\Framework\Http\Attributes\Controller;
 use Kode\Framework\Http\Attributes\Route;
+use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
+use Kode\Framework\Http\RateLimit\RateLimitRule;
 use Kode\Http\App;
 use ReflectionMethod;
 
@@ -30,6 +32,7 @@ final class ControllerScanner
         private readonly App $app,
         private readonly Reader $reader,
         private readonly RouteRegistry $registry,
+        private readonly RateLimitAttributeReader $rateLimitReader = new RateLimitAttributeReader(),
     ) {
     }
 
@@ -93,6 +96,11 @@ final class ControllerScanner
 
         $route = $this->app->route($attr->methods, $path, $handler);
         $this->registry->tag($route, $source);
+
+        // 声明式限流：类级规则（对所有方法生效）+ 本方法级规则（叠加）。
+        /** @var list<RateLimitRule> $rules */
+        $rules = $this->rateLimitReader->read($class, $method);
+        $this->registry->tagRateLimits($route, $rules);
 
         if ($attr->name !== null) {
             $route->name($attr->name);

@@ -12,7 +12,6 @@
 use Kode\Http\App;
 use Kode\Http\Kode;
 use Kode\Framework\Http\Middleware\AuthMiddleware;
-use Kode\Framework\Http\Middleware\RateLimitMiddleware;
 
 return function (App $app): void {
     // 健康检查 / 元信息
@@ -43,11 +42,9 @@ return function (App $app): void {
     $app->get('/demo/concurrent', fn() => resolve(\App\Http\Controllers\DemoController::class)->concurrent());
 
     // 限流 / 数据库 集成示例
+    // 注：限流已由全局 RateLimitMiddleware 统一处理；也可在控制器/方法上用 #[RateLimit] 细粒度声明。
     $app->get('/demo/ratelimit', fn($req) => resolve(\App\Http\Controllers\DemoController::class)->rateLimit($req));
     $app->get('/demo/db', fn() => resolve(\App\Http\Controllers\DemoController::class)->db());
-    // 挂限流中间件：快速连点可见 429 + RateLimit 响应头
-    $app->get('/demo/rate-limit', fn($req) => resolve(\App\Http\Controllers\DemoController::class)->rateLimit($req))
-        ->middleware(new RateLimitMiddleware());
 
     // HTTP 客户端 / 消息总线 集成示例
     $app->get('/demo/http', fn() => resolve(\App\Http\Controllers\DemoController::class)->httpClient());

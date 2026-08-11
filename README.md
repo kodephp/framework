@@ -395,6 +395,40 @@ php bin/kode schedule:list       # 列出所有已发现任务（含表达式/�
 - 多进程/多机需「同一调度时刻至多执行一次」：任务上 `#[Cron(cluster: true)]` 即用分布式锁（`Kode::cronCluster`），前提是已通过 `Cluster::make('redis'|'file'...)` 配置协调存储。
 - 临时停用某任务：`#[Cron(..., enabled: false)]`，无需删代码。
 
+### 限流（声明式 + 分布式）
+
+全局 `RateLimitMiddleware` 已默认开启，对每条路由统一限流：
+
+- **声明式**：在控制器类 / 方法上用 `#[RateLimit]` 细粒度声明（类级对所有方法生效，方法级叠加，可多条）。
+- **全局默认**：未声明 `#[RateLimit]` 的路由，按 `config/limiting.php` 的 `capacity/rate/algorithm` 限流，维度为「路由模板 + 客户端 IP」。
+- **分布式**：存储后端由 `config/limiting.php` 的 `driver` 统一决定——`memory` 为单进程内存，`redis` 即变为跨进程/跨机共享的分布式限流（支持 standalone / sentinel / cluster）。**规则与存储解耦**：同一套 `#[RateLimit]` 在单机用内存、上集群切 Redis 即可，业务代码不变。
+
+```php
+// app/Http/Controllers/ProductsController.php
+use Kode\Limiting\Attribute\RateLimit;
+
+#[Controller(prefix: '/products')]
+#[RateLimit(capacity: 100, rate: 5.0, key: 'products:{ip}')]   // 类级：所有方法共享
+final class ProductsController extends Controller
+{
+    #[Get('')]
+    #[RateLimit(capacity: 20, rate: 1.0, key: 'products:list:{ip}')] // 方法级叠加
+    public function index() { /* ... */ }
+}
+```
+
+超限返回 **429** 并附带标准响应头（`X-RateLimit-Limit` / `Remaining` / `Reset`、`Retry-After`）。也可在业务代码里用门面手动限流：`rateLimit()->consume('op:'.$ip, 1)`。
+
+Redis 配置（哨兵 / 集群）：
+
+```dotenv
+RATE_LIMIT_DRIVER=redis
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_MODE=cluster            # standalone | sentinel | cluster
+REDIS_CLUSTER_NODES=127.0.0.1:7000,127.0.0.1:7001
+```
+
 ## 现代化 PHP 8.3 约定
 
 框架最低 PHP 8.3，内置组件采用 8.3+ 写法：`#[\Override]`、`readonly`、DNF 类型、类型化类常量、`json_validate()`、`enum` + 枚举方法、一等公民可调用 `strlen(...)` 等。
