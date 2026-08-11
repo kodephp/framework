@@ -35,17 +35,22 @@ if ($autoload === null) {
 }
 require $autoload;
 
+use Kode\Attributes\Reader;
 use Kode\Framework\Application;
+use Kode\Framework\Scheduling\ScheduleDispatcher;
+use Kode\Framework\Scheduling\TaskScanner;
 use Kode\Framework\Server\HttpServer;
 
 $command = $argv[1] ?? 'help';
 $args = array_slice($argv, 2);
 
 match ($command) {
-    'new'     => (new KodeNewCommand($packageRoot))->run($args),
-    'serve'   => (new KodeServeCommand())->run($args),
-    'console' => (new KodeConsoleCommand())->run($args),
-    default   => KodeCli::help(),
+    'new'          => (new KodeNewCommand($packageRoot))->run($args),
+    'serve'        => (new KodeServeCommand())->run($args),
+    'cron'         => (new KodeCronCommand())->run($args),
+    'schedule:list' => (new KodeScheduleListCommand())->run($args),
+    'console'      => (new KodeConsoleCommand())->run($args),
+    default        => KodeCli::help(),
 };
 
 exit(0);
@@ -384,6 +389,116 @@ final class KodeConsoleCommand
 }
 
 // ============================================================
+// 定时任务调度（基于 kode/process 定时器，约定优于配置）
+// ============================================================
+class KodeScheduleCommand
+{
+    /**
+     * 根据 config/schedule.php 计算任务目录（key=来源标签）。
+     *
+     * @return array<string, string>
+     */
+    protected function taskDirs(Application $app): array
+    {
+        $cfg = $app->config()->get('schedule', []);
+        $cfg = is_array($cfg) ? $cfg : [];
+
+        $dirs = [];
+        foreach ($cfg['paths'] ?? [] as $label => $dir) {
+            // config 里已用 base_path() 包装为绝对路径；相对值兜底再包一次。
+            $dirs[$label] = is_absolute_path($dir) ? $dir : base_path($dir);
+        }
+
+        if (!empty($cfg['discover_plugins'])) {
+            foreach (glob(base_path('plugins/*'), GLOB_ONLYDIR) ?: [] as $plugin) {
+                $name = basename($plugin);
+                $dirs['plugin:' . $name] = $plugin . '/src/Tasks';
+            }
+        }
+
+        return $dirs;
+    }
+
+    protected function scanner(): TaskScanner
+    {
+        return new TaskScanner(new Reader());
+    }
+}
+
+final class KodeCronCommand extends KodeScheduleCommand
+{
+    public function run(array $args): void
+    {
+        $root = getcwd();
+        $app = Application::make($root);
+
+        $runOnce = null;
+        foreach ($args as $a) {
+            if (str_starts_with($a, '--run=')) {
+                $runOnce = substr($a, strlen('--run='));
+            }
+        }
+
+        $tasks = $this->scanner()->scan($this->taskDirs($app));
+        $dispatcher = new ScheduleDispatcher();
+        $dispatcher->register($tasks);
+
+        if ($runOnce !== null) {
+            if ($dispatcher->runOnce($runOnce)) {
+                echo sprintf("已手动触发任务 %s\n", $runOnce);
+                exit(0);
+            }
+            fwrite(STDERR, sprintf("未找到任务 %s（用 schedule:list 查看可用任务）\n", $runOnce));
+            exit(1);
+        }
+
+        $n = count(array_filter($dispatcher->registered(), static fn ($t) => $t->enabled));
+        if ($n === 0) {
+            echo "未发现任何启用的 #[Cron] 任务。请在 app/Tasks 下用 #[Cron] 声明任务。\n";
+            exit(0);
+        }
+
+        echo sprintf("已注册 %d 条定时任务，启动调度器...\n", $n);
+        $dispatcher->run();
+        exit(0);
+    }
+}
+
+final class KodeScheduleListCommand extends KodeScheduleCommand
+{
+    public function run(array $args): void
+    {
+        $root = getcwd();
+        $app = Application::make($root);
+
+        $tasks = $this->scanner()->scan($this->taskDirs($app));
+
+        if ($tasks === []) {
+            echo "未发现任何 #[Cron] 任务。\n";
+            exit(0);
+        }
+
+        $enabled = count(array_filter($tasks, static fn ($t) => $t->enabled));
+        printf("共 %d 条任务（启用 %d）：\n\n", count($tasks), $enabled);
+        printf("  %-22s %-16s %-10s %-12s %s\n", 'NAME', 'EXPRESSION', 'SOURCE', 'MODE', 'TARGET');
+        printf("  %s\n", str_repeat('-', 78));
+
+        foreach ($tasks as $t) {
+            printf(
+                "  %-22s %-16s %-10s %-12s %s\n",
+                $t->name,
+                $t->expression,
+                $t->source,
+                $t->cluster ? 'cluster' : 'local',
+                ($t->enabled ? '' : '(disabled) ') . $t->target(),
+            );
+        }
+
+        exit(0);
+    }
+}
+
+// ============================================================
 final class KodeCli
 {
     public static function help(): void
@@ -391,9 +506,28 @@ final class KodeCli
         echo "Kode Framework 命令行工具\n\n";
         echo "  bin/kode new <path> [--install]   一键脚手架：生成可运行项目（--install 自动 composer install）\n";
         echo "  bin/kode serve [--host H] [--port P] [--workers N]   启动多进程 HTTP 服务（kode/process）\n";
+        echo "  bin/kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
+        echo "  bin/kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
         echo "  bin/kode console <args...>         透传执行控制台命令\n";
         echo "  bin/kode help                      显示本帮助\n\n";
         echo "serve 选项：--host 127.0.0.1  --port 9527  --workers 4\n";
+        echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/Tasks 示例\n";
         exit(0);
     }
+}
+
+/**
+ * 判断路径是否为绝对路径（跨平台）。
+ */
+function is_absolute_path(string $path): bool
+{
+    if ($path === '' || $path === '/') {
+        return true;
+    }
+
+    if (DIRECTORY_SEPARATOR === '\\') {
+        return (bool) preg_match('#^[A-Za-z]:[\\\\/]#', $path) || str_starts_with($path, '\\\\');
+    }
+
+    return str_starts_with($path, '/');
 }

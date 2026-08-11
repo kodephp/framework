@@ -362,6 +362,38 @@ final class GreetCommand extends Command
 
   来源标签由 `config/routes.php` 驱动：默认 `app` 为 `app/routes.php`；可声明 `sources` 额外路由文件，或开启 `discover_plugins` 自动发现 `plugins/<name>/routes.php`（标签 `plugin:<name>`）。
 
+### 定时任务调度（约定优于配置）
+
+用 `#[Cron('分 时 日 月 周')]` 声明定时任务，无需逐条登记；`bin/kode cron` 自动发现并常驻调度（基于 kode/process 定时器）。支持类级（调用 `handle()`）与方法级（一个类挂多条）。
+
+```php
+// app/Tasks/CleanupTask.php
+#[Cron('0 0 * * *', name: 'nightly-cleanup', description: '每天 0 点清理')]
+final class CleanupTask extends Task   // 可选继承 Task，获得类型明确的 handle()
+{
+    public function handle(): void
+    {
+        // 业务逻辑；构造依赖由容器自动注入。
+    }
+}
+
+// 方法级：一个类挂多条
+#[Cron('0,30 * * * *', name: 'health-ping')]
+public function ping(): void { /* ... */ }
+```
+
+命令：
+
+```bash
+php bin/kode cron                # 常驻运行所有 #[Cron] 任务（Ctrl+C 优雅退出）
+php bin/kode cron --run=nightly-cleanup   # 立即手动触发某条任务一次（调试/CI）
+php bin/kode schedule:list       # 列出所有已发现任务（含表达式/来源/是否集群）
+```
+
+- 配置见 `config/schedule.php`：`paths`（任务目录，多应用追加 key 即可）、`discover_plugins`（开启后扫描 `plugins/<name>/src/Tasks`，来源标 `plugin:<name>`）。
+- 多进程/多机需「同一调度时刻至多执行一次」：任务上 `#[Cron(cluster: true)]` 即用分布式锁（`Kode::cronCluster`），前提是已通过 `Cluster::make('redis'|'file'...)` 配置协调存储。
+- 临时停用某任务：`#[Cron(..., enabled: false)]`，无需删代码。
+
 ## 现代化 PHP 8.3 约定
 
 框架最低 PHP 8.3，内置组件采用 8.3+ 写法：`#[\Override]`、`readonly`、DNF 类型、类型化类常量、`json_validate()`、`enum` + 枚举方法、一等公民可调用 `strlen(...)` 等。

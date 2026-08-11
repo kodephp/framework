@@ -316,9 +316,84 @@ ROUTES_DISCOVER_PLUGINS=true
 
 框架启动时会扫描 `plugins/*/routes.php`，给每条路由打来源标签 `plugin:blog`，`route:list` 也能看到。
 
+同理，定时任务也支持插件化：`config/schedule.php` 开启 `discover_plugins` 后，扫描 `plugins/*/src/Tasks`，来源标 `plugin:<name>`。
+
 ---
 
-## 10. 控制台命令
+## 10. 定时任务调度
+
+与属性路由同理念——约定优于配置、零侵入自动发现。
+
+### 10.1 声明任务
+
+```php
+// app/Tasks/CleanupTask.php
+use Kode\Framework\Scheduling\Attributes\Cron;
+use Kode\Framework\Scheduling\Task;
+
+// 类级：调用 handle()
+#[Cron('0 0 * * *', name: 'nightly-cleanup', description: '每天 0 点清理')]
+final class CleanupTask extends Task
+{
+    public function handle(): void { /* ... */ }
+}
+
+// 方法级：一个类挂多条
+final class MonitorTask
+{
+    #[Cron('0,30 * * * *', name: 'health-ping')]
+    public function ping(): void { /* ... */ }
+
+    #[Cron('0 * * * *', name: 'metrics-summary')]
+    public function metrics(): void { /* ... */ }
+}
+```
+
+`#[Cron]` 参数：`expression`（5 段 cron）、`name`（展示/日志）、`description`、`enabled`（临时停用）、`cluster`（集群至多一次）。
+
+### 10.2 运行与排查
+
+```bash
+php bin/kode cron                       # 常驻调度（Ctrl+C 优雅退出，先跑完在途任务）
+php bin/kode cron --run=nightly-cleanup # 手动触发一次（调试 / CI）
+php bin/kode schedule:list             # 列出全部任务：NAME / 表达式 / 来源 / 模式 / TARGET
+```
+
+运行期日志示例：
+
+```
+[schedule] 调度器启动，共 3 条任务，按 Ctrl+C 停止
+[schedule] ✓ nightly-cleanup（0 0 * * *）耗时 12.34ms
+[schedule] ✗ health-ping 执行失败：SQLSTATE[...]
+```
+
+### 10.3 多进程 / 多机：集群至多一次
+
+默认 `Kode::cron()` 是**按进程**隔离的：master-worker 下每个 worker 各自触发同一表达式 → 重复 N 次。需要「全集群同一调度时刻至多执行一次」：
+
+```php
+#[Cron('0 0 * * *', cluster: true)]
+final class CleanupTask extends Task { /* ... */ }
+```
+
+`cluster: true` 改用 `Kode::cronCluster()`（分布式锁）。前提：先配置协调存储 `Cluster::make('redis'|'file'...)`（同机可零依赖自动择优 file 后端）。
+
+### 10.4 配置
+
+```php
+// config/schedule.php
+return [
+    'paths' => [
+        'app' => base_path('app/Tasks'),
+        // 'admin' => base_path('modules/admin/Tasks'),  // 多应用追加 key
+    ],
+    'discover_plugins' => (bool) env('SCHEDULE_DISCOVER_PLUGINS', false),
+];
+```
+
+---
+
+## 11. 控制台命令
 
 声明式定义（属性注解）：
 
