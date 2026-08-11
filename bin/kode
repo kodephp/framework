@@ -1,0 +1,399 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Kode Framework 命令行工具
+ *
+ * 用法：
+ *   bin/kode new <path> [--install]   一键脚手架：从框架骨架生成可运行项目
+ *   bin/kode serve [--host H] [--port P] [--workers N]
+ *                                    启动多进程 HTTP 服务（kode/process master-worker）
+ *   bin/kode console <args...>        透传执行控制台命令
+ *   bin/kode help                     帮助
+ *
+ * 作为 composer 包发布后，用户安装 kode/framework 即可通过 vendor/bin/kode 调用。
+ */
+
+// ---- 定位自动加载器（兼容「仓库内」与「composer 安装后」两种上下文）----
+$packageRoot = dirname(__DIR__);
+$autoloadCandidates = [
+    $packageRoot . '/vendor/autoload.php',
+    realpath($packageRoot . '/../../../autoload.php'),
+];
+$autoload = null;
+foreach ($autoloadCandidates as $candidate) {
+    if ($candidate !== false && is_file($candidate)) {
+        $autoload = $candidate;
+        break;
+    }
+}
+if ($autoload === null) {
+    fwrite(STDERR, "无法定位 vendor/autoload.php，请在项目根目录运行。\n");
+    exit(1);
+}
+require $autoload;
+
+use Kode\Framework\Application;
+use Kode\Framework\Server\HttpServer;
+
+$command = $argv[1] ?? 'help';
+$args = array_slice($argv, 2);
+
+match ($command) {
+    'new'     => (new KodeNewCommand($packageRoot))->run($args),
+    'serve'   => (new KodeServeCommand())->run($args),
+    'console' => (new KodeConsoleCommand())->run($args),
+    default   => KodeCli::help(),
+};
+
+exit(0);
+
+// ============================================================
+// 脚手架：从框架自带骨架生成新项目（企业级一键安装）
+// ============================================================
+final class KodeNewCommand
+{
+    /** 需要复制的骨架目录 */
+    private const SKELETON_DIRS = ['app', 'config', 'public', 'bin', 'lang'];
+
+    /** 需要复制的骨架文件 */
+    private const SKELETON_FILES = ['.env.example', '.gitignore', 'README.md'];
+
+    /** 新项目默认创建的存储子目录（带 .gitkeep） */
+    private const STORAGE_DIRS = ['logs', 'cache', 'framework/cache', 'framework/sessions', 'framework/views'];
+
+    public function __construct(private string $packageRoot)
+    {
+    }
+
+    public function run(array $args): void
+    {
+        $install = false;
+        $target = null;
+        foreach ($args as $arg) {
+            if ($arg === '--install') {
+                $install = true;
+            } elseif ($target === null) {
+                $target = $arg;
+            }
+        }
+
+        if ($target === null) {
+            fwrite(STDERR, "用法：bin/kode new <目标目录> [--install]\n");
+            exit(1);
+        }
+
+        $target = rtrim($target, '/\\');
+        if (is_dir($target) && count(scandir($target)) > 2) {
+            fwrite(STDERR, "目标目录 {$target} 已存在且非空。\n");
+            exit(1);
+        }
+
+        @mkdir($target, 0o755, true);
+
+        // 1) 复制骨架目录
+        foreach (self::SKELETON_DIRS as $dir) {
+            $src = $this->packageRoot . '/' . $dir;
+            if (is_dir($src)) {
+                $this->copyDir($src, $target . '/' . $dir);
+            }
+        }
+
+        // 2) 复制骨架文件
+        foreach (self::SKELETON_FILES as $file) {
+            $src = $this->packageRoot . '/' . $file;
+            if (is_file($src)) {
+                copy($src, $target . '/' . $file);
+            }
+        }
+
+        // 3) .env（由 .env.example 生成，避免直接提交密钥）
+        if (is_file($this->packageRoot . '/.env.example') && !is_file($target . '/.env')) {
+            copy($this->packageRoot . '/.env.example', $target . '/.env');
+        }
+
+        // 4) 存储目录（运行时写入，随 .gitignore 忽略内容，仅保留 .gitkeep）
+        foreach (self::STORAGE_DIRS as $sub) {
+            $this->ensureDir($target . '/storage/' . $sub);
+        }
+
+        // 5) 测试目录 + phpunit 配置 + 示例冒烟测试
+        $this->ensureDir($target . '/tests');
+        $this->writePhpunitXml($target);
+        $this->writeSmokeTest($target);
+
+        // 6) 项目级 .gitignore（忽略 vendor / .env / 运行时产物）
+        $this->writeProjectGitignore($target);
+
+        // 7) 消费者 composer.json（只依赖框架包，不自带框架源码）
+        $this->writeComposerJson($target);
+
+        echo "✅ 已生成项目骨架：{$target}\n";
+
+        if ($install) {
+            $this->runComposerInstall($target);
+        }
+
+        echo "\n下一步：\n";
+        echo "  cd {$target}\n";
+        if (!$install) {
+            echo "  composer install\n";
+        }
+        echo "  php bin/kode serve          # 启动多进程 HTTP 服务（默认 127.0.0.1:9527）\n";
+        echo "  php bin/kode console        # 查看控制台命令\n";
+    }
+
+    private function ensureDir(string $path): void
+    {
+        if (!is_dir($path)) {
+            @mkdir($path, 0o755, true);
+        }
+        $keep = $path . '/.gitkeep';
+        if (!is_file($keep)) {
+            file_put_contents($keep, '');
+        }
+    }
+
+    private function writePhpunitXml(string $root): void
+    {
+        $xml = <<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         failOnWarning="true"
+         failOnNotice="true">
+    <testsuites>
+        <testsuite name="App Test Suite">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+</phpunit>
+
+XML;
+        file_put_contents($root . '/phpunit.xml', $xml);
+    }
+
+    private function writeSmokeTest(string $root): void
+    {
+        $code = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests;
+
+use PHPUnit\Framework\TestCase;
+
+/**
+ * 框架安装可用性冒烟测试。
+ */
+final class SmokeTest extends TestCase
+{
+    public function testFrameworkLoadable(): void
+    {
+        $this->assertTrue(class_exists(\Kode\Framework\Application::class), 'kode/framework 未正确安装');
+    }
+
+    public function testRoutesFileExists(): void
+    {
+        $this->assertFileExists($this->basePath() . '/app/routes.php');
+    }
+
+    private function basePath(): string
+    {
+        return dirname(__DIR__, 2);
+    }
+}
+
+PHP;
+        file_put_contents($root . '/tests/SmokeTest.php', $code);
+    }
+
+    private function writeProjectGitignore(string $root): void
+    {
+        $content = <<<'TXT'
+# 依赖
+/vendor/
+
+# 环境变量（含密钥，禁止提交）
+/.env
+/.env.*
+!/.env.example
+
+# 运行时产物
+/storage/logs/*
+/storage/cache/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+!*.gitkeep
+
+# 测试缓存
+/.phpunit.cache/
+/phpunit.xml.bak
+
+# IDE / OS
+/.idea/
+/.vscode/
+.DS_Store
+
+TXT;
+        file_put_contents($root . '/.gitignore', $content);
+    }
+
+    private function writeComposerJson(string $root): void
+    {
+        $compose = [
+            'name' => 'app/' . basename($root),
+            'type' => 'project',
+            'require' => [
+                'php' => '>=8.3',
+                'kode/framework' => '*',
+            ],
+            'require-dev' => [
+                'phpunit/phpunit' => '^11.0',
+            ],
+            'autoload' => [
+                'psr-4' => [
+                    'App\\' => 'app/',
+                ],
+            ],
+            'autoload-dev' => [
+                'psr-4' => [
+                    'App\\Tests\\' => 'tests/',
+                ],
+            ],
+            'scripts' => [
+                'serve' => 'php bin/kode serve',
+                'console' => 'php bin/console',
+                'test' => 'php vendor/bin/phpunit',
+            ],
+            'config' => [
+                'allow-plugins' => ['*' => true],
+            ],
+        ];
+        file_put_contents($root . '/composer.json', json_encode($compose, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+    }
+
+    private function runComposerInstall(string $root): void
+    {
+        echo "\n⏳ 正在运行 composer install ...\n";
+        $cwd = getcwd();
+        chdir($root);
+        passthru('composer install --no-interaction 2>&1', $code);
+        chdir($cwd);
+        if ($code !== 0) {
+            fwrite(STDERR, "composer install 失败（请手动在 {$root} 中执行）。\n");
+        }
+    }
+
+    private function copyDir(string $src, string $dst): void
+    {
+        @mkdir($dst, 0o755, true);
+        foreach (scandir($src) as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $s = $src . '/' . $item;
+            $d = $dst . '/' . $item;
+            if (is_dir($s)) {
+                $this->copyDir($s, $d);
+            } else {
+                copy($s, $d);
+            }
+        }
+    }
+}
+
+// ============================================================
+// 多进程 HTTP 服务（基于 kode/process）
+// ============================================================
+final class KodeServeCommand
+{
+    public function run(array $args): void
+    {
+        $host = null;
+        $port = null;
+        $workers = null;
+
+        for ($i = 0; $i < count($args); $i++) {
+            if ($args[$i] === '--host' && isset($args[$i + 1])) {
+                $host = $args[++$i];
+            } elseif ($args[$i] === '--port' && isset($args[$i + 1])) {
+                $port = (int) $args[++$i];
+            } elseif ($args[$i] === '--workers' && isset($args[$i + 1])) {
+                $workers = max(1, (int) $args[++$i]);
+            }
+        }
+
+        $root = getcwd();
+
+        $config = $this->loadServerConfig($root);
+        if ($host !== null) {
+            $config['host'] = $host;
+        }
+        if ($port !== null) {
+            $config['port'] = $port;
+        }
+        if ($workers !== null) {
+            $config['workers'] = $workers;
+        }
+
+        HttpServer::make($config)->run($root);
+    }
+
+    /**
+     * 读取 config/server.php，缺省时回退到内置默认。
+     *
+     * @return array<string, mixed>
+     */
+    private function loadServerConfig(string $root): array
+    {
+        $file = $root . '/config/server.php';
+        if (!is_file($file)) {
+            return [];
+        }
+
+        $config = (require $file) ?: [];
+        return is_array($config) ? $config : [];
+    }
+}
+
+// ============================================================
+// 控制台透传
+// ============================================================
+final class KodeConsoleCommand
+{
+    public function run(array $args): void
+    {
+        $root = getcwd();
+        $app = Application::make($root);
+        $code = $app->console()->run(array_merge([$GLOBALS['argv'][0] ?? 'kode'], $args));
+        exit(is_int($code) ? $code : 0);
+    }
+}
+
+// ============================================================
+final class KodeCli
+{
+    public static function help(): void
+    {
+        echo "Kode Framework 命令行工具\n\n";
+        echo "  bin/kode new <path> [--install]   一键脚手架：生成可运行项目（--install 自动 composer install）\n";
+        echo "  bin/kode serve [--host H] [--port P] [--workers N]   启动多进程 HTTP 服务（kode/process）\n";
+        echo "  bin/kode console <args...>         透传执行控制台命令\n";
+        echo "  bin/kode help                      显示本帮助\n\n";
+        echo "serve 选项：--host 127.0.0.1  --port 9527  --workers 4\n";
+        exit(0);
+    }
+}

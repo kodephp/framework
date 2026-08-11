@@ -1,0 +1,101 @@
+{
+    "name": "kode/framework",
+    "description": "Kode Framework —— 以 kode/core 为启动器、kode/runtime 为统一运行时（Swoole/Swow/Fiber/多进程/多线程）的现代 PHP 全栈框架，组合 kode 生态（di/router/http/console/aop/cache/event/jwt/facade...）与 Monolog、Symfony Validator 等成熟包。",
+    "type": "library",
+    "keywords": [
+        "framework",
+        "kode",
+        "core",
+        "runtime",
+        "di",
+        "router",
+        "http",
+        "console",
+        "aop",
+        "process",
+        "fibers",
+        "parallel",
+        "coroutine",
+        "psr"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "kode"
+        }
+    ],
+    "require": {
+        "php": ">=8.3",
+        "ext-pcntl": "*",
+        "ext-posix": "*",
+        "ext-sockets": "*",
+        "kode/aop": "*",
+        "kode/attributes": "*",
+        "kode/cache": "*",
+        "kode/console": "*",
+        "kode/context": "*",
+        "kode/core": "*",
+        "kode/database": "^1.14",
+        "kode/di": "*",
+        "kode/event": "*",
+        "kode/exception": "*",
+        "kode/facade": "*",
+        "kode/fibers": "*",
+        "kode/http": "*",
+        "kode/http-client": "^2.5",
+        "kode/jwt": "*",
+        "kode/limiting": "^2.0",
+        "kode/messaging": "^3.3",
+        "kode/middleware": "*",
+        "kode/parallel": "*",
+        "kode/process": "*",
+        "kode/queue": "^2.2",
+        "kode/router": "*",
+        "kode/runtime": "*",
+        "kode/session": "*",
+        "monolog/monolog": "^3.0",
+        "nyholm/psr7": "^1.8",
+        "psr/container": "^2.0",
+        "psr/http-factory": "^1.0",
+        "psr/http-message": "^2.0",
+        "psr/http-server-middleware": "^1.0",
+        "psr/log": "^3.0",
+        "symfony/translation": "^7.0",
+        "symfony/validator": "^7.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kode\\Framework\\": "src/"
+        },
+        "files": [
+            "src/Support/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kode\\Framework\\Tests\\": "tests/",
+            "App\\": "app/"
+        }
+    },
+    "bin": [
+        "bin/kode"
+    ],
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true,
+        "minimum-stability": "dev",
+        "prefer-stable": true,
+        "allow-plugins": {
+            "*": true
+        }
+    },
+    "scripts": {
+        "serve": "php bin/kode serve",
+        "console": "php bin/console",
+        "new": "php bin/kode new",
+        "test": "php vendor/bin/phpunit"
+    }
+}
