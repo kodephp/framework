@@ -391,6 +391,26 @@ return [
 ];
 ```
 
+### 10.5 开发期热重载（serve --watch）
+
+`bin/kode serve --watch` 自动监听 `app` / `config` / `src` / `public` / `bin` 下的 `.php` 变化，改动后**自动重启 serve 子进程**（Ctrl+C 优雅退出，先停子进程再退出）。看门狗把真实 serve 作为子进程，父进程用 `kode/process` 的 `FileMonitor` 轮询，与底层运行时（Native/fiber/Swoole/Workerman）无关，任何环境都能用。
+
+```bash
+php bin/kode serve --watch                 # 默认监听上述目录，排除 vendor/.git/storage/runtime 等
+php bin/kode serve --watch --port 8080     # 参数透传给子进程 serve（不含 --watch）
+```
+
+自定义监听目录（`config/server.php` 的 `watch.dirs`，相对项目根；不填则用默认）：
+
+```php
+'watch' => [
+    'dirs'    => ['app', 'config', 'src'],
+    'exclude' => ['vendor', '.git', 'storage', 'runtime', 'node_modules', '.workbuddy'],
+],
+```
+
+> 生产环境请用普通 `serve`（不带 `--watch`），避免文件轮询开销。
+
 ---
 
 ## 11. 控制台命令

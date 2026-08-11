@@ -159,6 +159,7 @@ myapp/
 ```bash
 php bin/kode serve                       # 默认 http://127.0.0.1:9527，worker=CPU 核数
 php bin/kode serve --port 8080 --workers 8
+php bin/kode serve --watch               # 开发期热重载：监听 app/config/src/public/bin 的 .php 变化，自动重启
 ```
 
 ```bash

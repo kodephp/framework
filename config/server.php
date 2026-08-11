@@ -16,4 +16,11 @@ return [
     'max_request' => (int) env('SERVER_MAX_REQUEST', 0),
     'reuse_port'  => (bool) env('SERVER_REUSE_PORT', false),
     'name'        => env('SERVER_NAME', 'kode-http'),
+
+    // 开发期热重载（serve --watch）：监听以下目录的 .php 变化，自动重启 serve 子进程。
+    // dirs 用相对项目根的路径；不填则默认监听 app/config/src/public/bin（存在的才收）。
+    'watch' => [
+        'dirs'    => [], // 例如 ['app', 'config', 'src']
+        'exclude' => ['vendor', '.git', 'storage', 'runtime', 'node_modules', '.workbuddy'],
+    ],
 ];

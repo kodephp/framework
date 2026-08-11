@@ -40,6 +40,7 @@ use Kode\Framework\Application;
 use Kode\Framework\Scheduling\ScheduleDispatcher;
 use Kode\Framework\Scheduling\TaskScanner;
 use Kode\Framework\Server\HttpServer;
+use Kode\Framework\Server\HotReloadWatcher;
 
 $command = $argv[1] ?? 'help';
 $args = array_slice($argv, 2);
@@ -330,14 +331,24 @@ final class KodeServeCommand
         $host = null;
         $port = null;
         $workers = null;
+        $watch = false;
+        $serveArgs = [];
 
         for ($i = 0; $i < count($args); $i++) {
-            if ($args[$i] === '--host' && isset($args[$i + 1])) {
+            if ($args[$i] === '--watch') {
+                $watch = true;
+            } elseif ($args[$i] === '--host' && isset($args[$i + 1])) {
                 $host = $args[++$i];
+                $serveArgs[] = '--host';
+                $serveArgs[] = $host;
             } elseif ($args[$i] === '--port' && isset($args[$i + 1])) {
                 $port = (int) $args[++$i];
+                $serveArgs[] = '--port';
+                $serveArgs[] = (string) $port;
             } elseif ($args[$i] === '--workers' && isset($args[$i + 1])) {
                 $workers = max(1, (int) $args[++$i]);
+                $serveArgs[] = '--workers';
+                $serveArgs[] = (string) $workers;
             }
         }
 
@@ -352,6 +363,12 @@ final class KodeServeCommand
         }
         if ($workers !== null) {
             $config['workers'] = $workers;
+        }
+
+        if ($watch) {
+            // 开发期热重载：把真实 serve 作为子进程，父进程监听文件变化后自动重启。
+            (new HotReloadWatcher($root, $serveArgs))->run();
+            exit(0);
         }
 
         HttpServer::make($config)->run($root);
@@ -505,7 +522,7 @@ final class KodeCli
     {
         echo "Kode Framework 命令行工具\n\n";
         echo "  bin/kode new <path> [--install]   一键脚手架：生成可运行项目（--install 自动 composer install）\n";
-        echo "  bin/kode serve [--host H] [--port P] [--workers N]   启动多进程 HTTP 服务（kode/process）\n";
+        echo "  bin/kode serve [--host H] [--port P] [--workers N] [--watch]   启动多进程 HTTP 服务（--watch 开热重载）\n";
         echo "  bin/kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  bin/kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
         echo "  bin/kode console <args...>         透传执行控制台命令\n";
