@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Server;
 
 use Kode\Framework\Application;
+use Kode\Framework\Http\ErrorRenderer;
 use Kode\Framework\Http\Resp;
 use Kode\Http\App as HttpApp;
 use Kode\Process\Http\Request as ProcessRequest;
@@ -96,7 +97,7 @@ final class HttpServer
 
             $bootWorker();
             if ($http === null) {
-                $conn->send(HttpBridge::toRaw(Resp::fail('服务尚未就绪', 'E503', 503)), true);
+                $conn->send(HttpBridge::toRaw(Resp::error('服务尚未就绪', 503)), true);
                 return;
             }
 
@@ -106,8 +107,9 @@ final class HttpServer
                 $response = $http->handle($psr);
                 $conn->send(HttpBridge::toRaw($response), true);
             } catch (\Throwable $e) {
+                $debug = (bool) (Application::getInstance()?->config()->get('app.debug', false) ?? false);
                 $conn->send(
-                    HttpBridge::toRaw(Resp::fail($e->getMessage() ?: 'Internal Server Error', 'E500', 500)),
+                    HttpBridge::toRaw(ErrorRenderer::render($e, $psr, $debug, 500)),
                     true,
                 );
             }

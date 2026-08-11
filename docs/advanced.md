@@ -58,11 +58,12 @@ $app->get('/me', fn() => resolve(UserController::class)->me())
 
 框架已内置中间件：`AuthMiddleware`（JWT 鉴权）、`RateLimitMiddleware`（限流）、`CorsMiddleware`、`SecurityHeadersMiddleware`、`RequestIdMiddleware`、`LocaleMiddleware`。
 
-### 1.5 直接返回 vs 统一信封
+### 1.5 直接返回 vs 信封
 
-- `return ['k'=>'v']` 或 `return $this->ok(...)` → 走**统一信封** `{code,msg,data}`。
-- `return $this->response($data)->status(201)->header('X-A','b')` → 仍是信封，但你能加状态码/头。
-- 想**完全绕过**信封（比如返回文件流、裸 JSON）？直接返回 `Kode\Http\Response`：
+- `return ['k'=>'v']` 或 `return $this->json(...)` → **标准 JSON**（默认）：直接是数据，无信封。
+- `return $this->ok(...)` / `Resp::ok()` → **显式信封** `{code,msg,data}`（无视配置，供需要信封契约的场景）。
+- `config('response.envelope')=true` 时，`return $this->respond(...)` / `Resp::auto()` 会自动产出信封。
+- 想**完全绕过**框架封装（返回文件流、裸 JSON）？直接返回 `Kode\Http\Response`：
 
   ```php
   use Kode\Http\Response;
@@ -130,40 +131,53 @@ final class ProductsController extends Controller
 
 ---
 
-## 2. 统一响应与异常映射
+## 2. 响应形态与异常映射
 
-### 2.1 信封结构
+### 2.1 两种响应形态
 
-```json
-{ "code": 0, "msg": "ok", "data": {} }
-```
+框架支持两种响应形态，**默认标准模式**：
 
-`Resp` 提供：`ok()` / `fail()` / `paginate()` / `make()`。控制器封装了 `$this->ok()` / `$this->fail()` / `$this->response()`。
+| 模式 | 开关 | 成功 | 失败 |
+| --- | --- | --- | --- |
+| 标准（默认） | `config('response.envelope')=false` | `Resp::json($data)` / `return [...]` → 直接数据 JSON | `Resp::error($msg, $status)` → `{"message":...}` + HTTP 状态 |
+| 信封（可选） | `config('response.envelope')=true` | `Resp::ok($data)` → `{code:0,msg,data}` | `Resp::fail($msg,$code,$status)` → `{code,msg}` |
 
-### 2.2 异常自动转信封（核心机制）
+`Resp` 提供：`json()` / `error()`（标准）、`ok()` / `fail()` / `paginate()`（信封）、`auto()`（跟随开关）、`make()`（自由构造）。控制器封装：`$this->json()` / `$this->error()` / `$this->respond()` / `$this->ok()` / `$this->fail()` / `$this->response()`。
 
-框架的立场是：**封装好的统一响应更好** —— 你不必在每个方法里手写 try/catch 拼格式。框架在全局异常处理器里把已知异常自动转成信封：
+### 2.2 异常自动转响应（核心机制）
 
-| 异常 / 场景 | 信封 code | HTTP |
+框架的立场是：**你不必在每个方法里手写 try/catch 拼格式**。全局错误处理器（`ErrorPageMiddleware` + `ErrorRenderer`）自动把异常转成响应：
+
+| 异常 / 场景 | 标准模式（HTTP） | 信封模式（code） |
 | --- | --- | --- |
-| `ValidationException`（校验失败） | `E422` | 422 |
-| 路由未匹配 | `E404` | 404 |
-| 方法不允许 | `E405` | 405 |
-| `AuthMiddleware` 拦截 | `E401` | 401 |
-| `RateLimitMiddleware` 拦截 | `E429` | 429 |
-| 其它未捕获异常 | `E500` | 500 |
+| `ValidationException`（校验失败） | 422，`{"message":...,"errors":...}` | `E422` |
+| 路由未匹配 | 404 | `E404` |
+| 方法不允许 | 405 | `E405` |
+| `AuthMiddleware` 拦截 | 401 | `E401` |
+| `RateLimitMiddleware` 拦截 | 429 | `E429` |
+| 其它未捕获异常 | 500 | `E500` |
+
+开发期（`app.debug=true`）浏览器访问还会看到 Whoops 风格的**友好调试页**（堆栈 + 源码上下文 + 请求/环境）；生产期只返回极简错误并记日志，绝不泄露堆栈。
 
 例子：业务里直接抛领域异常即可，格式交给框架：
 
 ```php
 if ($user === null) {
-    throw new \RuntimeException('用户不存在');   // → {"code":"E500","msg":"用户不存在"}
+    throw new \RuntimeException('用户不存在');   // 标准 → 500 {"message":"用户不存在"}
 }
 ```
 
-### 2.3 自定义业务异常（推荐做法）
+### 2.3 自定义业务错误（推荐做法）
 
-想要自定义 `code`（而不是通用 `E500`）？定义带业务码的异常，并在 `HttpServiceProvider` 的异常处理器中映射：
+想要自定义错误信息/状态码（标准模式下）？直接 `Resp::error()` 即可：
+
+```php
+if ($user === null) {
+    return Resp::error('用户不存在', 404);
+}
+```
+
+需要自定义业务码（信封模式）或集中映射？定义带业务码的异常，并在 `HttpServiceProvider` 的异常处理器中映射：
 
 ```php
 final class BizException extends \RuntimeException
@@ -260,7 +274,7 @@ event(new \App\Events\UserCreated($user));
 
 - 签发：登录成功后用 `kode/jwt` 生成 token（`config/jwt.php` 配 `JWT_SECRET`）。
 - 保护接口：挂 `AuthMiddleware`，控制器里 `ctx()->get('user')` 取当前用户。
-- 失败自动返回 `E401` 信封。
+- 失败自动返回标准 401 错误（`Resp::error('未授权', 401)`）。
 
 ---
 
@@ -511,8 +525,8 @@ vendor/bin/phpunit     # 运行 tests/ 下的单元测试
 
 ## 13. 常见设计问答
 
-**Q：统一响应是封装好还是让开发者自己返回错误？**
-A：两者结合——框架**默认写好信封**并自动把异常转成信封（你不用每处手写格式）；同时保留出口：直接 `return 数组` 会自动包信封，返回原始 `Response` 可完全绕过。推荐「抛异常 + 统一信封」的写法，关注点分离最干净。
+**Q：响应是该封装好信封，还是让开发者直接返回数据/错误？**
+A：框架**默认标准响应**（成功直接数据、错误直接 HTTP 状态），与 Laravel/webman/Hyperf 等主流框架一致——少一层 `code/msg/data` 包装，前后端都更省事。同时保留两种出口：开 `config('response.envelope')=true` 即切到统一信封 `{code,msg,data}` 兼容旧契约；直接 `return 数组` 自动 JSON 化，返回原始 `Response` 可完全绕过。推荐「抛异常 + 标准响应」写法，关注点分离最干净。
 
 **Q：缓存目录为什么是 `storage` 而不是 `runtime`？**
 A：两者不冲突、无功能影响，只是约定不同：

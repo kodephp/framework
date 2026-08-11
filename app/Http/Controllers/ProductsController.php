@@ -34,10 +34,10 @@ final class ProductsController extends Controller
     #[RateLimit(capacity: 20, rate: 1.0, key: 'products:list:{ip}')]
     public function index()
     {
-        return $this->ok([
+        return $this->json([
             ['id' => 1, 'name' => 'Kode 键盘'],
             ['id' => 2, 'name' => 'Kode 鼠标'],
-        ], '商品列表');
+        ]);
     }
 
     /**
@@ -48,7 +48,7 @@ final class ProductsController extends Controller
     {
         $id = (int) $this->param('id');
 
-        return $this->ok(['id' => $id, 'name' => '商品 #' . $id], '商品详情');
+        return $this->json(['id' => $id, 'name' => '商品 #' . $id]);
     }
 
     /**
@@ -62,7 +62,7 @@ final class ProductsController extends Controller
             'price' => 'required|numeric|min:0',
         ]);
 
-        return $this->ok($data, '创建成功');
+        return $this->json($data);
     }
 
     /**
@@ -73,6 +73,6 @@ final class ProductsController extends Controller
     {
         $id = (int) $this->param('id');
 
-        return $this->ok(['id' => $id], '已删除');
+        return $this->json(['id' => $id]);
     }
 }

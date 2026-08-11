@@ -30,7 +30,7 @@ Kode\Framework\Application          ← 薄外壳（.env、path.base、收集 pr
 
 | 层               | 内容                                                                     | 决策                      |
 | --------------- | ---------------------------------------------------------------------- | ----------------------- |
-| 薄核              | Application 启动、DI 容器、Config、Facade、Runtime、路由、统一信封、异常体系、全局中间件链、健康检查、日志 | 必须有                     |
+| 薄核              | Application 启动、DI 容器、Config、Facade、Runtime、路由、标准响应（默认）/可选信封、异常体系、全局中间件链、健康检查、日志 | 必须有                     |
 | 韧性层             | 限流（`kode/limiting`）+ 熔断（框架中性 `InMemoryBreaker`，运行时无关）                  | 必须有，合并为 `Resilience` 概念 |
 | 国际化             | `symfony/translation` 薄封装                                              | 必须有                     |
 | OPT-IN 接线（生态已有） | 定时任务、热重载、分布式限流、WebSocket、自定义进程、Snowflake、连接池                           | `config` 启用，默认不加载       |
@@ -40,7 +40,7 @@ Kode\Framework\Application          ← 薄外壳（.env、path.base、收集 pr
 
 - **多进程 HTTP 服务**：`kode/process` master-worker 预派生（零扩展常驻内存，不锁 Swoole/Workerman）。
 - **统一运行时**：fiber（默认协程）/ process / parallel（ZTS 多线程）/ distributed 一套业务代码通吃。
-- **统一响应信封** `{code, msg, data}`：所有响应（含 401/404/422/429/500）走 `Resp`，无手写 JSON、`->send()`。
+- **标准响应（默认）**：成功直接返回数据、错误直接带 HTTP 状态，对齐 Laravel/webman/Hyperf；需要统一信封 `{code,msg,data}` 时把 `config('response.envelope')` 设为 `true` 即可，两种写法并存。
 - **全局中间件链**（默认开启，配置可关）：`RequestId → Cors → Security → [路由级 Auth/RateLimit]`。
 - **韧性层**：限流（保护自身）+ 熔断（保护下游，运行时无关）。
 - **国际化**：`symfony/translation` + `lang()` + `Accept-Language` 中间件。
@@ -64,14 +64,16 @@ Kode\Framework\Application          ← 薄外壳（.env、path.base、收集 pr
 
 ```bash
 curl http://127.0.0.1:9527/health
-# {"code":0,"msg":"healthy","data":{"status":"ok","service":"kode-app","version":"1.0.0","php":"8.3.33","env":"local","time":"..."}}
+# {"status":"ok","service":"kode-app","version":"0.6.0","php":"8.3.x","env":"local","time":"..."}
 curl http://127.0.0.1:9527/ping
-# {"code":0,"msg":"pong","data":{"pong":true}}
+# {"pong":true}
 ```
 
-### 统一异常处理（安全兜底）
+### 开发者友好错误页（安全兜底）
 
-- `ValidationException` → `422`（`errors` 进 `data`）；其它异常 → `500`，生产环境不泄露内部信息与堆栈，仅记日志；404 → `E404` 信封。
+- 开发期（`app.debug=true`）浏览器访问出错：渲染 Whoops 风格的友好调试页（异常类型、消息、文件行号、带源码上下文的堆栈、请求/环境信息）；API 客户端（`Accept: application/json`）仍拿结构化 JSON（含 `trace`）。
+- 生产环境（`app.debug=false`）：一律返回极简错误（仅 `message`，不泄露内部信息与堆栈），并记日志。绝不把调试页暴露给公网。
+- `ValidationException` → `422`（标准模式 `errors` 进根级；信封模式进 `data`）；其它异常 → `500`；404 → `404`；405 → `405`。
 
 ## 韧性层：限流 vs 熔断
 
@@ -91,7 +93,7 @@ rateLimit()->consume('user:123', 1);
 // 熔断：保护下游调用，失败时降级
 $user = breaker()->run('user-service',
     fn () => http()->get('http://user-svc/1'),
-    fallback: fn () => Resp::fail('服务暂不可用', 'E503', 503),
+    fallback: fn () => Resp::error('服务暂不可用', 503),
 );
 ```
 
@@ -171,7 +173,7 @@ curl -X POST -H "Content-Type: application/json" \
 
 TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
      -d '{"username":"alice","password":"secret123"}' \
-     http://127.0.0.1:9527/auth/login | php -r '$d=json_decode(file_get_contents("php://stdin"),true);echo $d["data"]["token"];')
+     http://127.0.0.1:9527/auth/login | php -r '$d=json_decode(file_get_contents("php://stdin"),true);echo $d["token"];')
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9527/me   # 受保护接口
 ```
 
@@ -234,7 +236,7 @@ final class UserController extends Controller
             'name'  => 'required|min:2|max:50',
             'email' => 'required|email',
         ]);
-        return $this->ok($data, '创建成功');   // 统一信封 code=0
+        return $this->json($data);   // 标准 JSON（默认）
     }
 }
 ```
@@ -252,20 +254,28 @@ $this->only('name', 'page');     // 字段筛选
 
 等价全局写法（服务 / 中间件里也能用）：`Request::input('name')`、`Request::get('fail')`、`Request::all()`。
 
-### 统一响应（code/msg/data）
+### 响应：标准模式（默认）+ 信封模式（可选）
+
+框架默认**标准响应**（成功直接数据、错误直接 HTTP 状态），与 Laravel/webman/Hyperf 一致。需要统一信封时把 `config('response.envelope')` 设为 `true`。
 
 ```jsonc
-{ "code": 0, "msg": "创建成功", "data": { "id": 1 } }          // 成功
-{ "code": "E400", "msg": "参数错误" }                            // 失败
-{ "code": "E422", "msg": "参数校验失败", "data": { "errors": [] } } // 校验失败
+// 标准模式（默认）
+{ "id": 1 }                                  // 成功：直接是数据
+{ "message": "参数错误" }                     // 失败：标准 message + 400
+{ "message": "参数校验失败", "errors": {} }    // 校验失败：422
+
+// 信封模式（RESPONSE_ENVELOPE=true）
+{ "code": 0, "msg": "创建成功", "data": { "id": 1 } }
+{ "code": "E400", "msg": "参数错误" }
 ```
 
-
-
 ```php
-return $this->ok($user, '创建成功');
+return $this->json($user);            // 标准成功（默认推荐）
+return $this->error('参数错误', 400);  // 标准错误
+return $this->respond($user, '创建成功'); // 跟随 envelope 配置
+return $this->ok($user, '创建成功');   // 显式信封（无视配置）
 return $this->fail('参数错误', 'E400', 400);
-return $this->paginate($items, $total, $page, $size);
+return $this->paginate($items, $total, $page, $size); // 分页信封
 ```
 
 ### 路由
@@ -307,7 +317,7 @@ final class ProductsController extends Controller
 
 两种模型并存：属性路由先注册、routes.php 显式条目可覆盖同名路径。`route:list` 都会列出。
 
-中间件返回**真实 PSR-7 响应**（由框架统一发出，**不要手动 `->send()`**）：`return Resp::fail('未授权', 'E401', 401);`
+中间件返回**真实 PSR-7 响应**（由框架统一发出，**不要手动 `->send()`**）：`return Resp::error('未授权', 401);`
 
 ### 熔断 / 限流 / 国际化（演示接口）
 

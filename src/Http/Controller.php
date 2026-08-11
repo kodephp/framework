@@ -38,7 +38,43 @@ abstract class Controller
     }
 
     /**
-     * 成功响应：统一信封 {code, msg, data}（code=0）。
+     * 标准成功响应：直接返回数据 JSON（无信封，框架默认推荐写法）。
+     *
+     *   return $this->json($user);
+     *   return $this->json(['items' => $list]);
+     *
+     * 等价于在控制器里直接 `return $user;` / `return [...];`。
+     * 需要统一信封 {code,msg,data} 时用 {@see ok()}（始终信封）或 {@see respond()}（跟随配置）。
+     */
+    protected function json(mixed $data = null, int $status = 200): Response
+    {
+        return Resp::json($data, $status);
+    }
+
+    /**
+     * 跟随 config('response.envelope') 的响应：
+     *   - 默认（false）：标准 JSON（同 json()）。
+     *   - 开启（true）：统一信封（同 ok()）。
+     */
+    protected function respond(mixed $data = null, string $msg = 'ok', int $code = 0, int $status = 200): Response
+    {
+        return Resp::auto($data, $msg, $code, $status);
+    }
+
+    /**
+     * 标准错误响应：直接带 HTTP 状态（无信封）。
+     *
+     *   return $this->error('参数错误', 400);
+     */
+    protected function error(string $message, int $status = 400, array $extra = []): Response
+    {
+        return Resp::error($message, $status, $extra);
+    }
+
+    /**
+     * 成功响应（统一信封 {code, msg, data}，code=0）。
+     *
+     * 仅在需要信封模式时使用；默认推荐用 {@see json()} / 直接 return 数据。
      */
     protected function ok(mixed $data = null, string $msg = 'ok'): Response
     {
@@ -46,7 +82,7 @@ abstract class Controller
     }
 
     /**
-     * 失败响应：统一信封 {code, msg}（code 为非 0 错误码，带 HTTP 状态）。
+     * 失败响应（统一信封 {code, msg}，code 为非 0 错误码，带 HTTP 状态）。
      */
     protected function fail(string $msg, string|int $code = 'E400', int $httpStatus = 400): Response
     {

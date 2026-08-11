@@ -45,6 +45,6 @@ final class AuthMiddleware implements MiddlewareInterface
 
     private function unauthorized(string $message): ResponseInterface
     {
-        return Resp::fail($message, 'E401', 401);
+        return Resp::error($message, 401);
     }
 }

@@ -26,6 +26,6 @@ final class AuthController extends Controller
             'role' => 'user',
         ]);
 
-        return $this->ok(['token' => $token], '登录成功');
+        return $this->json(['token' => $token]);
     }
 }

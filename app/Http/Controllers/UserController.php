@@ -31,7 +31,7 @@ final class UserController extends Controller
         ]);
 
         // 这里通常写入数据库，示例仅回显。
-        return $this->ok($data, '创建成功');
+        return $this->json($data);
     }
 
     public function me($req)
@@ -40,7 +40,7 @@ final class UserController extends Controller
         $payload = Request::attr('auth');
 
         if ($payload === null) {
-            return $this->fail('未认证', 'E401', 401);
+            return $this->error('未认证', 401);
         }
 
         // Payload 提供公共属性 uid/username/platform 以及 toArray()。

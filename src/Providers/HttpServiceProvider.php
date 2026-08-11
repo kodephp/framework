@@ -14,12 +14,15 @@ use Kode\Framework\Http\Middleware\SecurityHeadersMiddleware;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Providers\ServiceProvider;
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\ErrorRenderer;
 use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
 use Kode\Framework\Http\Middleware\RateLimitMiddleware;
 use Kode\Framework\Translation\Translator;
+use Kode\Framework\Http\Middleware\ErrorPageMiddleware;
 use Kode\Http\App;
-use Kode\Framework\Validation\ValidationException;
+use Kode\Http\Middleware\JsonErrorHandlerMiddleware;
+use Kode\Http\Middleware\MiddlewareDispatcher;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -52,22 +55,19 @@ final class HttpServiceProvider extends ServiceProvider
         /** @var LoggerInterface $logger */
         $logger = $this->container->get(LoggerInterface::class);
 
-        // 全局异常：记录日志，结构化返回 JSON（校验失败 → 422）。
-        $app->getErrorHandler()->onError(500, function (\Throwable $e) use ($logger, $debug) {
-            if ($e instanceof ValidationException) {
-                return Resp::fail('参数校验失败', 'E422', 422, ['errors' => $e->errors()]);
-            }
+        // 用框架自有的 ErrorPageMiddleware 替换 kode/http 默认的 JsonErrorHandlerMiddleware，
+        // 以完全掌控错误响应形态（开发期调试页 / 标准 JSON），并规避部分 kode 生态版本组合下
+        // JsonErrorHandlerMiddleware 因 instanceof HttpException 触发的类声明冲突。
+        $this->replaceErrorHandling($app, $debug, $logger);
 
-            $logger->error($e->getMessage(), ['exception' => $e]);
+        // 404 / 405：直接由 ErrorRenderer 产出（调试期浏览器显示调试页，否则标准 JSON）。
+        $app->notFound(fn(?\Psr\Http\Message\ServerRequestInterface $request = null) => ErrorRenderer::renderMessage(
+            'Not Found', 404, $request, $debug
+        ));
 
-            $data = $debug ? ['trace' => $e->getTraceAsString()] : [];
-            $msg = $debug ? $e->getMessage() : 'Internal Server Error';
-
-            return Resp::fail($msg, 'E500', 500, $data);
-        });
-
-        // 友好的 404。
-        $app->notFound(fn() => Resp::fail('Not Found', 'E404', 404));
+        $app->methodNotAllowed(fn(?\Psr\Http\Message\ServerRequestInterface $request = null) => ErrorRenderer::renderMessage(
+            'Method Not Allowed', 405, $request, $debug
+        ));
 
         // ---- 全局中间件链（顺序：追踪 → CORS → 安全头）----
         // 这些是企业级 API 基础设施，默认开启、配置驱动，可按需关闭。
@@ -121,6 +121,34 @@ final class HttpServiceProvider extends ServiceProvider
         // 3) 为显式路由（[类, 方法] / "类@方法" / 类名 等可反射 handler）补充
         //    #[RateLimit] 规则登记。属性路由已在扫描阶段登记，此处仅处理显式路由。
         $this->scanExplicitRateLimits($app, $registry);
+    }
+
+    /**
+     * 用框架自有 ErrorPageMiddleware 替换 kode/http 内置的 JsonErrorHandlerMiddleware。
+     *
+     * 做法：取出当前调度管线里的其它中间件，去掉 JsonErrorHandlerMiddleware 实例，
+     * 以「ErrorPageMiddleware(最外层) + 其余中间件 + RouteRunner」重建一条新管线，
+     * 再通过反射写回 App 的 dispatcher 属性（不修改 vendor/kode）。
+     */
+    private function replaceErrorHandling(App $app, bool $debug, ?LoggerInterface $logger): void
+    {
+        $dispatcher = $app->getDispatcher();
+        $runner = $dispatcher->getFinalHandler();
+
+        $kept = array_values(array_filter(
+            $dispatcher->getMiddlewares(),
+            static fn($m) => !$m instanceof JsonErrorHandlerMiddleware
+        ));
+
+        $rebuilt = new MiddlewareDispatcher($runner);
+        $rebuilt->pipe(new ErrorPageMiddleware($debug, $logger));
+        foreach ($kept as $middleware) {
+            $rebuilt->pipe($middleware);
+        }
+
+        $ref = new \ReflectionProperty($app, 'dispatcher');
+        $ref->setAccessible(true);
+        $ref->setValue($app, $rebuilt);
     }
 
     /**
@@ -295,16 +323,16 @@ final class HttpServiceProvider extends ServiceProvider
     private function registerHealthEndpoints(App $app): void
     {
         $app->get('/health', static function () {
-            return Resp::ok([
+            return Resp::json([
                 'status'  => 'ok',
                 'service' => Application::getInstance()?->config()->get('app.name', 'kode-app'),
                 'version' => Application::VERSION,
                 'php'     => PHP_VERSION,
                 'env'     => Application::getInstance()?->config()->get('app.env', 'local'),
                 'time'    => date('c'),
-            ], 'healthy');
+            ]);
         });
 
-        $app->get('/ping', static fn() => Resp::ok(['pong' => true], 'pong'));
+        $app->get('/ping', static fn() => Resp::json(['pong' => true]));
     }
 }

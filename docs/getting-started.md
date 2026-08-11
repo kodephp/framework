@@ -31,7 +31,7 @@ cd myapp
 php bin/kode serve
 ```
 
-打开浏览器访问 <http://127.0.0.1:9527/health> ，看到 `{"code":0,"msg":"healthy",...}` 即成功。
+打开浏览器访问 <http://127.0.0.1:9527/health> ，看到 `{"status":"ok","service":"kode-app",...}` 即成功。
 
 > 默认端口 **9527**（致敬星爷《唐伯虎点秋香》）。想换端口：`php bin/kode serve --port 8080`。
 
@@ -74,9 +74,9 @@ class HelloController extends Controller
     {
         $name = $this->input('name', '世界');   // 收参，缺省 "世界"
 
-        return $this->ok([
+        return $this->json([
             'hello' => $name,
-        ], '打招呼成功');
+        ]);
     }
 }
 ```
@@ -100,38 +100,55 @@ return function (App $app): void {
 curl "http://127.0.0.1:9527/hello?name=Kode"
 ```
 
-返回（**统一信封**，后面细讲）：
+返回（**标准 JSON**，默认模式，后面细讲）：
 
 ```json
-{"code":0,"msg":"打招呼成功","data":{"hello":"Kode"}}
+{"hello":"Kode"}
 ```
 
 ---
 
-## 4. 统一响应（重点）
+## 4. 响应：标准模式（默认）与信封模式（可选）
 
-框架**默认所有 HTTP 响应**都长这样（信封结构）：
+框架默认采用**标准响应**，对齐 Laravel / webman / Hyperf 等主流 PHP 框架——**成功直接返回数据，错误直接带 HTTP 状态**，不再强制统一信封：
 
 ```json
-{ "code": 0, "msg": "ok", "data": { } }
+{ "hello": "Kode" }              // 成功：直接是数据
+{ "message": "参数错误" }         // 失败：标准 message + HTTP 400
+```
+
+这跟「其他同类框架」一致：成功就是数据、错误就是 `4xx/5xx` 状态 + 一句 message，没有额外的 `code/msg/data` 包装层。
+
+### 控制器里怎么返回
+
+| 写法 | 效果 |
+| --- | --- |
+| `return $this->json($data);` | 成功，标准 JSON（**推荐默认写法**） |
+| `return $this->error('参数错误', 400);` | 失败，HTTP 400 + `{"message":"参数错误"}` |
+| `return ['foo' => 'bar'];` | 直接返回数组 → 自动 JSON 化 |
+| `return $this->respond($data, 'msg', 0, 200);` | 跟随配置：envelope=false→标准，true→信封 |
+| `return $this->ok($data, '成功');` | 显式信封（code=0），无视配置 |
+| `return $this->fail('参数错误', 'E400', 400);` | 显式信封失败，HTTP 400 |
+| `return $this->response($data)->status(201);` | 想要自定义状态码/头时用 |
+
+> **为什么改成标准响应？** 主流框架从不强制信封：客户端/前端按 HTTP 状态判断成败，成功体就是业务数据，错误体就是 message。少一层包装，前后端都更省事。如果你的团队已有「统一信封 `{code,msg,data}`」契约（常见于部分内网中文 API），见下方「信封模式」开启即可，两种写法可并存。
+
+### 信封模式（可选，兼容旧契约）
+
+把 `config/response.php` 的 `envelope` 设为 `true`（或环境变量 `RESPONSE_ENVELOPE=true`）：
+
+```json
+{ "code": 0, "msg": "ok", "data": { "hello": "Kode" } }   // 成功
+{ "code": "E400", "msg": "参数错误" }                       // 失败
 ```
 
 - `code`：**0 表示成功**；非 0 是业务错误码（如 `"E400"`）。
 - `msg`：给人看的一句话提示。
 - `data`：业务数据（失败时可省略或带错误明细）。
 
-### 控制器里怎么返回
+开启后，`Resp::auto()` / `Controller::respond()` 会自动产出信封；`Resp::ok()/fail()` / `Controller::ok()/fail()` 始终产出信封，与配置无关。
 
-| 写法 | 效果 |
-| --- | --- |
-| `return $this->ok($data, '成功');` | 成功，code=0 |
-| `return $this->fail('参数错误', 'E400', 400);` | 失败，HTTP 400 |
-| `return ['foo' => 'bar'];` | 直接返回数组 → 自动包成信封 |
-| `return $this->response($data)->status(201);` | 想要自定义状态码/头时用 |
-
-> **为什么框架帮你封装好？** 而不是让你自己拼格式：因为前端/客户端拿到的是**永远一致的结构**，不必每个接口写一遍 `json_encode(["code"=>...])`。你专注业务，格式交给框架。
-
-### 异常也会自动变成信封
+### 异常也会自动转成标准错误
 
 你**不需要**手写 try/catch 来兜底格式。比如参数校验失败：
 
@@ -141,13 +158,13 @@ $this->validate($this->params(), [
 ]);
 ```
 
-校验不通过时，框架自动返回：
+校验不通过时，框架自动返回（标准模式）：
 
 ```json
-{"code":"E422","msg":"参数校验失败","data":{"errors":{ "name": ["name 至少 2 个字符"] }}}
+{"message":"参数校验失败","errors":{ "name": ["name 至少 2 个字符"] }}
 ```
 
-HTTP 状态为 **422**。同样，路由找不到 → `E404`、没登录 → `E401`、限流 → `E429`、服务器出错 → `E500`，**全部自动转成统一信封**。
+HTTP 状态为 **422**。路由找不到 → 404、没登录 → 401、限流 → 429、服务器出错 → 500，**全部自动转成标准错误响应**（信封模式下则转成对应 `code` 的信封）。
 
 ---
 
@@ -191,7 +208,7 @@ public function store(): array
 
 框架已内置：
 
-- `GET /health` → `{"code":0,"msg":"healthy","data":{"status":"ok",...}}`（K8s/负载均衡探针用）
+- `GET /health` → `{"status":"ok","service":"kode-app","version":"0.6.0","php":"8.3.x","env":"local","time":"..."}`（K8s/负载均衡探针用）
 - `GET /` → 框架元信息
 
 ---
@@ -202,7 +219,7 @@ public function store(): array
 | --- | --- |
 | 访问 502 / 连不上 | 端口被旧进程占用。`lsof -i tcp:9527` 找到进程 `kill` 掉，重启 `serve`。 |
 | 改了路由没生效 | 路由在 `app/routes.php`；多进程下重启 `serve` 才加载。 |
-| 返回空 / 500 | 看 `storage/logs/app.log`；开启 `APP_DEBUG=true` 时错误会带栈信息。 |
+| 返回空 / 500 | 看 `storage/logs/app.log`；`APP_DEBUG=true` 时浏览器会显示开发者友好的调试页，API 客户端拿到含栈信息的 JSON。 |
 | 报错 "Class not found" | 新加了类？跑 `composer dump-autoload`。 |
 | 想看所有路由 | 命令行：`php bin/kode console route:list`（按分组展示数量）。 |
 

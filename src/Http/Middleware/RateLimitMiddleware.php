@@ -120,7 +120,9 @@ final class RateLimitMiddleware implements MiddlewareInterface
      */
     private function tooMany(array $headers): ResponseInterface
     {
-        $response = Resp::fail('请求过于频繁，请稍后再试', 'E429', 429);
+        $response = Resp::error('请求过于频繁，请稍后再试', 429, [
+            'retry_after' => (int) ($headers['Retry-After'] ?? 0),
+        ]);
 
         foreach ($headers as $header => $value) {
             $response = $response->withHeader($header, $value);

@@ -8,6 +8,10 @@ use Kode\Framework\Http\Controller;
 
 /**
  * 演示 kode 生态能力（缓存 / 事件 / 日志）的集成。
+ *
+ * 响应风格：框架**默认标准模式**——成功直接返回数据（`json()` / `return [...]`），
+ * 错误直接带 HTTP 状态（`error()`）。需要 {code,msg,data} 信封时用 `ok()`（显式）或
+ * 开启 config('response.envelope') 后用 `respond()`（跟随配置）。
  */
 final class DemoController extends Controller
 {
@@ -17,6 +21,8 @@ final class DemoController extends Controller
             return random_int(1, 100);
         }, 60);
 
+        // 可选：统一信封模式（需 config response.envelope=true 或显式 ok()）。
+        // 默认推荐用 $this->json(...) 直接返回数据。
         return $this->ok([
             'driver' => cache()->getDefaultDriver(),
             'hits' => $hits,
@@ -29,7 +35,7 @@ final class DemoController extends Controller
 
         event(new \App\Events\PingEvent('pong'));
 
-        return $this->ok(['event' => 'App\Events\PingEvent'], '事件已派发');
+        return $this->json(['event' => 'App\Events\PingEvent']);
     }
 
     public function aop()
@@ -38,7 +44,7 @@ final class DemoController extends Controller
         $greeter = \Kode\Aop\Aop::proxy(\App\Services\Greeter::class);
         $message = $greeter->hello('kode');
 
-        return $this->ok(['message' => $message], 'AOP 已织入');
+        return $this->json(['message' => $message]);
     }
 
     /**
@@ -59,7 +65,7 @@ final class DemoController extends Controller
             static fn() => date('H:i:s'),
         ]);
 
-        return $this->ok([
+        return $this->json([
             'runtime'       => $rt->getName(),
             'enabled_modes' => array_keys($rt->enabled()),
             'available'     => [
@@ -69,7 +75,7 @@ final class DemoController extends Controller
                 'distributed' => $rt->supported('distributed'),
             ],
             'task_results'  => $results,
-        ], '并发演示（' . $rt->getName() . ' 运行时）');
+        ]);
     }
 
     /**
@@ -86,12 +92,12 @@ final class DemoController extends Controller
         $ip = $req->getServerParams()['REMOTE_ADDR'] ?? 'local';
         $result = rateLimit()->consume('demo:op:' . $ip, 1);
 
-        return $this->ok([
+        return $this->json([
             'allowed'    => $result->isAllowed(),
             'remaining'  => $result->remaining,
             'limit'      => $result->limit,
             'retry_after' => $result->retryAfter,
-        ], '限流演示');
+        ]);
     }
 
     /**
@@ -104,12 +110,12 @@ final class DemoController extends Controller
         /** @var array<string, mixed> $conf */
         $conf = \Kode\Database\Db\Db::getConfig();
 
-        return $this->ok([
+        return $this->json([
             'loaded'           => true,
             'default'          => $conf['default'] ?? null,
             'connections'      => array_keys($conf['connections'] ?? []),
             'read_write_split' => $conf['read_write_split'] ?? false,
-        ], '数据库适配器已接入（kode/database）');
+        ]);
     }
 
     /**
@@ -123,15 +129,15 @@ final class DemoController extends Controller
             $resp = http()->get('https://example.com/');
             $body = $resp->getBody()->getContents();
 
-            return $this->ok([
+            return $this->json([
                 'status' => $resp->getStatusCode(),
                 'length' => strlen($body),
                 'driver' => get_class(http()),
-            ], 'HTTP 客户端请求成功（kode/http-client）');
+            ]);
         } catch (\Throwable $e) {
-            return $this->ok([
+            return $this->json([
                 'error' => $e->getMessage(),
-            ], 'HTTP 客户端演示（网络不可达时降级）');
+            ]);
         }
     }
 
@@ -148,10 +154,10 @@ final class DemoController extends Controller
 
         $bus->publish('demo:ping', ['hello' => 'kode']);
 
-        return $this->ok([
+        return $this->json([
             'bus' => 'memory',
             'received' => $received,
-        ], '消息总线演示（kode/messaging）');
+        ]);
     }
 
     /**
@@ -174,10 +180,10 @@ final class DemoController extends Controller
             $result = breaker()->run($name, static fn() => ['data' => 'ok'],
                 fallback: static fn() => ['degraded' => true]);
 
-            return $this->ok([
+            return $this->json([
                 'result' => $result,
                 'state'  => breaker()->state($name),
-            ], '熔断器演示（breaker()->run）');
+            ]);
         }
 
         // 连续失败直到熔断打开，随后请求走降级
@@ -193,10 +199,10 @@ final class DemoController extends Controller
             }
         }
 
-        return $this->ok([
+        return $this->json([
             'trace'       => $trace,
             'final_state' => breaker()->state($name),
-        ], '熔断器演示（连续失败 → 熔断 → 降级）');
+        ]);
     }
 
     /**
@@ -212,10 +218,10 @@ final class DemoController extends Controller
             translator()->setLocale($locale);
         }
 
-        return $this->ok([
+        return $this->json([
             'locale' => translator()->getLocale(),
             'welcome' => lang('welcome', ['name' => $name]),
             'missing' => lang('user_not_found', ['id' => 42]),
-        ], '国际化演示（lang / Accept-Language）');
+        ]);
     }
 }
