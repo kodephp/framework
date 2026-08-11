@@ -81,6 +81,53 @@ php bin/kode console route:list --source=app
 
 > 大项目路由很多时，用 `--compact` 先看分组概览；插件（见 §9）的路由也会被标记来源 `plugin:<name>`。
 
+### 1.7 属性路由（双模型并存）
+
+框架同时支持两套模型，按喜好任选或混用：
+
+| 模型 | 写法 | 适用 |
+| --- | --- | --- |
+| **属性路由**（约定优于配置） | 在控制器类/方法上用 `#[RouteController]` / `#[Get]` 声明 | 多应用自动发现、与方法就近、可读性高 |
+| **显式路由**（routes.php） | 手动 `App::get/post/route(...)` | 需要精细命名、覆盖、或聚合编排的场景 |
+
+属性路由由启动时自动扫描 `app/Http/Controllers` 完成（见 `config/routes.php` 的 `attributes`），**无需在 routes.php 逐条手写**。它是「多应用自动路由匹配」的落地方式；方法上的 `name` 仍支持「可指定命名方法」（命名路由反向生成 URL）。
+
+```php
+use Kode\Framework\Http\Attributes\Controller as RouteController;
+use Kode\Framework\Http\Attributes\Get;
+use Kode\Framework\Http\Attributes\Post;
+use Kode\Framework\Http\Attributes\Delete;
+use Kode\Framework\Http\Controller;
+
+#[RouteController(prefix: '/products')]          // 类级前缀 + 可选 middleware
+final class ProductsController extends Controller
+{
+    #[Get('')]                                    // GET /products
+    public function index() { /* ... */ }
+
+    #[Get('/{id:\d+}', name: 'product.show')]     // 命名路由
+    public function show() {
+        $id = (int) $this->param('id');           // 路由参数用 $this->param()
+        /* ... */
+    }
+
+    #[Post('')]
+    public function store() { /* ... */ }
+
+    #[Delete('/{id:\d+}')]
+    public function destroy() { /* ... */ }
+}
+```
+
+可用属性：`#[Controller(prefix, middleware)]`、`#[Route(methods, path, name, middleware)]`，以及语法糖 `#[Get]` `#[Post]` `#[Put]` `#[Delete]` `#[Patch]` `#[Any]`。
+
+- 类级 `middleware` 与 方法级 `middleware` 自动合并；
+- 路径 = 类前缀 + 方法路径（方法路径留空即取类前缀，如 `GET /products`）；
+- `route('product.show', ['id' => 1])` 反向生成 `/products/1`（见 §1.1）；
+- 开关：`config/routes.php` 的 `attributes.enabled`（环境变量 `ROUTE_ATTRIBUTES`，默认开）。
+
+> 属性路由先注册、显式路由后注册；若路径冲突，routes.php 的显式条目覆盖属性路由。`route:list` 两种都会列出，默认仅主应用、无插件来源。
+
 ---
 
 ## 2. 统一响应与异常映射

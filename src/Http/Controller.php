@@ -126,6 +126,17 @@ abstract class Controller
     }
 
     /**
+     * 路由路径参数（{id} 等），来源与 input() 不同——它来自 URL 路由匹配，
+     * 不在 query/body/json 里。
+     *
+     *   $this->param('id');   // /users/{id} 中的 id
+     */
+    protected function param(string $key, mixed $default = null): mixed
+    {
+        return HttpRequest::param($key, $default);
+    }
+
+    /**
      * 链式响应构造器入口。
      *
      * 返回一个可直接链式调用的 {@see Response}（PSR-7 且借鉴主流框架的流畅风格）：

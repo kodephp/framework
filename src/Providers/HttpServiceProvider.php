@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Providers;
 
+use Kode\Attributes\Reader;
 use Kode\Framework\Application;
+use Kode\Framework\Http\ControllerScanner;
 use Kode\Framework\Http\Middleware\CorsMiddleware;
 use Kode\Framework\Http\Middleware\LocaleMiddleware;
 use Kode\Framework\Http\Middleware\RequestIdMiddleware;
@@ -33,6 +35,9 @@ final class HttpServiceProvider extends ServiceProvider
 
         // 路由来源登记表（route:list 命令按来源/文件聚合用）。
         $this->container->singleton(RouteRegistry::class, fn(): RouteRegistry => new RouteRegistry());
+
+        // 属性路由扫描器依赖（kode/attributes Reader，无缓存即可）。
+        $this->container->singleton(Reader::class, fn(): Reader => new Reader());
     }
 
     public function boot(): void
@@ -82,12 +87,67 @@ final class HttpServiceProvider extends ServiceProvider
         // ---- 框架内置探针（适配 k8s / 负载均衡健康检查）----
         $this->registerHealthEndpoints($app);
 
-        // 加载路由（支持多来源 + 插件发现，每条路由打来源标签供 route:list 使用）。
+        // 加载路由（属性路由 + 显式路由文件，每条打来源标签供 route:list 使用）。
         /** @var RouteRegistry $registry */
         $registry = $this->container->get(RouteRegistry::class);
+
+        // 1) 属性路由先注册（约定优于配置，自动发现）。
+        $this->scanAttributeRoutes($app, $registry);
+
+        // 2) 显式路由文件后注册（可覆盖同名路径，named 路由在此声明）。
         foreach ($this->resolveRouteSources() as $label => $file) {
             $this->loadRoutes($app, $file, $label, $registry);
         }
+    }
+
+    /**
+     * 扫描属性路由：读取 attributes 配置下的控制器目录，自动注册路由。
+     */
+    private function scanAttributeRoutes(App $app, RouteRegistry $registry): void
+    {
+        if (empty($this->config('routes.attributes.enabled', true))) {
+            return;
+        }
+
+        /** @var Reader $reader */
+        $reader = $this->container->get(Reader::class);
+        $scanner = new ControllerScanner($app, $reader, $registry);
+
+        /** @var array<string, string> $dirs */
+        $dirs = (array) $this->config('routes.attributes.controllers', []);
+        $dirs = $this->withPluginControllerDirs($dirs);
+        $scanner->scan($dirs);
+    }
+
+    /**
+     * 开启插件发现时，把 plugins/<name>/src/Controllers 纳入属性扫描。
+     *
+     * @param array<string, string> $dirs
+     * @return array<string, string>
+     */
+    private function withPluginControllerDirs(array $dirs): array
+    {
+        if (empty($this->config('routes.discover_plugins', false))) {
+            return $dirs;
+        }
+
+        $pluginsDir = $this->config('path.base') . '/plugins';
+        if (!is_dir($pluginsDir)) {
+            return $dirs;
+        }
+
+        foreach (glob($pluginsDir . '/*', GLOB_ONLYDIR) ?: [] as $pluginDir) {
+            $name = basename($pluginDir);
+            foreach (['src/Controllers', 'Controllers'] as $rel) {
+                $candidate = $pluginDir . '/' . $rel;
+                if (is_dir($candidate)) {
+                    $dirs['plugin:' . $name] = $candidate;
+                    break;
+                }
+            }
+        }
+
+        return $dirs;
     }
 
     /**

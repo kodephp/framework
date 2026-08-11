@@ -283,6 +283,29 @@ return function (App $app): void {
 };
 ```
 
+也可使用**属性路由**（约定优于配置，自动发现，无需手写 routes.php）：
+
+```php
+use Kode\Framework\Http\Attributes\Controller as RouteController;
+use Kode\Framework\Http\Attributes\Get;
+use Kode\Framework\Http\Controller;
+
+#[RouteController(prefix: '/products')]
+final class ProductsController extends Controller
+{
+    #[Get('')]                                   // GET /products
+    public function index() { /* ... */ }
+
+    #[Get('/{id:\d+}', name: 'product.show')]     // 命名路由 + 路由参数
+    public function show() {
+        $id = (int) $this->param('id');           // 路由参数用 $this->param()
+        /* ... */
+    }
+}
+```
+
+两种模型并存：属性路由先注册、routes.php 显式条目可覆盖同名路径。`route:list` 都会列出。
+
 中间件返回**真实 PSR-7 响应**（由框架统一发出，**不要手动 `->send()`**）：`return Resp::fail('未授权', 'E401', 401);`
 
 ### 熔断 / 限流 / 国际化（演示接口）
