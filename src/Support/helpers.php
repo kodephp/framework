@@ -144,6 +144,30 @@ if (!function_exists('db')) {
     }
 }
 
+if (!function_exists('transaction')) {
+    /**
+     * 在数据库事务中执行回调（kode/database 提供原子性保证）。
+     *
+     * 回调内抛异常会自动回滚并原样抛出；成功则提交。也可用于手动控制：
+     *   db()->beginTransaction();  db()->commit();  db()->rollback();
+     *
+     * 用法：
+     *   $id = transaction(fn () => {
+     *       $user = User::create([...]);
+     *       $user->profile()->create([...]);
+     *       return $user->id;
+     *   });
+     *
+     * @template T
+     * @param callable(): T $callback
+     * @return T
+     */
+    function transaction(callable $callback): mixed
+    {
+        return db()->transaction($callback);
+    }
+}
+
 if (!function_exists('schema')) {
     /**
      * 获取 Schema 便捷入口（生成即执行的 DDL 构建器，kode/database）。

@@ -99,6 +99,70 @@ RuntimeException: 应用启动失败（/path/to/app）：<原始原因>
 
 ---
 
+## 7. 请求级数据库事务（TransactionMiddleware）
+
+对**写请求**（POST / PUT / PATCH / DELETE）自动开启一个数据库事务，控制器内所有写操作都在
+同一事务上下文中；正常返回则提交，抛异常则回滚。由此把企业级不变量
+「**一次 HTTP 请求 = 一个原子工作单元**」落到框架层，避免「写了 A 成功、写 B 失败、数据半成品」。
+
+```php
+// config/database.php
+'auto_transaction' => env('DB_AUTO_TRANSACTION', false),   // 默认关闭，按需开启
+'transaction_skip_paths' => ['/health', '/metrics', '/ping'],
+```
+
+```php
+// 写请求进入 → 框架自动开事务
+$id = transaction(function () {        // 助手，委托 db()->transaction()
+    $user = User::create([...]);
+    $user->profile()->create([...]);   // 任一步失败，整段回滚
+    return $user->id;
+});
+```
+
+要点：
+- **默认关闭**，需 `database.auto_transaction = true` 才生效（避免对只读 / 心跳 / 探针无谓开事务）；
+- **仅作用于写方法**，GET / HEAD / OPTIONS 零开销放行；
+- **跳过路径**：`transaction_skip_paths` 中的探针不开启事务；
+- **异常透传**：回滚后仍将异常抛出，交由最外层 `ExceptionMiddleware` 产出统一结构化错误响应
+  （含 `trace_id`），错误形态与无事务时完全一致；
+- **嵌套事务**：控制器内再调 `transaction()` 由 PDO savepoint 自然处理，不破坏外层边界；
+- 也可用 `transaction()` 助手在任意位置显式开事务（见 `src/Support/helpers.php`）。
+
+> **包级依赖提示**：事务原子性依赖 `kode/database` 的连接复用。当前该包 `Db::getConnection()`
+> 每次调用都新建 PDO 连接，**跨调用的事务尚未真正生效**（begin / insert / commit 在不同连接上）。
+> 这是 kode/database 的能力缺口，框架侧不做绕过；待该包修复连接缓存后，本中间件即自动获得
+> 完整原子性。中间件编排契约（begin→commit / begin→rollback+rethrow）已由测试覆盖。
+
+---
+
+## 8. 坏 JSON 显式 400（JsonBodyMiddleware）
+
+`kode/http` 的 `Request::post()` 在 body 非合法 JSON 时**静默返回空数组**，导致下游拿到空数据后
+往往以 422 / 500 收场，且错误信息指向「字段缺失」而非真正的「格式错误」。
+
+框架新增 `JsonBodyMiddleware`，在请求入口主动校验：当 `Content-Type` 声明 `application/json`
+（或 `+json` 后缀）且 body 非空却 `!json_validate` 时，直接返回 **400 + 明确错误**，把「格式错误」
+这一输入问题在最早、最明确的环节拦截下来。
+
+```php
+// config/http.php
+'json_strict' => env('HTTP_JSON_STRICT', false),   // 默认关闭，按需开启
+'json_skip_paths' => ['/health', '/metrics', '/ping'],
+```
+
+```json
+// 坏 JSON 响应示例
+{ "message": "请求体不是合法的 JSON", "error": "invalid_json" }
+```
+
+要点：
+- **默认关闭**，需 `http.json_strict = true` 才生效（避免影响以表单 / 纯文本为 body 的既有接口）；
+- 仅对显式声明 JSON 的 `Content-Type` 生效；表单、纯文本、空 body 一律放行，不干扰其它合法用法；
+- GET / HEAD / OPTIONS 等无 body 语义的方法天然放行。
+
+---
+
 ## 设计取舍
 
 - **不安装全局 `set_exception_handler`**：kode/process、kode/core 运行时自身接管进程级异常，

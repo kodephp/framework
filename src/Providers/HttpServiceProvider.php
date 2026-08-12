@@ -19,6 +19,8 @@ use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
 use Kode\Framework\Health\HealthChecker;
 use Kode\Framework\Http\Middleware\RateLimitMiddleware;
 use Kode\Framework\Http\Middleware\ExceptionMiddleware;
+use Kode\Framework\Http\Middleware\TransactionMiddleware;
+use Kode\Framework\Http\Middleware\JsonBodyMiddleware;
 use Kode\Database\Db\Db;
 use Kode\Http\App;
 use Kode\Http\Middleware\CorsMiddleware;
@@ -101,6 +103,23 @@ final class HttpServiceProvider extends ServiceProvider
                 $registry,
                 $factory,
                 (array) $this->config('limiting', [])
+            ));
+        }
+
+        // 请求体 JSON 健壮性：声明 application/json 但 body 非法时显式 400（默认关闭）。
+        if (!empty($this->config('http.json_strict', false))) {
+            $app->use(new JsonBodyMiddleware(
+                enabled: true,
+                skipPaths: (array) $this->config('http.json_skip_paths', ['/health', '/metrics', '/ping']),
+            ));
+        }
+
+        // 请求级数据库事务：写请求原子化（默认关闭，需 database.auto_transaction = true）。
+        if (!empty($this->config('database.auto_transaction', false))) {
+            $app->use(new TransactionMiddleware(
+                enabled: true,
+                writeMethods: ['POST', 'PUT', 'PATCH', 'DELETE'],
+                skipPaths: (array) $this->config('database.transaction_skip_paths', ['/health', '/metrics', '/ping']),
             ));
         }
 
