@@ -581,7 +581,9 @@ vendor/bin/phpunit --filter SnowflakeTest
 
 ## 15. 常驻进程（Process）
 
-需要后台常驻运行的「周期任务」（心跳上报、队列消费、指标采集、连接保活）时，用框架自建的轻量进程运行器（基于 `kode/process` 的 `fork()` + `Timer` 原语，避开官方 Worker 池「事件循环空转不调用用户回调」的坑）。
+需要后台常驻运行的「周期任务」（心跳上报、队列消费、指标采集、连接保活）时，直接用 `kode/process` 的 **Daemon** 常驻进程运行器（v5.2.31+ 内置，基于 `fork()` + `Timer` 原语，自带监督 / 异常重生 / 优雅退出，并明确避开官方 Worker 池「事件循环空转不调用用户回调」的坑）。
+
+框架**不再自研底层运行器**，只做薄适配：用 `Worker` 定义业务契约、`ProcessManager` 负责注册表与无 fork 验证（`dryRun`）、`start()` 委托 Daemon 真正 fork 常驻进程。业务逻辑零重复实现。
 
 ### 15.1 定义 Worker
 
@@ -629,7 +631,7 @@ php bin/kode console process:start    # 真正 fork 常驻进程（需 CLI + ext
 ```
 
 - `process:check` 用 `dryRun()` **不依赖 pcntl / fork**，在 CI、单元测试、无 pcntl 环境也能验证 worker 可跑通；
-- `process:start` 为每个 worker fork `instances()` 个子进程，每个子进程用 `Timer` 按 `interval()` 周期调用 `handle()`，捕获 `SIGTERM/SIGINT` 优雅退出，`handle()` 单次异常不拖垮整个 worker；
+- `process:start` 为每个注册的 `Worker` 构建并运行一个 kode/process `Daemon`（Daemon 内部已 fork `instances()` 个 worker 子进程、按 `interval()` 周期调用 `handle()`、异常自动重生、捕获 `SIGTERM/SIGINT` 优雅退出）；多个不同 `Worker` 时主进程 fork 监督子进程各跑一个 Daemon。`handle()` 单次异常不拖垮整个 worker；
 - 当前环境不支持 fork 时，`start()` 明确抛 `RuntimeException` 提示改用 `dryRun()`。
 
 > 与 §10 定时任务的区别：定时任务是「到点触发一次」（cron 语义）；常驻进程是「按固定间隔不停循环」的常驻服务（心跳 / 消费语义）。按需求二选一或并存。

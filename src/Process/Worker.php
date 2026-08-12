@@ -5,22 +5,22 @@ declare(strict_types=1);
 namespace Kode\Framework\Process;
 
 /**
- * 常驻进程 Worker 抽象基类。
+ * 常驻进程 Worker 抽象基类（kode/process Daemon 的薄适配）。
  *
- * 框架自建轻量进程运行器（基于 kode/process 的 Process::fork + Timer 原语），
- * 用户只需实现两个方法：
+ * 框架不再自研底层运行器——真正的「fork 多进程 + Timer 周期 + 监督重生 + 优雅退出」
+ * 由 kode/process 的 Daemon（v5.2.31+ 内置）提供。本类只定义业务契约，用户只需实现：
  *
- *   - name()  ：worker 唯一名称（用于日志/状态/进程标题）。
- *   - handle()：单次工作量（由运行器按 interval() 周期调用）。
+ *   - name()  ：worker 唯一名称（用于日志 / 状态 / pid 文件）。
+ *   - handle()：单次工作量（由 Daemon 按 interval() 周期调用）。
  *
  * 可选覆盖：
  *   - interval()   ：轮询间隔（秒，浮点），默认 1.0。
- *   - instances()  ：并行实例数（fork 出的子进程数），默认 1。
- *   - onStart()/onStop()：生命周期钩子（建连/清理等）。
+ *   - instances()  ：并行实例数（Daemon fork 的子进程数），默认 1。
+ *   - onStart()/onStop()：生命周期钩子（建连/清理等；分别在 worker 子进程启动首 tick 与退出前各一次）。
  *
  * 运行器对「真实 fork 启动」与「无 fork 逻辑验证（dryRun）」做了分离：
  * 单元测试与环境无 pcntl 时，用 ProcessManager::dryRun() 同步跑一遍 handle()
- * 验证逻辑；生产 CLI 用 ProcessManager::start() 真正 fork 出常驻进程。
+ * 验证逻辑；生产 CLI 用 ProcessManager::start() 委托 Daemon 真正 fork 出常驻进程。
  *
  * 示例：
  *   final class HeartbeatWorker extends Worker

@@ -4,33 +4,50 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Process;
 
+use Kode\Process\Daemon\Daemon;
 use Kode\Process\Process as KodeProcess;
 use Kode\Process\Signal;
-use Kode\Process\Timer;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 /**
- * 常驻进程管理器（框架自建，基于 kode/process 的原语）。
+ * 常驻进程管理器（薄适配层，运行委托给 kode/process 的 Daemon）。
  *
- * 设计取舍：kode/process 官方的 Master/Worker 池（Kode\Process::start($cb)）其
- * WorkerProcess::processTasks() 在事件循环里**从不调用用户 callback**（回调仅在外部
- * assignTask() 时触发），即官方 worker 池对「自定义周期任务」实际是空转。因此这里
- * 只用它两个定义清晰、可测试的原语：
- *   - KodeProcess::fork()   ：真正 fork 子进程；
- *   - Timer（手动驱动）      ：按 interval 触发 handle()。
- * 自行编排「fork 多个实例 + Timer 主循环 + 优雅信号」，逻辑完全可控、可单测。
+ * 设计决策（v0.7.1）：真正的「fork 多进程 + Timer 周期 + 监督重生 + 优雅退出」已由
+ * kode/process 的 {@see Daemon}（v5.2.31 起内置，文档明确「避开官方 worker 池回调空转陷阱」）
+ * 提供。框架不再自研这套底层运行器，而是做薄适配：
  *
- * 测试/无 pcntl 环境：用 dryRun() 同步执行每个 worker 的 handle() 验证逻辑，
- * 不真正 fork；start() 在缺失 ext-pcntl 时明确抛错。
+ *   - 注册表 / 配置解析：按 config/process.php 收集业务 Worker（register / registerClass /
+ *     registerFromConfig）；
+ *   - dryRun()：无 fork 同步跑一遍 handle()（CI / 无 pcntl 环境验证逻辑，Daemon 无此能力）；
+ *   - start()：为每个注册的 Worker 构建并运行一个 Daemon（多 Worker 时 fork 监督子进程各跑一个）。
+ *
+ * 业务只需实现 {@see Worker}（name/handle 必填，interval/instances/onStart/onStop 可选），
+ * 底层多进程 / 周期 / 重生 / 优雅停机全部交给 Daemon，框架零重复实现。
  */
 final class ProcessManager
 {
     /** @var array<string, Worker> */
     private array $workers = [];
 
-    /** 已 fork 的子进程 pid 列表（仅 start() 运行时填充） */
+    /** 多 Worker 启动时，fork 出的「每-worker 监督进程」pid 列表 */
     private array $children = [];
 
     private bool $forking = false;
+
+    private LoggerInterface $logger;
+
+    public function __construct(?LoggerInterface $logger = null)
+    {
+        $this->logger = $logger ?? new NullLogger();
+    }
+
+    public function setLogger(LoggerInterface $logger): self
+    {
+        $this->logger = $logger;
+
+        return $this;
+    }
 
     /**
      * 注册一个 worker 实例（按 name() 去重）。
@@ -120,7 +137,7 @@ final class ProcessManager
      * onStart() → handle() → onStop() 各一次，返回已执行的 worker 名称列表。
      *
      * 用于在单元测试 / CI / 无 pcntl 环境中确认 worker 业务逻辑可跑通，
-     * 不依赖进程模型。
+     * 不依赖 kode/process 的进程模型。
      *
      * @return list<string>
      */
@@ -140,12 +157,15 @@ final class ProcessManager
     /**
      * 真正启动常驻进程（仅 CLI + 有 pcntl/posix 时可用）。
      *
-     *  - 为每个注册 worker fork 出 instances() 个子进程；
-     *  - 每个子进程用 Timer 按 interval() 周期调用 handle()；
-     *  - 主进程等待全部子进程，捕获 SIGTERM/SIGINT 优雅转发并回收。
+     * 为每个注册的 Worker 构建并运行一个 kode/process Daemon（Daemon 内部已 fork
+     * instances() 个 worker 子进程、按 interval() 周期调用 handle()、异常自动重生、捕获
+     * SIGTERM/SIGINT 优雅退出）。
      *
-     * @param array<string, mixed> $options 可选运行参数（预留：daemonize / pid_file 等）
-     * @throws \RuntimeException 当前环境不支持 fork
+     *  - 仅 1 个 Worker：直接在当前进程运行其 Daemon（当前进程即监督进程）。
+     *  - 多个 Worker：fork 一个监督子进程各自跑一个 Daemon，主进程监督这些监督子进程。
+     *
+     * @param array<string, mixed> $options 预留（已不再自行管理 pid_file，交由 Daemon）
+     * @throws \RuntimeException 当前环境不支持 fork / 没有注册 worker
      */
     public function start(array $options = []): void
     {
@@ -159,6 +179,16 @@ final class ProcessManager
             throw new \RuntimeException('没有注册任何 worker，无法启动。');
         }
 
+        $names = array_keys($this->workers);
+
+        // 单 worker：直接运行 Daemon（无需额外 fork 一层监督）。
+        if (count($names) === 1) {
+            $this->runDaemon($this->workers[$names[0]]);
+
+            return;
+        }
+
+        // 多 worker：fork 监督子进程，每个跑一个 Daemon；主进程监督它们。
         $this->forking = true;
         $this->children = [];
 
@@ -167,21 +197,16 @@ final class ProcessManager
         pcntl_signal(SIGINT, fn() => $this->stop());
 
         foreach ($this->workers as $worker) {
-            $instances = max(1, $worker->instances());
-            for ($i = 0; $i < $instances; $i++) {
-                // fork 子进程跑该 worker；父进程拿到子 pid 用于后续优雅停止。
-                $pid = KodeProcess::fork(
-                    function () use ($worker): void {
-                        $this->runWorker($worker);
-                    }
-                );
-                $this->children[] = $pid;
-            }
+            $pid = KodeProcess::fork(
+                function () use ($worker): void {
+                    $this->runDaemon($worker);
+                }
+            );
+            $this->children[] = $pid;
         }
 
         $this->children = array_values(array_unique($this->children));
 
-        // 主进程：等待全部子进程退出。
         while ($this->forking && $this->children !== []) {
             $info = KodeProcess::wait(null, true);
             if ($info['pid'] > 0) {
@@ -194,7 +219,49 @@ final class ProcessManager
     }
 
     /**
-     * 停止：向全部子进程发送 SIGTERM，等待其退出（优雅回收）。
+     * 为一个 Worker 构建并运行 Daemon。
+     *
+     * - onStart() 在每个 Daemon worker 子进程的首个 tick 执行一次；
+     * - handle() 按 interval() 周期执行（单次异常不拖垮 worker，记日志后继续）；
+     * - onStop() 在 worker 子进程退出前（register_shutdown_function）执行一次。
+     */
+    private function runDaemon(Worker $worker): void
+    {
+        $started = false;
+
+        $task = function (...$args) use ($worker, &$started): void {
+            if (!$started) {
+                $worker->onStart();
+                $started = true;
+                // worker 子进程退出（Daemon 收到停止信号后 exit(0)）时触发 onStop()。
+                register_shutdown_function(static function () use ($worker): void {
+                    $worker->onStop();
+                });
+            }
+
+            try {
+                $worker->handle();
+            } catch (\Throwable $e) {
+                error_log(sprintf('[worker:%s] handle 异常: %s', $worker->name(), $e->getMessage()));
+            }
+        };
+
+        Daemon::define($this->logger)
+            ->task($task)
+            ->every(max(0.001, $worker->interval()))
+            ->workers(max(1, $worker->instances()))
+            ->pidFile($this->pidFileFor($worker))
+            ->run();
+    }
+
+    private function pidFileFor(Worker $worker): string
+    {
+        return sys_get_temp_dir() . '/kode-worker-' . $worker->name() . '.pid';
+    }
+
+    /**
+     * 停止：向全部子进程（多 Worker 时为「每-worker 监督进程」）发送 SIGTERM，
+     * 等待其退出（优雅回收），残留强杀。
      */
     public function stop(): void
     {
@@ -212,51 +279,12 @@ final class ProcessManager
                 }
                 usleep(50000);
             }
-            // 仍未退出则强杀。
             if (KodeProcess::isProcessAlive($pid)) {
                 @posix_kill($pid, Signal::KILL);
             }
         }
 
         $this->children = [];
-    }
-
-    /**
-     * 子进程主循环：设置标题 → onStart → Timer 周期调用 handle → 优雅退出。
-     */
-    private function runWorker(Worker $worker): void
-    {
-        KodeProcess::setProcessTitle('kode:worker:' . $worker->name());
-
-        $alive = true;
-        pcntl_async_signals(true);
-        pcntl_signal(SIGTERM, function () use (&$alive): void {
-            $alive = false;
-        });
-        pcntl_signal(SIGINT, function () use (&$alive): void {
-            $alive = false;
-        });
-
-        $worker->onStart();
-
-        Timer::init();
-        Timer::forever(max(0.001, $worker->interval()), function () use ($worker): void {
-            try {
-                $worker->handle();
-            } catch (\Throwable $e) {
-                // 单次失败不应拖垮整个 worker；记录后继续下一轮。
-                error_log(sprintf('[worker:%s] handle 异常: %s', $worker->name(), $e->getMessage()));
-            }
-        });
-
-        while ($alive) {
-            Timer::tick();
-            usleep(1000);
-            pcntl_signal_dispatch();
-        }
-
-        $worker->onStop();
-        exit(0);
     }
 
     /**
