@@ -427,6 +427,8 @@ Queue::later(5, new \App\Jobs\SendMail([...]));
 // 数据库（kode/database）
 $rows = db()->select('SELECT * FROM users WHERE id = ?', [1]);
 DB::table('users')->where('id', 1)->first();
+// DB:: / db() 是 kode/database 的 Db 静态代理的「实例桥接」门面：
+// 调用会转发到 Db 的同名静态方法，兼容 PHP 8.1+ 且无弃用告警。
 
 // 事件（kode/event）
 event(new \App\Events\UserRegistered($uid));

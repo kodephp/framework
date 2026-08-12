@@ -6,6 +6,7 @@ namespace Kode\Framework\Tests;
 
 use Kode\Exception\ExceptionManager;
 use Kode\Exception\Formatter\UnifiedResponseFormatter;
+use Kode\Framework\Application;
 use Kode\Framework\Http\Middleware\ExceptionMiddleware;
 use Kode\Framework\Validation\ValidationException;
 use Nyholm\Psr7\ServerRequest;
@@ -106,5 +107,22 @@ final class ExceptionMiddlewareTest extends TestCase
         $resp = $mw->process(new ServerRequest('GET', '/'), $this->okHandler());
         self::assertSame(200, $resp->getStatusCode());
         self::assertSame('ok', (string) $resp->getBody());
+    }
+
+    /**
+     * 守护 L-2 修复：启动真实应用后，框架异常中间件必须以 prepend 方式成为
+     * 全局管线的最外层（替代 kode/http 默认的 JsonErrorHandlerMiddleware），
+     * 且整个过程不再依赖反射改写 App 的私有 dispatcher 属性。
+     */
+    public function testExceptionMiddlewareIsOutermostInRealApp(): void
+    {
+        Application::make(dirname(__DIR__));
+
+        /** @var \Kode\Http\App $app */
+        $app = resolve(\Kode\Http\App::class);
+        $middlewares = $app->getDispatcher()->getMiddlewares();
+
+        self::assertNotEmpty($middlewares);
+        self::assertInstanceOf(ExceptionMiddleware::class, $middlewares[0]);
     }
 }

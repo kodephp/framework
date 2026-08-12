@@ -19,8 +19,6 @@ use Kode\Framework\Http\Middleware\ExceptionMiddleware;
 use Kode\Framework\Translation\Translator;
 use Kode\Http\App;
 use Kode\Http\Middleware\CorsMiddleware;
-use Kode\Http\Middleware\JsonErrorHandlerMiddleware;
-use Kode\Http\Middleware\MiddlewareDispatcher;
 use Kode\Http\Middleware\RequestId;
 use Kode\Http\Middleware\SecurityHeaders;
 
@@ -50,7 +48,7 @@ final class HttpServiceProvider extends ServiceProvider
         /** @var App $app */
         $app = $this->container->get(App::class);
 
-        // 用框架异常中间件替换 kode/http 默认的 JsonErrorHandlerMiddleware：
+        // 用框架异常中间件包裹 kode/http 默认管线：
         // 错误响应 100% 交给 kode/exception（结构化 JSON，含 file/line/chain，无 HTML 调试页）。
         $this->pipeExceptionHandling($app);
 
@@ -118,34 +116,21 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 用框架异常中间件替换 kode/http 内置的 JsonErrorHandlerMiddleware。
+     * 用框架异常中间件包裹 kode/http 内置管线。
      *
-     * 做法：取出当前调度管线里的其它中间件，去掉 JsonErrorHandlerMiddleware 实例，
-     * 以「ExceptionMiddleware(最外层) + 其余中间件 + RouteRunner」重建一条新管线，
-     * 再通过反射写回 App 的 dispatcher 属性（不修改 vendor/kode）。
+     * kode/http 的 App 在构造时已把 JsonErrorHandlerMiddleware 挂为最外层；
+     * 框架需要让自家的 {@see ExceptionMiddleware}（产出结构化 JSON、含 file/line/
+     * chain、透传 X-Trace-Id）成为最外层。这里直接对调度管线调用 prepend()，
+     * 把 ExceptionMiddleware 插到 JsonErrorHandlerMiddleware 之前即可——异常被前者
+     * 捕获后直接返回，JsonErrorHandlerMiddleware 不再会被触达，行为等价且无需反射
+     * 改写 App 的私有 dispatcher 属性。
      */
     private function pipeExceptionHandling(App $app): void
     {
-        $dispatcher = $app->getDispatcher();
-        $runner = $dispatcher->getFinalHandler();
-
-        $kept = array_values(array_filter(
-            $dispatcher->getMiddlewares(),
-            static fn($m) => !$m instanceof JsonErrorHandlerMiddleware
-        ));
-
         /** @var ExceptionManager $manager */
         $manager = $this->container->get(ExceptionManager::class);
 
-        $rebuilt = new MiddlewareDispatcher($runner);
-        $rebuilt->pipe(new ExceptionMiddleware($manager));
-        foreach ($kept as $middleware) {
-            $rebuilt->pipe($middleware);
-        }
-
-        $ref = new \ReflectionProperty($app, 'dispatcher');
-        $ref->setAccessible(true);
-        $ref->setValue($app, $rebuilt);
+        $app->getDispatcher()->prepend(new ExceptionMiddleware($manager));
     }
 
     /**
