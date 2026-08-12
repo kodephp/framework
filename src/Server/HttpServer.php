@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Server;
 
+use Kode\Exception\ExceptionManager;
 use Kode\Framework\Application;
-use Kode\Framework\Http\ErrorRenderer;
 use Kode\Framework\Http\Resp;
 use Kode\Http\App as HttpApp;
+use Kode\Http\Response;
 use Kode\Process\Http\Request as ProcessRequest;
 use Kode\Process\Kode;
 use Kode\Process\Runtime\ConnectionInterface;
+use Psr\Http\Message\ResponseInterface;
 use function Kode\Process\cpu_count;
 
 /**
@@ -108,10 +110,7 @@ final class HttpServer
                 $conn->send(HttpBridge::toRaw($response), true);
             } catch (\Throwable $e) {
                 $debug = (bool) (Application::getInstance()?->config()->get('app.debug', false) ?? false);
-                $conn->send(
-                    HttpBridge::toRaw(ErrorRenderer::render($e, $psr, $debug, 500)),
-                    true,
-                );
+                $conn->send(HttpBridge::toRaw($this->errorResponse($e, $debug)), true);
             }
         });
 
@@ -125,5 +124,35 @@ final class HttpServer
         }
 
         return 4;
+    }
+
+    /**
+     * worker 内兜底错误响应：复用 kode/exception 的 ExceptionManager 产出结构化 JSON，
+     * 与框架正常请求路径的错误形态保持一致（含 trace_id / location / chain）。
+     * 仅在中间件链路之外的极端异常（如桥接阶段）才会走到这里。
+     */
+    private function errorResponse(\Throwable $e, bool $debug): ResponseInterface
+    {
+        if (class_exists(ExceptionManager::class)) {
+            try {
+                $manager = exception_manager();
+                $result = $manager->respond($e);
+                $body = $result['body'];
+
+                $response = Response::json($body)->status($result['status']);
+                if (!empty($body['trace_id'])) {
+                    $response = $response->header('X-Trace-Id', (string) $body['trace_id']);
+                }
+                if (!empty($body['span_id'])) {
+                    $response = $response->header('X-Span-Id', (string) $body['span_id']);
+                }
+
+                return $response;
+            } catch (\Throwable) {
+                // 落到下面的兜底，避免错误响应自身再崩溃。
+            }
+        }
+
+        return Resp::error($debug ? $e->getMessage() : '服务器内部错误', 500);
     }
 }

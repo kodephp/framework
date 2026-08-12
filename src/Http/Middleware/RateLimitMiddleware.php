@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Http\Middleware;
 
+use Kode\Framework\Http\RateLimit\Algorithm;
 use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\Resp;
 use Kode\Framework\Http\RouteRegistry;
@@ -128,7 +129,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
         return new RateLimit(
             capacity: (int) ($config['capacity'] ?? 10),
             rate: (float) ($config['rate'] ?? 1.0),
-            type: self::typeFromName((string) ($config['algorithm'] ?? 'token_bucket')),
+            type: Algorithm::fromName((string) ($config['algorithm'] ?? 'token_bucket')),
         );
     }
 
@@ -184,16 +185,5 @@ final class RateLimitMiddleware implements MiddlewareInterface
         }
 
         return $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-    }
-
-    private static function typeFromName(string $name): LimiterType
-    {
-        return match ($name) {
-            'sliding_window' => LimiterType::SLIDING_WINDOW,
-            'sliding_window_counter' => LimiterType::SLIDING_WINDOW_COUNTER,
-            'counter' => LimiterType::COUNTER,
-            'leaky_bucket' => LimiterType::LEAKY_BUCKET,
-            default => LimiterType::TOKEN_BUCKET,
-        };
     }
 }

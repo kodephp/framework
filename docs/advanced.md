@@ -1,51 +1,86 @@
-# 高级用法
+# 进阶用法
 
-本篇面向已跑通「入门指南」、需要深入路由、安全、扩展与部署的开发者。
-所有示例基于 `app/` 目录下的业务代码，框架源码（`src/`）无需改动。
+本篇按「能直接抄去用」的方式，逐个讲清楚框架的每一项能力。每个小节都可独立查阅。
+
+- 路由全解
+- 请求对象（取值 / Header / Cookie / 文件 / JSON）
+- 响应对象（JSON / 错误 / 重定向 / 文件 / 状态码与头）
+- 自己写中间件
+- 参数校验
+- 异常处理
+- 配置与环境变量
+- 日志
+- 鉴权（JWT）
+- 限流
+- 熔断（保护下游）
+- 定时任务
+- 多进程 HTTP 服务
+- 缓存 / 队列 / 数据库 / 事件 / HTTP 客户端 / 消息
+- 门面与全局助手
+- 控制台命令
+- DI 与服务提供者
+- AOP 切面
+- 插件
+- 部署到生产
+- 测试
 
 ---
 
-## 1. 路由：分组 / 嵌套 / 中间件 / 别名
+## 1. 路由全解
 
-`kode/http` 已原生支持：前缀分组、嵌套分组、路由级中间件、命名路由（别名）、参数正则、默认参数、URL 生成、直接返回。
+框架支持两套并存模型，**默认即自动发现，无需开关**。
 
-### 1.1 基础写法
+### 1.1 闭包路由（`app/routes.php`）
 
 ```php
 use Kode\Http\App;
-use App\Http\Controllers\UserController;
 
 return function (App $app): void {
-    $app->get('/users/{id:\d+}', fn($req) => resolve(UserController::class)->show($req))
-        ->name('user.show');                 // 命名路由（别名）
-
-    $app->post('/users', fn($req) => resolve(UserController::class)->store($req));
-    $app->any('/ping', fn() => ['pong' => true]);
+    $app->get('/', fn() => ['ok' => true]);
+    $app->post('/users', fn() => /* ... */);
+    $app->any('/ping', fn() => 'pong');          // 任意方法
+    $app->add(['GET','POST'], '/both', fn() => 'x');
 };
 ```
 
-- 路由参数：`{id:\d+}` 表示只匹配数字；`{slug}` 匹配任意非 `/` 段。
-- 取参：控制器里 `$this->input('id')`（或 `Kode\Http\Request::param('id')`）。
-- 命名路由后可用 `route('user.show', ['id' => 1])` 反向生成 URL（框架全局助手，底层 `App::url()`）；在拥有 `$app` 的闭包里也可 `$app->url('user.show', ['id' => 1])`。
+`app/routes.php` 是入口文件；此外框架会**自动 glob `app/routes/*.php`**（每个文件即一个来源，新增文件即生效，无需登记）。
 
-### 1.2 分组（前缀 + 中间件）
+### 1.2 属性路由（约定优于配置）
+
+在控制器类 / 方法上用属性声明，启动时自动扫描 `app/Http/Controllers`（递归子目录，新建子文件夹即一个模块）：
 
 ```php
-$app->group('/api', function (App $app): void {
-    $app->get('/profile', fn() => resolve(UserController::class)->profile());
-    $app->post('/avatar', fn() => resolve(UserController::class)->avatar());
-}, [new \App\Http\Middleware\ApiGuard()]);   // 该组统一挂中间件
+use Kode\Framework\Http\Attributes\Controller as RouteController;
+use Kode\Framework\Http\Attributes\Get;
+use Kode\Framework\Http\Attributes\Post;
+use Kode\Framework\Http\Controller;
+
+#[RouteController(prefix: '/products')]
+final class ProductsController extends Controller
+{
+    #[Get('')]                                   // GET /products
+    public function index() { /* ... */ }
+
+    #[Get('/{id:\d+}', name: 'product.show')]     // 命名路由 + 路由参数
+    public function show() {
+        $id = (int) $this->param('id');           // 路径参数用 $this->param()
+    }
+
+    #[Post('')]
+    public function store() { /* ... */ }
+}
 ```
 
-### 1.3 嵌套分组
+可用属性：`#[Controller(prefix, middleware)]`、`#[Route(methods, path, name, middleware)]`，以及语法糖 `#[Get]` `#[Post]` `#[Put]` `#[Delete]` `#[Patch]` `#[Any]`。路径参数用 `{id}` 匹配、`{id:\d+}` 加正则、`{name}?` 可选。
 
-分组回调里可以继续 `group()`，前缀与中间件会**逐层叠加**：
+### 1.3 路由参数与分组
 
 ```php
-$app->group('/api', function (App $app): void {
-    $app->group('/v1', function (App $app): void {
-        $app->get('/posts', fn() => /* ... */);   // 实际路径 /api/v1/posts
-    }, [new \App\Http\Middleware\VersionGuard()]);
+// 路由分组（前缀 + 中间件）
+$app->group('/api/v1', function (App $app): void {
+    $app->group('/users', function (App $app): void {
+        $app->get('/{id}', fn() => /* ... */);
+    });
 }, [new \App\Http\Middleware\ApiGuard()]);
 ```
 
@@ -56,404 +91,387 @@ $app->get('/me', fn() => resolve(UserController::class)->me())
     ->middleware(new \Kode\Framework\Http\Middleware\AuthMiddleware());
 ```
 
-框架已内置中间件：`AuthMiddleware`（JWT 鉴权）、`RateLimitMiddleware`（限流）、`CorsMiddleware` / `SecurityHeaders` / `RequestId`（来自 `kode/http`，由 `HttpServiceProvider` 根据 config 开关装配）、`LocaleMiddleware`。
+属性路由也能在类 / 方法上挂中间件：`#[Controller(prefix: '/x', middleware: [X::class])]`、方法级 `#[Route(..., middleware: [Y::class])]`。
 
-### 1.5 直接返回 vs 信封
+### 1.5 路由来源与 `route:list`
 
-- `return ['k'=>'v']` 或 `return $this->json(...)` → **标准 JSON**（默认）：直接是数据，无信封。
-- `return $this->ok(...)` / `Resp::ok()` → **显式信封** `{code,msg,data}`（无视配置，供需要信封契约的场景）。
-- `config('response.envelope')=true` 时，`return $this->respond(...)` / `Resp::auto()` 会自动产出信封。
-- 想**完全绕过**框架封装（返回文件流、裸 JSON）？直接返回 `Kode\Http\Response`：
-
-  ```php
-  use Kode\Http\Response;
-  return Response::make($rawBody, 200, ['Content-Type' => 'application/json']);
-  ```
-
-### 1.6 查看全部路由
+属性路由标签为 `app`，插件路由为 `plugin:<name>`；`route:list` 两种都会列出：
 
 ```bash
-php bin/kode console route:list              # 全量，按 URI 段分组+数量
-php bin/kode console route:list --compact    # 仅看「分组 → 数量」摘要
-php bin/kode console route:list --group=api  # 只看某分组
+php bin/kode console route:list                 # 全量，按 URI 段分组
+php bin/kode console route:list --compact       # 仅看「分组 → 数量」
+php bin/kode console route:list --group=api     # 只看某分组
 php bin/kode console route:list --method=POST
 php bin/kode console route:list --source=app
+php bin/kode console route:list --rate-limit    # 额外显示每条路由的 #[RateLimit]
+php bin/kode console route:list --columns=method,uri,name
 ```
 
-> 大项目路由很多时，用 `--compact` 先看分组概览；插件（见 §9）的路由也会被标记来源 `plugin:<name>`。
+### 1.6 生成 URL
 
-### 1.7 属性路由（双模型并存）
-
-框架同时支持两套模型，按喜好任选或混用：
-
-| 模型 | 写法 | 适用 |
-| --- | --- | --- |
-| **属性路由**（约定优于配置） | 在控制器类/方法上用 `#[RouteController]` / `#[Get]` 声明 | 多应用自动发现、与方法就近、可读性高 |
-| **显式路由**（routes.php） | 手动 `App::get/post/route(...)` | 需要精细命名、覆盖、或聚合编排的场景 |
-
-属性路由由启动时自动扫描 `app/Http/Controllers` 完成（见 `config/routes.php` 的 `attributes`），**无需在 routes.php 逐条手写**。它是「多应用自动路由匹配」的落地方式；方法上的 `name` 仍支持「可指定命名方法」（命名路由反向生成 URL）。
+给路由起名后用 `route()` 反向生成：
 
 ```php
-use Kode\Framework\Http\Attributes\Controller as RouteController;
-use Kode\Framework\Http\Attributes\Get;
-use Kode\Framework\Http\Attributes\Post;
-use Kode\Framework\Http\Attributes\Delete;
-use Kode\Framework\Http\Controller;
-
-#[RouteController(prefix: '/products')]          // 类级前缀 + 可选 middleware
-final class ProductsController extends Controller
-{
-    #[Get('')]                                    // GET /products
-    public function index() { /* ... */ }
-
-    #[Get('/{id:\d+}', name: 'product.show')]     // 命名路由
-    public function show() {
-        $id = (int) $this->param('id');           // 路由参数用 $this->param()
-        /* ... */
-    }
-
-    #[Post('')]
-    public function store() { /* ... */ }
-
-    #[Delete('/{id:\d+}')]
-    public function destroy() { /* ... */ }
-}
+#[Get('/products/{id}', name: 'product.show')]
+// route('product.show', ['id' => 1])  =>  /products/1
 ```
-
-可用属性：`#[Controller(prefix, middleware)]`、`#[Route(methods, path, name, middleware)]`，以及语法糖 `#[Get]` `#[Post]` `#[Put]` `#[Delete]` `#[Patch]` `#[Any]`。
-
-- 类级 `middleware` 与 方法级 `middleware` 自动合并；
-- 路径 = 类前缀 + 方法路径（方法路径留空即取类前缀，如 `GET /products`）；
-- `route('product.show', ['id' => 1])` 反向生成 `/products/1`（见 §1.1）；
-- 开关：`config/routes.php` 的 `attributes.enabled`（环境变量 `ROUTE_ATTRIBUTES`，默认开）。
-
-> 属性路由先注册、显式路由后注册；若路径冲突，routes.php 的显式条目覆盖属性路由。`route:list` 两种都会列出，默认仅主应用、无插件来源。
 
 ---
 
-## 2. 响应形态与异常映射
+## 2. 请求对象
 
-### 2.1 两种响应形态
-
-框架支持两种响应形态，**默认标准模式**：
-
-| 模式 | 开关 | 成功 | 失败 |
-| --- | --- | --- | --- |
-| 标准（默认） | `config('response.envelope')=false` | `Resp::json($data)` / `return [...]` → 直接数据 JSON | `Resp::error($msg, $status)` → `{"message":...}` + HTTP 状态 |
-| 信封（可选） | `config('response.envelope')=true` | `Resp::ok($data)` → `{code:0,msg,data}` | `Resp::fail($msg,$code,$status)` → `{code,msg}` |
-
-`Resp` 提供：`json()` / `error()`（标准）、`ok()` / `fail()` / `paginate()`（信封）、`auto()`（跟随开关）、`make()`（自由构造）。控制器封装：`$this->json()` / `$this->error()` / `$this->respond()` / `$this->ok()` / `$this->fail()` / `$this->response()`。
-
-### 2.2 异常自动转响应（核心机制）
-
-框架是 API 框架，全局错误处理器（`ExceptionMiddleware` + `kode/exception` 的 `ExceptionManager` / `UnifiedResponseFormatter`）**默认直接产出结构化 JSON，不渲染任何友好错误页**。你不必在每个方法里手写 try/catch 拼格式：
-
-| 异常 / 场景 | 标准模式（HTTP） | 信封模式（code） |
-| --- | --- | --- |
-| `ValidationException`（校验失败） | 422，`{"message":...,"errors":...}` | `E422` |
-| 路由未匹配 | 404 | `E404` |
-| 方法不允许 | 405 | `E405` |
-| `AuthMiddleware` 拦截 | 401 | `E401` |
-| `RateLimitMiddleware` 拦截 | 429 | `E429` |
-| 其它未捕获异常 | 500 | `E500` |
-
-错误响应统一字段：`code` / `msg` / `type` / `trace_id` / `span_id` / `location{file,line,method}` / `context` / `chain`。开发期（`app.debug=true`）包含可定位到源码的 `location` 与 `chain`；生产期自动收敛绝对路径与系统细节，仅记日志不泄露。
-
-例子：业务里直接抛领域异常即可，格式交给框架：
+### 2.1 控制器短方法（日常首选）
 
 ```php
-if ($user === null) {
-    throw new \RuntimeException('用户不存在');   // 标准 → 500 {"message":"用户不存在"}
-}
+$this->input('name');          // GET + POST + JSON 合并；缺省 null
+$this->input(['name','page']); // 只要这几个字段
+$this->query('page');          // 仅 ?page=2
+$this->post('payload');        // 仅请求体（含 JSON）
+$this->params();               // 全部入参
+$this->only('name','page');    // 字段筛选
+$this->param('id');            // 路由路径参数
 ```
 
-### 2.3 自定义业务错误（推荐做法）
+等价全局写法（服务 / 中间件里也能用）：`Request::input('name')`、`Request::get('fail')`、`Request::all()`。
 
-想要自定义错误信息/状态码（标准模式下）？直接 `Resp::error()` 即可：
+### 2.2 完整 PSR-7 请求
+
+需要 header / Cookie / 上传文件 / body 流时，用 `$req = $this->request()`：
 
 ```php
-if ($user === null) {
-    return Resp::error('用户不存在', 404);
+$token = $req->getHeaderLine('Authorization');
+$ip    = $req->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
+$ctype = $req->getContentType();
+foreach ($req->getUploadedFiles() as $file) {
+    $file->moveTo(storage_path('uploads/' . $file->getClientFilename()));
 }
 ```
-
-需要自定义业务码（信封模式）或集中映射？定义带业务码的异常，并在 `HttpServiceProvider` 的异常处理器中映射：
-
-```php
-final class BizException extends \RuntimeException
-{
-    public function __construct(
-        string $message,
-        public readonly string $bizCode = 'E400',
-        int $http = 400,
-    ) {
-        parent::__construct($message, $http);
-    }
-}
-```
-
-然后在 `src/Providers/HttpServiceProvider.php` 的 `boot()` 异常处理闭包里加分支：
-
-```php
-if ($e instanceof \App\Exceptions\BizException) {
-    return Resp::fail($e->getMessage(), $e->bizCode, $e->getCode());
-}
-```
-
-> 这样：**写好的封装**负责兜底格式，**你只管抛异常/返回数据**，二者不矛盾。
 
 ---
 
-## 3. 依赖注入与门面
+## 3. 响应对象
 
-### 3.1 容器解析
-
-```php
-resolve(\App\Services\UserService::class)->list();   // 走 DI 容器，自动注入依赖
-app()->make(X::class);
-```
-
-### 3.2 全局助手（门面风格）
-
-框架提供即用助手，底层是容器单例：
-
-| 助手 | 作用 |
+| 写法 | 效果 |
 | --- | --- |
-| `cache()` | 缓存（file/redis，见 `config/cache.php`） |
-| `db()` | 数据库（`kode/database`） |
-| `event()` | 事件分发 |
-| `validator()` | Symfony Validator |
-| `breaker()` | 熔断器管理器 |
-| `lang()` / `translator()` | 国际化 |
-| `config()` | 读配置 |
-| `env()` | 读环境变量 |
-| `ctx()` | 协程/请求上下文 |
-| `runtime()` | 统一运行时（fork 隔离任务） |
-| `snowflake()` | 分布式 ID 生成器 |
-| `process()` | 常驻进程管理器（单例） |
+| `return ['k'=>'v'];` | 标准 JSON（默认） |
+| `return $this->json($data);` | 标准成功 JSON |
+| `return $this->error('出错了', 400);` | 标准错误，HTTP 400 + `{"message":"出错了"}` |
+| `return $this->error('校验失败', 422, ['errors' => $e->errors()]);` | 带额外字段 |
+| `return $this->response($data)->status(201)->header('X-A', '1');` | 链式自定义状态码 / 头 |
+| `return Resp::json($data);` / `Resp::error($msg, 400);` | 全局助手（任何位置可用） |
+| `return Resp::redirect('https://example.com');` | 302 重定向 |
+| `return Resp::noContent();` | 204 |
+| `return Response::make($rawBody, 200, ['Content-Type' => 'application/json']);` | 想完全绕过框架封装 |
 
-示例：
+> 想返回文件流 / 裸 JSON？直接返回 `Kode\Http\Response` 即可。
+
+---
+
+## 4. 自己写中间件
+
+中间件实现 PSR-15 的 `MiddlewareInterface`，包一层逻辑后调用 `$handler->handle($request)`：
 
 ```php
-cache()->set('k', $v, 60);
-$rows = db()->query('SELECT * FROM users WHERE id = ?', [$id]);
-event(new \App\Events\UserCreated($user));
+namespace App\Http\Middleware;
+
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\MiddlewareInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+
+final class ApiGuard implements MiddlewareInterface
+{
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
+        if ($request->getHeaderLine('X-Api-Key') !== 'secret') {
+            return Resp::error('禁止访问', 403);
+        }
+        return $handler->handle($request);   // 放行
+    }
+}
 ```
 
----
+用法：路由级 `$app->get('/x', fn()=>...)->middleware(new ApiGuard())`，或属性路由 `#[Route(..., middleware: [ApiGuard::class])]`，或分组 `$app->group('/api', fn()=>..., [new ApiGuard()])`。
 
-## 4. 中间件进阶
-
-### 4.1 自定义全局中间件
-
-实现 `MiddlewareInterface`（或 `__invoke($req, $next)`），在 `HttpServiceProvider` 用 `$app->use(new MyMiddleware())` 挂到全局链（请求总会经过）。顺序建议：RequestId → Cors → Security → Locale → [路由级 Auth/RateLimit] → 控制器。
-
-### 4.2 自定义路由级中间件
-
-实现同上，在路由/分组里 `.middleware(new X())` 或 `group(prefix, cb, [new X()])`。
+框架已内置：`AuthMiddleware`（JWT 鉴权）、`RateLimitMiddleware`（限流）、`CorsMiddleware` / `SecurityHeaders` / `RequestId`（来自 `kode/http`，由 `HttpServiceProvider` 按 config 开关装配）。
 
 ---
 
-## 5. 配置
+## 5. 参数校验
 
-- 配置目录：`config/*.php`，返回数组；用 `config('app.debug')` 读取。
-- 环境变量：`.env`（本地），用 `env('APP_DEBUG', false)` 读取；生产环境建议用真实环境变量，不提交 `.env`。
-- 路径助手：`base_path()`、`storage_path()`、`config_path()`、`app_path()`。
+两种写法：
 
----
-
-## 6. 缓存 / 日志 / 数据库 / 事件 / AOP
-
-- **缓存**：`cache()->get/set/delete`，驱动在 `config/cache.php`（file/redis）。
-- **日志**：`logger()->info('...')`，Monolog，路径 `storage/logs/app.log`，级别看 `LOG_LEVEL`。
-- **数据库**：`db()->query/insert/update`，配置见 `config/database.php`（含 SQLite/MySQL）。
-- **事件**：`event(new X())` + 监听器（`kode/event`）。
-- **AOP**：用 `#[Aspect]` / 切面注解做横切（日志、事务、鉴权），见 `kode/aop`。
-
----
-
-## 7. JWT 鉴权
-
-- 签发：登录成功后用 `kode/jwt` 生成 token（`config/jwt.php` 配 `JWT_SECRET`）。
-- 保护接口：挂 `AuthMiddleware`，控制器里 `ctx()->get('user')` 取当前用户。
-- 失败自动返回标准 401 错误（`Resp::error('未授权', 401)`）。
-
----
-
-## 8. 韧性层（限流 + 熔断 + i18n）
-
-### 8.1 限流（保护自身）
-
-`RateLimitMiddleware` 已作为**全局中间件**默认开启，无需逐条挂载即可对每条路由限流；也可在控制器/方法上用 `#[RateLimit]` 做细粒度声明（类级对所有方法生效，方法级叠加）。
+**A. 控制器里快捷校验**（失败自动转 422）：
 
 ```php
-// 声明式：类级 + 方法级叠加
+$data = $this->validate($this->params(), [
+    'name'  => 'required|min:2|max:50',
+    'email' => 'required|email',
+    'age'   => 'int|min:0',
+]);
+```
+
+**B. 用 Symfony Attribute 声明在 DTO 上**（推荐复杂表单）：
+
+```php
+use Symfony\Component\Validator\Constraints as Assert;
+
+final class CreateUser
+{
+    #[Assert\NotBlank]
+    #[Assert\Length(min: 2, max: 50)]
+    public string $name;
+
+    #[Assert\Email]
+    public string $email;
+}
+```
+
+规则串参考：`required` `email` `int` `numeric` `min:2` `max:50` `in:a,b` 等。
+
+---
+
+## 6. 异常处理
+
+- 全局 `ExceptionMiddleware` 接管所有未捕获异常，转成结构化 JSON（见入门指南 §7）。
+- 业务里直接抛异常即可：框架负责格式，你只管抛。
+
+```php
+if ($user === null) {
+    throw new \RuntimeException('用户不存在');   // → 500 {"message":"用户不存在", ...}
+}
+```
+
+- 校验异常 → 422（含 `errors`）；其它 → 500；404 / 405 / 401 / 429 自动映射。
+- 想拿异常管理器：`exception_manager()` 助手或 `Exception` 门面。
+
+---
+
+## 7. 配置与环境变量
+
+读配置：`config('jwt.guards.api.ttl')`、`config('app.debug', false)`（点号访问嵌套）。
+
+写配置：`config/*.php` 返回数组；`.env` 用 `env('KEY', 'default')` 读取。
+
+```dotenv
+# .env
+APP_DEBUG=true
+APP_NAME=kode-app
+JWT_SECRET=change-me
+RATE_LIMIT_DRIVER=memory
+```
+
+配置期 `app()` 可能尚未就绪，路径类配置请写「相对项目根」的子路径（框架会用真实 `path.base` 拼成绝对路径），不要手写 `base_path()`。
+
+---
+
+## 8. 日志
+
+基于 Monolog：
+
+```php
+logger()->info('用户登录', ['uid' => 1]);
+logger()->error('下游失败', ['e' => $e->getMessage()]);
+Log::warning('...');          // 门面写法
+```
+
+日志文件默认在 `storage/logs/app.log`；级别 / 通道在 `config/logging.php` 配置。
+
+---
+
+## 9. 鉴权（JWT）
+
+### 9.1 签发令牌（登录接口示例）
+
+```php
+public function login(): array
+{
+    $data = $this->validate($this->params(), [
+        'username' => 'required',
+        'password' => 'required',
+    ]);
+
+    // 真实项目在此校验密码；这里仅演示签发
+    $token = jwt()->issue([
+        'uid'   => 1,
+        'sub'   => 'u1',
+        'roles' => ['user'],
+    ]);
+
+    return $this->json(['token' => $token]);
+}
+```
+
+`jwt()->issue($claims)` 委托 `kode/jwt` 守卫签发；每次签发都是独立实例，jti 唯一、不会泄漏前次声明。
+
+### 9.2 保护路由
+
+```php
+$app->get('/me', fn() => resolve(UserController::class)->me())
+    ->middleware(new \Kode\Framework\Http\Middleware\AuthMiddleware());
+```
+
+`AuthMiddleware` 从 `Authorization: Bearer <token>` 解析，失败返回 401，成功把载荷挂到请求属性 `auth`。
+
+### 9.3 在控制器里取当前用户
+
+```php
+public function me(): array
+{
+    /** @var \Kode\Jwt\Token\Payload $auth */
+    $auth = $this->request()->getAttribute('auth');
+    return ['uid' => (string) $auth->uid];
+}
+```
+
+也可手动校验：`$payload = jwt()->authenticate($token);`，注销：`jwt()->invalidate($token)`。
+
+---
+
+## 10. 限流
+
+全局 `RateLimitMiddleware` 默认开启。
+
+- **声明式**：控制器类 / 方法上 `#[RateLimit]`（类级对全部方法生效，方法级叠加，可多条）。
+- **全局默认**：未声明 `#[RateLimit]` 的路由，按 `config/limiting.php` 的 `capacity/rate/algorithm` 限流，维度为「路由模板 + 客户端 IP」。
+- **分布式**：`config/limiting.php` 的 `driver` 设为 `redis` 即跨进程 / 跨机共享限额。
+
+```php
+use Kode\Limiting\Attribute\RateLimit;
+
 #[Controller(prefix: '/products')]
-#[RateLimit(capacity: 100, rate: 5.0, key: 'products:{ip}')]
+#[RateLimit(capacity: 100, rate: 5.0, key: 'products:{ip}')]   // 类级
 final class ProductsController extends Controller
 {
     #[Get('')]
-    #[RateLimit(capacity: 20, rate: 1.0, key: 'products:list:{ip}')]
+    #[RateLimit(capacity: 20, rate: 1.0, key: 'products:list:{ip}')] // 方法级叠加
     public function index() { /* ... */ }
 }
 ```
 
-- 未声明 `#[RateLimit]` 的路由，按 `config/limiting.php` 的 `capacity/rate/algorithm` 限流（维度：路由模板 + 客户端 IP）。
-- 超限返回 **429** + 标准头（`X-RateLimit-Limit` / `Remaining` / `Reset`、`Retry-After`）。
-- **分布式**：存储后端由 `config/limiting.php` 的 `driver` 决定。`memory`（默认）单进程内存；改成 `redis` 即跨进程/跨机共享、变为分布式限流，支持 `mode`：`standalone` / `sentinel` / `cluster`。规则与存储解耦——同一套 `#[RateLimit]` 在单机用内存、上集群切 Redis 即可，业务代码不变。
+超限返回 **429** + 标准头（`X-RateLimit-Limit` / `Remaining` / `Reset`、`Retry-After`）。代码中手动限流：`rateLimit()->consume('op:'.$ip, 1)`。
 
-```dotenv
-RATE_LIMIT_DRIVER=redis
-REDIS_MODE=cluster
-REDIS_CLUSTER_NODES=127.0.0.1:7000,127.0.0.1:7001
-```
+---
 
-> 仍支持旧式写法：对某条显式路由手动 `->middleware(new RateLimitMiddleware())` 会叠加一条路由级限流（注意避免与全局默认重复计数，优先用 `#[RateLimit]`）。
+## 11. 熔断（保护下游）
 
-在业务代码里手动限流某个操作，用门面：`rateLimit()->consume('op:'.$ip, 1)`。
-
-### 8.2 熔断（保护下游）
-
-熔断是**运行时无关的原语**（process / fiber / http / queue 通用），用 `breaker()`：
+限流保护「自身」，熔断保护「下游」——下游错误率过高时快速失败并降级，避免级联雪崩。
 
 ```php
-$result = breaker()->run('user-service',
-    fn() => http()->get('http://user-svc/1'),          // 受保护调用
-    fallback: fn(\Throwable $e) => ['cached' => true], // 熔断打开时降级
+$user = breaker()->run(
+    'user-service',
+    fn () => http()->get('http://user-svc/1'),
+    fallback: fn () => Resp::error('用户服务暂不可用', 503),
 );
 ```
 
-- 连续失败达阈值 → 熔断打开 → 后续请求**直接走 fallback**，不再打下游。
-- 配置见 `config/resilience.php`（可按服务名覆盖阈值）。
-
-> **限流 vs 熔断**：限流是「节流保护自己」（429）；熔断是「隔离下游故障、降级」（open 时 fallback）。语义不同，不要合并。
-
-### 8.3 国际化（i18n）
-
-- 语言包：`lang/{locale}/messages.php`，如 `lang/zh-CN/messages.php`：`['welcome' => '欢迎，%name%']`。
-- 使用：`lang('welcome', ['name' => 'Kode'])`，或 `translator()->trans(...)`。
-- 语种由 `LocaleMiddleware` 按 `Accept-Language` 自动选择，并回写 `Content-Language`。
+`breaker()` 是纯 PHP 状态机，跨运行时通用（多进程 worker / Fiber / 普通 handler / 队列消费都可用）。跨请求共享状态需接 Redis 等共享存储。
 
 ---
 
-## 9. 插件化（多模块 / 独立包）
+## 12. 定时任务
 
-大项目可拆成插件，每个插件自带路由：
-
-```
-plugins/
-└── blog/
-    └── routes.php     # 返回闭包，签名同 app/routes.php
-```
-
-开启自动发现（`.env`）：
-
-```env
-ROUTES_DISCOVER_PLUGINS=true
-```
-
-框架启动时会扫描 `plugins/*/routes.php`，给每条路由打来源标签 `plugin:blog`，`route:list` 也能看到。
-
-同理，定时任务也支持插件化：`config/schedule.php` 开启 `discover_plugins` 后，扫描 `plugins/*/src/Tasks`，来源标 `plugin:<name>`。
-
----
-
-## 10. 定时任务调度
-
-与属性路由同理念——约定优于配置、零侵入自动发现。
-
-### 10.1 声明任务
+用 `#[Cron('分 时 日 月 周')]` 声明，无需登记；`bin/kode cron` 自动发现并常驻调度（基于 `kode/process` 定时器）：
 
 ```php
-// app/Tasks/CleanupTask.php
 use Kode\Framework\Scheduling\Attributes\Cron;
 use Kode\Framework\Scheduling\Task;
 
-// 类级：调用 handle()
 #[Cron('0 0 * * *', name: 'nightly-cleanup', description: '每天 0 点清理')]
 final class CleanupTask extends Task
 {
-    public function handle(): void { /* ... */ }
-}
-
-// 方法级：一个类挂多条
-final class MonitorTask
-{
-    #[Cron('0,30 * * * *', name: 'health-ping')]
-    public function ping(): void { /* ... */ }
-
-    #[Cron('0 * * * *', name: 'metrics-summary')]
-    public function metrics(): void { /* ... */ }
+    public function handle(): void
+    {
+        // 业务逻辑；构造依赖由容器自动注入
+    }
 }
 ```
 
-`#[Cron]` 参数：`expression`（5 段 cron）、`name`（展示/日志）、`description`、`enabled`（临时停用）、`cluster`（集群至多一次）。
-
-### 10.2 运行与排查
-
 ```bash
-php bin/kode cron                       # 常驻调度（Ctrl+C 优雅退出，先跑完在途任务）
-php bin/kode cron --run=nightly-cleanup # 手动触发一次（调试 / CI）
-php bin/kode schedule:list             # 列出全部任务：NAME / 表达式 / 来源 / 模式 / TARGET
+php bin/kode cron                      # 常驻运行所有 #[Cron] 任务（Ctrl+C 优雅退出）
+php bin/kode cron --run=nightly-cleanup  # 立即手动触发一次（调试 / CI）
+php bin/kode schedule:list             # 列出所有已发现任务
 ```
 
-运行期日志示例：
-
-```
-[schedule] 调度器启动，共 3 条任务，按 Ctrl+C 停止
-[schedule] ✓ nightly-cleanup（0 0 * * *）耗时 12.34ms
-[schedule] ✗ health-ping 执行失败：SQLSTATE[...]
-```
-
-### 10.3 多进程 / 多机：集群至多一次
-
-默认 `Kode::cron()` 是**按进程**隔离的：master-worker 下每个 worker 各自触发同一表达式 → 重复 N 次。需要「全集群同一调度时刻至多执行一次」：
-
-```php
-#[Cron('0 0 * * *', cluster: true)]
-final class CleanupTask extends Task { /* ... */ }
-```
-
-`cluster: true` 改用 `Kode::cronCluster()`（分布式锁）。前提：先配置协调存储 `Cluster::make('redis'|'file'...)`（同机可零依赖自动择优 file 后端）。
-
-### 10.4 配置
-
-```php
-// config/schedule.php
-return [
-    'paths' => [
-        'app' => base_path('app/Tasks'),
-        // 'admin' => base_path('modules/admin/Tasks'),  // 多应用追加 key
-    ],
-    'discover_plugins' => (bool) env('SCHEDULE_DISCOVER_PLUGINS', false),
-];
-```
-
-### 10.5 开发期热重载（serve --watch）
-
-`bin/kode serve --watch` 自动监听 `app` / `config` / `src` / `public` / `bin` 下的 `.php` 变化，改动后**自动重启 serve 子进程**（Ctrl+C 优雅退出，先停子进程再退出）。看门狗把真实 serve 作为子进程，父进程用 `kode/process` 的 `FileMonitor` 轮询，与底层运行时（Native/fiber/Swoole/Workerman）无关，任何环境都能用。
-
-```bash
-php bin/kode serve --watch                 # 默认监听上述目录，排除 vendor/.git/storage/runtime 等
-php bin/kode serve --watch --port 8080     # 参数透传给子进程 serve（不含 --watch）
-```
-
-自定义监听目录（`config/server.php` 的 `watch.dirs`，相对项目根；不填则用默认）：
-
-```php
-'watch' => [
-    'dirs'    => ['app', 'config', 'src'],
-    'exclude' => ['vendor', '.git', 'storage', 'runtime', 'node_modules', '.workbuddy'],
-],
-```
-
-> 生产环境请用普通 `serve`（不带 `--watch`），避免文件轮询开销。
+- `--run=<name>` 手动触发；`#[Cron(..., enabled: false)]` 临时停用；`#[Cron(cluster: true)]` 走分布式锁（需先配置协调存储）。
+- 多应用：在 `config/schedule.php` 的 `paths` 追加更多目录 key。
 
 ---
 
-## 11. 控制台命令
+## 13. 多进程 HTTP 服务
 
-声明式定义（属性注解）：
+```bash
+php bin/kode serve                          # 默认 http://127.0.0.1:9527，worker=CPU 核数
+php bin/kode serve --port 8080 --workers 8
+php bin/kode serve --watch                  # 开发期热重载（监听 .php 变化自动重启）
+```
+
+每个 worker 独立重建应用，数据库连接 / 缓存句柄 / JWT 密钥等可变状态按进程隔离。`--watch` 仅用于开发，生产不要用。
+
+---
+
+## 14. 缓存 / 队列 / 数据库 / 事件 / HTTP 客户端 / 消息
+
+这些能力由对应的 kode 生态包提供，框架只做薄封装与接线。统一通过门面或全局助手使用：
+
+```php
+// 缓存（kode/cache）
+cache()->set('k', $v, 60);
+$v = cache()->get('k');
+Cache::put('k', $v);                 // 门面
+
+// 队列（kode/queue）
+queue()->push(new \App\Jobs\SendMail(['to' => 'a@b.com']));
+Queue::later(5, new \App\Jobs\SendMail([...]));
+
+// 数据库（kode/database）
+$rows = db()->select('SELECT * FROM users WHERE id = ?', [1]);
+DB::table('users')->where('id', 1)->first();
+
+// 事件（kode/event）
+event(new \App\Events\UserRegistered($uid));
+Event::listen(...);
+
+// HTTP 客户端（kode/http-client，PSR-18）
+$resp = http()->get('http://svc/1');
+$body = $resp->getBody()->getContents();
+
+// 消息（kode/messaging）
+messaging()->bus('memory')->publish('channel', $payload);
+Messaging::publish('channel', $payload);
+```
+
+各能力的完整 API、配置项（见 `config/cache.php`、`config/queue.php`、`config/database.php`、`config/event.php`、`config/http-client.php`、`config/messaging.php）与高级用法，请查阅对应 kode 包的文档。
+
+---
+
+## 15. 门面与全局助手
+
+| 助手 | 说明 |
+| --- | --- |
+| `app()` `config($k,$d)` `ctx()` `resolve($id)` | 核心（kode/core） |
+| `base_path()` `storage_path()` `env()` | 路径 / 环境 |
+| `logger()` / `Log::` | 日志 |
+| `cache()` / `Cache::` | 缓存 |
+| `event($e)` / `Event::` | 事件 |
+| `validator()->validate($d,$r)` / `Validator::` | 校验 |
+| `jwt()->issue($c)` / `Jwt::` | JWT |
+| `rateLimit()->consume($k,$n)` / `RateLimit::` | 限流 |
+| `breaker()->run($n,$t,$f)` / `Breaker::` | 熔断 |
+| `http()->get($u)` / `Http::` | HTTP 客户端 |
+| `messaging()` / `Messaging::` | 消息总线 |
+| `lang($k,$p)` / `translator()` / `Translator::` | 国际化 |
+| `queue()` / `Queue::` · `db()` / `DB::` · `process()` / `Process::` · `snowflake()` / `Snowflake::` | 队列 / 数据库 / 多进程 / 分布式 ID |
+| `exception_manager()` / `Exception::` | 异常管理器 |
+| `route($name, $params)` | 反向生成 URL |
+
+门面（`Cache`/`DB`/`Log`/`Jwt`/`RateLimit`/`Breaker`/`Http`/`Queue`/`Event`/`Messaging`/`Translator`/`Snowflake`/`Process`/`Validator`/`Exception`）继承 `Kode\Core\Facade`，用静态语法访问容器里的服务实例。
+
+---
+
+## 16. 控制台命令
+
+继承 `Kode\Framework\Console\Command`，用 `#[AsCommand]` 声明；一个命令一个类（kode/console 限制）：
 
 ```php
 use Kode\Console\Attribute\AsCommand;
@@ -462,176 +480,104 @@ use Kode\Framework\Console\Command;
 #[AsCommand(name: 'greet', description: '打招呼', usage: 'greet {name?} {--shout:bool}')]
 final class GreetCommand extends Command
 {
-    public function handle(): int
+    protected function handle(): int
     {
-        $name = $this->arg('name', 'world');
-        $this->line("Hello, {$name}!");
+        $name = $this->arg('name') ?? 'World';
+        $this->info($this->flag('shout') ? strtoupper("Hello, {$name}!") : "Hello, {$name}!");
         return 0;
     }
 }
 ```
 
-运行：
+内置方法：`arg()` / `flag()` / `opt()` / `info()` / `line()` / `warn()` / `error()` / `success()` / `table()`。运行：`php bin/kode console greet Kode --shout`。
 
-```bash
-php bin/kode console greet Kode --shout
-```
-
-命令放 `app/Console/Commands/`，框架自动扫描加载。内置 `route:list` 在 `src/Console/Commands/`（框架级，与业务命令隔离）。
+框架内置：`route:list`、`schedule:list`、`cron`（以及 `new` / `serve` 这类 `bin/kode` 一级命令）。
 
 ---
 
-## 11. 部署
+## 17. DI 与服务提供者
 
-### 11.1 多进程服务
+容器基于 `kode/di`。业务类构造函数 / 属性会自动注入：
 
-```bash
-php bin/kode serve --host 0.0.0.0 --port 9527 --workers 8
-```
+```php
+final class UserController extends Controller
+{
+    public function __construct(private UserService $svc) {}
 
-- `--workers` 控制 worker 进程数（按 CPU 核数调整）。
-- 进程模型由 `kode/process` 提供，框架已接线。
-
-### 11.2 反向代理（Nginx 示例）
-
-```nginx
-upstream kode {
-    server 127.0.0.1:9527;
-}
-server {
-    listen 80;
-    server_name api.example.com;
-    location / {
-        proxy_pass http://kode;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+    public function show(): array
+    {
+        return $this->json($this->svc->find((int) $this->param('id')));
     }
 }
 ```
 
-### 11.3 热重载（开发期）
-
-`serve --watch` 会在文件变更时自动重启 worker（基于 `kode/process` 的 `HotReloader`）。
+要注册自己的服务 / 接线点，写 `app/Providers/*ServiceProvider`（继承框架 `ServiceProvider`），并在 `config/app.php` 的 `providers` 数组里追加类名。框架内置 Provider 见 `src/Providers/`（Exception / Log / Cache / Event / Jwt / Validation / Limiting / Database / Queue / HttpClient / Messaging / Resilience / Translation / Http / Snowflake / Process / Console …）。
 
 ---
 
-## 12. 测试
+## 18. AOP 切面
 
-```bash
-vendor/bin/phpunit     # 运行 tests/ 下的单元测试
-```
-
-框架自带测试覆盖：统一响应、校验、熔断、i18n、限流等。新增业务代码建议在同一目录补 `*Test.php`。
-
----
-
-## 13. 常见设计问答
-
-**Q：响应是该封装好信封，还是让开发者直接返回数据/错误？**
-A：框架**默认标准响应**（成功直接数据、错误直接 HTTP 状态），与 Laravel/webman/Hyperf 等主流框架一致——少一层 `code/msg/data` 包装，前后端都更省事。同时保留两种出口：开 `config('response.envelope')=true` 即切到统一信封 `{code,msg,data}` 兼容旧契约；直接 `return 数组` 自动 JSON 化，返回原始 `Response` 可完全绕过。推荐「抛异常 + 标准响应」写法，关注点分离最干净。
-
-**Q：缓存目录为什么是 `storage` 而不是 `runtime`？**
-A：两者不冲突、无功能影响，只是约定不同：
-- `storage/`（cache、logs、sessions、framework cache）是**应用持久化运行产物**，类 Laravel 约定，适合进备份/监控。
-- `runtime/` 一般指**进程瞬时产物**（pid 文件、sockets、热重载临时态），`.gitignore` 已忽略 `/.runtime/`。
-框架把缓存/日志放 `storage`，符合主流习惯，你可随时在 `config/cache.php`、`config/logging.php` 改路径。
-
-**Q：路由功能（分组/嵌套/中间件/别名/直接返回）都要自己实现吗？**
-A：不需要——`kode/http` 已全部提供（分组、嵌套分组、路由级中间件、命名路由/别名、参数正则、默认参数、URL 反向生成、直接返回数组/Response）。框架只做薄封装与约定，开箱即用。
-
----
-
-## 14. 分布式 ID（Snowflake）
-
-需要全局唯一、趋势递增、可反解的 ID（订单号、消息 ID、分库分表主键）时，用 Twitter Snowflake 算法：`41 位时间戳 + 5 位数据中心 + 5 位机器 + 12 位序列`。
-
-门面 / 助手：
+基于 `kode/aop` 的原生属性切面，把日志 / 鉴权 / 重试等横切逻辑从业务里抽离：
 
 ```php
-use Kode\Framework\Facades\Snowflake;
+use Kode\Aop\Attribute\Aspect;
+use Kode\Aop\Attribute\Before;
 
-$id = Snowflake::id();              // 长整型，默认 worker=0/datacenter=0
-$id = snowflake()->id();            // 等价助手写法
-$parts = Snowflake::parse($id);     // ['worker_id'=>, 'datacenter_id'=>, 'timestamp'=>, 'sequence'=>]
-```
-
-自定义节点（多实例部署必须区分 `workerId`，否则会碰撞）：
-
-```php
-// config/snowflake.php 里声明，Provider 已按配置实例化单例
-$sf = new \Kode\Framework\Support\Snowflake(
-    workerId: (int) env('SNOWFLAKE_WORKER', 0),
-    datacenterId: (int) env('SNOWFLAKE_DATACENTER', 0),
-);
-```
-
-特性与边界：
-
-- **唯一 & 递增**：同一节点内毫秒级序列保证唯一，整体趋势递增（便于 B+Tree 索引）；
-- **时钟回拨保护**：轻微回拨（≤5s）自旋等待；大幅回拨（>5s）抛 `RuntimeException`，避免生成重复 ID；
-- **可反解**：`parse()` 还原节点与时间，便于排查问题；
-- **自定义 epoch**：构造函数第三参可设业务起始时间，延长可用年限。
-
-```bash
-# 单测覆盖：唯一性(2万)、单调(5千)、64位正整数、parse 往返、节点不相交、越界/回拨抛错
-vendor/bin/phpunit --filter SnowflakeTest
-```
-
----
-
-## 15. 常驻进程（Process）
-
-需要后台常驻运行的「周期任务」（心跳上报、队列消费、指标采集、连接保活）时，直接用 `kode/process` 的 **Daemon** 常驻进程运行器（v5.2.31+ 内置，基于 `fork()` + `Timer` 原语，自带监督 / 异常重生 / 优雅退出，并明确避开官方 Worker 池「事件循环空转不调用用户回调」的坑）。
-
-框架**不再自研底层运行器**，只做薄适配：用 `Worker` 定义业务契约、`ProcessManager` 负责注册表与无 fork 验证（`dryRun`）、`start()` 委托 Daemon 真正 fork 常驻进程。业务逻辑零重复实现。
-
-### 15.1 定义 Worker
-
-只需实现 `name()` 与 `handle()`，可选覆盖 `interval()` / `instances()` / `onStart()` / `onStop()`：
-
-```php
-// app/Process/HeartbeatWorker.php
-use Kode\Framework\Process\Worker;
-
-final class HeartbeatWorker extends Worker
+#[Aspect]
+final class LogAspect
 {
-    public function name(): string   { return 'heartbeat'; }
-    public function handle(): void   { /* 单次工作量，按 interval() 周期执行 */ }
-    public function interval(): float { return 5.0; }   // 每 5 秒一次，默认 1.0
-    public function instances(): int  { return 2; }     // fork 2 个子进程并行，默认 1
+    #[Before(\App\Services\UserService::class)]
+    public function before() { logger()->info('调用 UserService'); }
 }
 ```
 
-### 15.2 注册
+可用：`#[Aspect]` / `#[Before]` / `#[After]` / `#[Around]` / `#[AfterReturning]` / `#[AfterThrowing]` / `#[Pointcut]` / `#[Priority]`。示例见 `app/Aop/LogAspect.php`。
 
-在 `config/process.php` 的 `workers` 声明（无参 / 带构造参数两种写法）：
+---
 
-```php
-return [
-    'workers' => [
-        App\Process\HeartbeatWorker::class,                                  // 无参
-        ['class' => App\Process\CleanupWorker::class, 'config' => ['ttl' => 3600]], // 带参
-    ],
-];
+## 19. 插件
+
+`plugins/<name>/` 下的 `src/Controllers`、`routes.php`、调度任务会被**自动发现**，来源标记 `plugin:<name>`：
+
+- 控制器：`plugins/blog/src/Controllers` → 属性路由自动纳入。
+- 路由：`plugins/blog/routes.php` → 自动加载。
+- 定时任务：`plugins/blog/src/Tasks` → `bin/kode cron` 自动扫描（开启 `discover_plugins`）。
+
+无需在配置里逐条登记。
+
+---
+
+## 20. 部署到生产
+
+```dotenv
+# .env（生产）
+APP_DEBUG=false
+APP_NAME=myapp
+JWT_SECRET=<强随机串>
+RATE_LIMIT_DRIVER=redis
+REDIS_HOST=127.0.0.1
 ```
-
-框架启动时 `ProcessServiceProvider` 自动按配置实例化并注册到 `ProcessManager` 单例。门面 `Process` / 助手 `process()` 可随时访问：
-
-```php
-process()->count();          // 已注册 worker 数
-process()->has('heartbeat'); // 是否存在
-```
-
-### 15.3 运行与排查
 
 ```bash
-php bin/kode console process:list     # 列出已注册 worker（Name / Interval / Instances）
-php bin/kode console process:check    # dryRun：同步跑一遍 handle()，验证业务逻辑（不 fork）
-php bin/kode console process:start    # 真正 fork 常驻进程（需 CLI + ext-pcntl + ext-posix）
+# 用进程管理器拉起（不要用 --watch）
+php bin/kode serve --port 80 --workers 8
 ```
 
-- `process:check` 用 `dryRun()` **不依赖 pcntl / fork**，在 CI、单元测试、无 pcntl 环境也能验证 worker 可跑通；
-- `process:start` 为每个注册的 `Worker` 构建并运行一个 kode/process `Daemon`（Daemon 内部已 fork `instances()` 个 worker 子进程、按 `interval()` 周期调用 `handle()`、异常自动重生、捕获 `SIGTERM/SIGINT` 优雅退出）；多个不同 `Worker` 时主进程 fork 监督子进程各跑一个 Daemon。`handle()` 单次异常不拖垮整个 worker；
-- 当前环境不支持 fork 时，`start()` 明确抛 `RuntimeException` 提示改用 `dryRun()`。
+- `APP_DEBUG=false`：错误响应自动收敛细节，只记日志。
+- 关闭 `--watch`（那是开发热重载）。
+- 多 worker 下，共享状态（限流 / 熔断 / 会话 / 缓存）请用 Redis 等外部存储。
+- 用 supervisor / systemd 托管进程，保证崩溃自动重启。
 
-> 与 §10 定时任务的区别：定时任务是「到点触发一次」（cron 语义）；常驻进程是「按固定间隔不停循环」的常驻服务（心跳 / 消费语义）。按需求二选一或并存。
+---
+
+## 21. 测试
+
+框架用 PHPUnit。启动应用取容器：`$app = \Kode\Framework\Application::make($root);`，然后 `resolve(Foo::class)` 拿服务。例如断言某控制器方法被登记了限流：
+
+```php
+$app = \Kode\Framework\Application::make(dirname(__DIR__));
+$registry = resolve(\Kode\Framework\Http\RouteRegistry::class);
+// ...断言 registry->rateLimitsOf($route) 非空
+```
+
+异常路径可断言 `ExceptionMiddleware` 产出含 `location` / `chain` 的 JSON；JWT 可断言连续签发 `jti` 互不相同且无声明泄漏。

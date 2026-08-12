@@ -14,10 +14,12 @@
  */
 
 return [
-    // 任务目录（属性扫描）。key=来源标签，value=目录绝对路径。
-    // 多应用/模块化：追加更多 key 即可（如 'admin' => base_path('modules/admin/Tasks')）。
+    // 任务目录（属性扫描）。key=来源标签，value=相对项目根的目录。
+    // 配置期 app() 可能尚未就绪，base_path() 会退化成相对 CWD 的路径；
+    // bin/kode 在引导后会用真实的 basePath 拼成绝对路径。多应用/模块化：
+    // 追加更多 key 即可（如 'admin' => 'modules/admin/Tasks'）。
     'paths' => [
-        'app' => base_path('app/Tasks'),
+        'app' => 'app/Tasks',
     ],
 
     // 插件自动发现（默认关闭；开启后扫描 plugins/<name>/src/Tasks 作为独立模块来源）。

@@ -44,9 +44,12 @@ final class Messenger
     }
 
     /**
-     * 原始静态门面（需要 server/client/websocket 等高级能力时）。
+     * 取得 kode/messaging 静态门面类名（需要 server/client/websocket 等高级能力时，
+     * 直接用 {@see Messaging} 的静态方法：Messaging::server() / Messaging::client() 等）。
+     *
+     * 注意：Messaging 是静态门面（构造器私有，不可实例化），此处返回其类名供静态调用。
      */
-    public function raw(): Messaging
+    public function raw(): string
     {
         return Messaging::class;
     }

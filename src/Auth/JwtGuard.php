@@ -34,32 +34,36 @@ final class JwtGuard implements AuthGuard
     }
 
     /**
-     * 签发令牌。claims 中的 uid/sub 会被同时写入标准声明。
+     * 签发令牌。claims 中的 uid/sub 等会被映射为标准 JWT 声明。
+     *
+     * 委托 kode/jwt 的守卫签发：每个守卫内部持有独立 Builder 实例，
+     * 不会像共享单例那样冻结 jti / 累积 claims（旧实现会导致后续令牌
+     * 复用首签 jti 并泄漏前次声明）。
      */
     public function issue(array $claims, string $guard = 'api'): string
     {
         $guardConfig = $this->guardConfig($guard);
-
-        $builder = KodeJwt::builder();
-        $builder->setClaims($claims);
-
-        if (isset($claims['uid'])) {
-            $builder->setUid($claims['uid']);
-        }
-        if (isset($claims['sub'])) {
-            $builder->setSubject($claims['sub']);
-        }
-
-        // SSO 守卫要求必须携带 platform 声明；缺省时从 guard 配置读取。
-        $platform = $claims['platform'] ?? $guardConfig['platform'] ?? null;
-        if ($platform !== null && $platform !== '') {
-            $builder->setPlatform((string) $platform);
-        }
-
         $ttl = (int) ($guardConfig['ttl'] ?? 3600);
-        $builder->setIssuedAt(time())->setExpiration(time() + $ttl);
 
-        return $builder->build();
+        $payload = new Payload(
+            uid: $claims['uid'] ?? null,
+            username: $claims['username'] ?? null,
+            platform: $claims['platform'] ?? $guardConfig['platform'] ?? 'default',
+            exp: (int) ($claims['exp'] ?? time() + $ttl),
+            iat: (int) ($claims['iat'] ?? time()),
+            jti: $claims['jti'] ?? ('jwt_' . bin2hex(random_bytes(16))),
+            roles: $claims['roles'] ?? null,
+            perms: $claims['perms'] ?? null,
+            custom: $claims['custom'] ?? [],
+            nonce: $claims['nonce'] ?? null,
+            audience: $claims['aud'] ?? $claims['audience'] ?? null,
+            issuer: $claims['iss'] ?? $claims['issuer'] ?? null,
+            subject: $claims['sub'] ?? $claims['subject'] ?? null,
+        );
+
+        $result = KodeJwt::guard($guard)->issue($payload);
+
+        return (string) $result['token'];
     }
 
     /**

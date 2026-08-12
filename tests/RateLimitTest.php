@@ -175,4 +175,23 @@ final class RateLimitTest extends TestCase
         // ProductsController 有 4 条属性路由，均继承了类级 #[RateLimit]。
         self::assertGreaterThanOrEqual(4, $tagged);
     }
+
+    /**
+     * 守护 C-1 修复：通过容器解析限流单例（Limiter::class / rate_limit 别名 / RateLimit 门面）
+     * 不应触发「类不存在」致命错误（旧实现引用了已删除的 RateLimitRule）。
+     */
+    public function testLimiterSingletonResolvesFromContainer(): void
+    {
+        Application::make(dirname(__DIR__));
+
+        /** @var \Kode\Limiting\Limiter $limiter */
+        $limiter = resolve(\Kode\Limiting\Limiter::class);
+        self::assertInstanceOf(\Kode\Limiting\Limiter::class, $limiter);
+
+        // 别名与门面解析到同一单例。
+        self::assertSame($limiter, resolve('rate_limit'));
+
+        $result = $limiter->consume('smoke:' . uniqid(), 1);
+        self::assertTrue($result->isAllowed());
+    }
 }

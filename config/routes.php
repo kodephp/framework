@@ -17,10 +17,12 @@
  */
 
 return [
-    // 属性路由扫描目录（key=来源标签，value=控制器目录）。递归扫描子目录。
+    // 属性路由扫描目录（key=来源标签，value=相对项目根的控制器目录）。递归扫描子目录。
+    // 注意：此处只写「相对项目根」的子路径，框架在引导期（app() 尚未就绪时）会用
+    // 真实的 path.base 拼接成绝对路径，避免依赖当前工作目录（CWD）。
     'attributes' => [
         'controllers' => [
-            'app' => base_path('app/Http/Controllers'),
+            'app' => 'app/Http/Controllers',
         ],
     ],
 

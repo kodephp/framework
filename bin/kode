@@ -422,8 +422,9 @@ class KodeScheduleCommand
 
         $dirs = [];
         foreach ($cfg['paths'] ?? [] as $label => $dir) {
-            // config 里已用 base_path() 包装为绝对路径；相对值兜底再包一次。
-            $dirs[$label] = is_absolute_path($dir) ? $dir : base_path($dir);
+            // config 里是「相对项目根」的子路径；用 Application 的真实 basePath 拼成绝对路径，
+            // 保证从不同工作目录启动时任务发现一致（不依赖当前 CWD）。
+            $dirs[$label] = is_absolute_path($dir) ? $dir : $app->basePath($dir);
         }
 
         if (!empty($cfg['discover_plugins'])) {

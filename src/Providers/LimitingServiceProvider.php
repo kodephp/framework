@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Providers;
 
+use Kode\Framework\Http\RateLimit\Algorithm;
 use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
-use Kode\Framework\Http\RateLimit\RateLimitRule;
 use Kode\Limiting\Enum\RedisMode;
 use Kode\Limiting\Enum\LimiterType;
 use Kode\Limiting\Limiter;
@@ -48,7 +48,7 @@ final class LimitingServiceProvider extends ServiceProvider
     private function build(array $config): Limiter
     {
         $driver = (string) ($config['driver'] ?? 'memory');
-        $type = RateLimitRule::typeFromName((string) ($config['algorithm'] ?? 'token_bucket'));
+        $type = Algorithm::fromName((string) ($config['algorithm'] ?? 'token_bucket'));
         $capacity = (int) ($config['capacity'] ?? 10);
         $rate = (float) ($config['rate'] ?? 1.0);
 

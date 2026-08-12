@@ -39,7 +39,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.7.2';
+    public const VERSION = '0.7.3';
 
     private static ?Application $instance = null;
 

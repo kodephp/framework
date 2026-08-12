@@ -264,8 +264,40 @@ final class HttpServiceProvider extends ServiceProvider
 
         /** @var array<string, string> $dirs */
         $dirs = (array) $this->config('routes.attributes.controllers', []);
+        // 配置里写的是「相对项目根」的子路径；引导期 app() 尚未就绪，base_path()
+        // 会退化为相对 CWD，故此处用真实的 path.base 拼成绝对路径，避免依赖工作目录。
+        $base = (string) $this->config('path.base', '');
+        $dirs = $this->resolveAbsoluteDirs($dirs, $base);
         $dirs = $this->withPluginControllerDirs($dirs);
         $scanner->scan($dirs);
+    }
+
+    /**
+     * 把配置中的「相对项目根」目录解析为绝对路径。
+     *
+     * 配置期 app() 可能尚未就绪，base_path() 会退化成相对 CWD 的路径；
+     * 此处统一用真实的 path.base 拼接，保证从不同工作目录启动时路由发现一致。
+     *
+     * @param array<string, string> $dirs
+     * @return array<string, string>
+     */
+    private function resolveAbsoluteDirs(array $dirs, string $base): array
+    {
+        if ($base === '') {
+            return $dirs;
+        }
+
+        $resolved = [];
+        foreach ($dirs as $key => $dir) {
+            $resolved[$key] = $this->isAbsolute((string) $dir) ? (string) $dir : $base . '/' . ltrim((string) $dir, '/');
+        }
+
+        return $resolved;
+    }
+
+    private function isAbsolute(string $path): bool
+    {
+        return $path !== '' && ($path[0] === '/' || preg_match('#^[A-Za-z]:[\\\\/]#', $path) === 1);
     }
 
     /**
