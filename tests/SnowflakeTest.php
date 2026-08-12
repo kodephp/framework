@@ -5,18 +5,26 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\Support\Snowflake;
+use Kode\Process\Exceptions\ClusterException;
+use Kode\Process\Cluster\Snowflake as ClusterSnowflake;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Snowflake 分布式 ID 生成器单元测试。
+ * Snowflake 分布式 ID（薄适配）单元测试。
  *
- * 纯 PHP，不依赖 pcntl / 网络，直接验证算法不变量。
+ * 算法由 kode/process 的 Cluster/Snowflake 提供；本测试验证框架适配层
+ * （Support/Snowflake 的 id()/parse() 命名对齐）与端到端不变量。
  */
 final class SnowflakeTest extends TestCase
 {
+    private function make(int $workerId, int $epoch = 1704067200000): Snowflake
+    {
+        return new Snowflake(new ClusterSnowflake($workerId, $epoch));
+    }
+
     public function testIdsAreUnique(): void
     {
-        $sf = new Snowflake(1, 1);
+        $sf = $this->make(1);
         $seen = [];
         for ($i = 0; $i < 20000; $i++) {
             $id = $sf->id();
@@ -27,7 +35,7 @@ final class SnowflakeTest extends TestCase
 
     public function testIdsAreMonotonicallyIncreasing(): void
     {
-        $sf = new Snowflake(2, 1);
+        $sf = $this->make(2);
         $prev = 0;
         for ($i = 0; $i < 5000; $i++) {
             $id = $sf->id();
@@ -38,7 +46,7 @@ final class SnowflakeTest extends TestCase
 
     public function testIdIsPositive64BitInteger(): void
     {
-        $sf = new Snowflake(3, 1);
+        $sf = $this->make(3);
         $id = $sf->id();
         self::assertIsInt($id);
         self::assertGreaterThan(0, $id);
@@ -48,12 +56,11 @@ final class SnowflakeTest extends TestCase
 
     public function testParseRoundTrips(): void
     {
-        $sf = new Snowflake(5, 2);
+        $sf = $this->make(5);
         $id = $sf->id();
         $parts = $sf->parse($id);
 
         self::assertSame(5, $parts['worker_id']);
-        self::assertSame(2, $parts['datacenter_id']);
         self::assertGreaterThan(0, $parts['timestamp']);
         self::assertGreaterThanOrEqual(0, $parts['sequence']);
         self::assertLessThanOrEqual(4095, $parts['sequence']);
@@ -61,8 +68,8 @@ final class SnowflakeTest extends TestCase
 
     public function testDifferentNodesProduceDisjointIds(): void
     {
-        $a = new Snowflake(0, 0);
-        $b = new Snowflake(31, 31);
+        $a = $this->make(0);
+        $b = $this->make(1023);
 
         $onlyA = [];
         $onlyB = [];
@@ -78,34 +85,28 @@ final class SnowflakeTest extends TestCase
 
     public function testRejectsOutOfRangeWorkerId(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        new Snowflake(32, 0);
-    }
-
-    public function testRejectsOutOfRangeDatacenterId(): void
-    {
-        $this->expectException(\InvalidArgumentException::class);
-        new Snowflake(0, 32);
+        $this->expectException(ClusterException::class);
+        new ClusterSnowflake(1024);
     }
 
     public function testLargeClockRollbackThrows(): void
     {
-        $sf = new Snowflake(1, 1);
-        $sf->id();
+        $cluster = new ClusterSnowflake(1, 1704067200000);
+        $cluster->next();
 
         // 把内部 lastTimestamp 拨到未来 10s，模拟大幅时钟回拨。
-        $ref = new \ReflectionProperty($sf, 'lastTimestamp');
+        $ref = new \ReflectionProperty(ClusterSnowflake::class, 'lastTimestamp');
         $ref->setAccessible(true);
-        $ref->setValue($sf, (int) (microtime(true) * 1000) + 10000);
+        $ref->setValue($cluster, (int) (microtime(true) * 1000) + 10000);
 
-        $this->expectException(\RuntimeException::class);
-        $sf->id();
+        $this->expectException(ClusterException::class);
+        $cluster->next();
     }
 
     public function testCustomEpochIsHonored(): void
     {
         $epoch = 1700000000000;
-        $sf = new Snowflake(0, 0, $epoch);
+        $sf = $this->make(0, $epoch);
         $parts = $sf->parse($sf->id());
 
         // 解析出的绝对时间戳应 >= 自定义 epoch。

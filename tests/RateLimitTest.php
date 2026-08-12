@@ -8,10 +8,11 @@ use Kode\Framework\Application;
 use Kode\Framework\Http\Middleware\RateLimitMiddleware;
 use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
-use Kode\Framework\Http\RateLimit\RateLimitRule;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Tests\Fixtures\Controllers\RateLimitedController;
 use Kode\Http\Routing\Router;
+use Kode\Limiting\Attribute\RateLimit;
+use Kode\Limiting\Enum\LimiterType;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
@@ -58,7 +59,7 @@ final class RateLimitTest extends TestCase
         $config = ['driver' => 'memory', 'capacity' => 10, 'rate' => 1.0, 'algorithm' => 'token_bucket'];
         $factory = new LimiterFactory($config);
 
-        $rule = RateLimitRule::fromConfig($config);
+        $rule = new RateLimit(capacity: 10, rate: 1.0);
         $a = $factory->make($rule);
         $b = $factory->make($rule);
 
@@ -76,7 +77,7 @@ final class RateLimitTest extends TestCase
         $factory = new LimiterFactory(['driver' => 'memory', 'capacity' => 10, 'rate' => 1.0]);
 
         // 受限路径：容量 2，单次消耗 1。
-        $rules = [new RateLimitRule(2, 1.0, null, \Kode\Limiting\Enum\LimiterType::TOKEN_BUCKET)];
+        $rules = [new RateLimit(capacity: 2, rate: 1.0, type: LimiterType::TOKEN_BUCKET)];
         $route = $router->add('GET', '/limited', fn() => new Response(200));
         $registry->tagRateLimits($route, $rules);
 

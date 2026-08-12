@@ -50,26 +50,26 @@ final class ValidatorTest extends TestCase
         self::assertSame([], $ok);
     }
 
-    public function testControllerOkFailProduceEnvelope(): void
+    public function testControllerJsonErrorProduceStandardResponse(): void
     {
         $controller = new class extends Controller {
-            public function okRun(): \Kode\Http\Response
+            public function jsonRun(): \Kode\Http\Response
             {
-                return $this->ok(['id' => 1], 'ok');
+                return $this->json(['id' => 1]);
             }
 
-            public function failRun(): \Kode\Http\Response
+            public function errorRun(): \Kode\Http\Response
             {
-                return $this->fail('bad', 'E400', 400);
+                return $this->error('bad', 400);
             }
         };
 
-        $ok = json_decode((string) $controller->okRun()->getBody(), true);
-        self::assertSame(0, $ok['code']);
-        self::assertSame(['id' => 1], $ok['data']);
+        $ok = json_decode((string) $controller->jsonRun()->getBody(), true);
+        self::assertSame(['id' => 1], $ok);
 
-        $fail = json_decode((string) $controller->failRun()->getBody(), true);
-        self::assertSame('E400', $fail['code']);
+        $fail = json_decode((string) $controller->errorRun()->getBody(), true);
+        self::assertSame('bad', $fail['message']);
+        self::assertSame(400, $controller->errorRun()->getStatusCode());
     }
 
     public function testValidationExceptionCarriesErrors(): void

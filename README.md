@@ -56,9 +56,9 @@ Kode\Framework\Application          ← 薄外壳（.env、path.base、收集 pr
 客户端 → [RequestId] → [Cors] → [Security] → [路由级 Auth/RateLimit] → 控制器
 ```
 
-- `RequestIdMiddleware`：分配/透传 `X-Request-Id`（UUID v4），回写响应头，便于链路追踪。
-- `CorsMiddleware`：`Access-Control-*`；`OPTIONS` 预检直接 204；`allowed_origins` 支持 `*`/单域名/数组白名单，凭证模式禁通配。
-- `SecurityHeadersMiddleware`：`X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / `HSTS`。
+- `RequestId`（来自 `kode/http`）：分配/透传 `X-Request-Id`（24 位 hex），回写响应头，便于链路追踪。
+- `CorsMiddleware`（来自 `kode/http`）：`Access-Control-*`；`OPTIONS` 预检直接 204；`allowed_origins` 支持 `*`/单域名/数组白名单，凭证模式禁通配。
+- `SecurityHeaders`（来自 `kode/http`）：`X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / `HSTS`。
 
 ### 健康检查 / 探针
 
@@ -69,11 +69,27 @@ curl http://127.0.0.1:9527/ping
 # {"pong":true}
 ```
 
-### 开发者友好错误页（安全兜底）
+### 结构化错误响应（默认 JSON，可追踪到出错位置）
 
-- 开发期（`app.debug=true`）浏览器访问出错：渲染 Whoops 风格的友好调试页（异常类型、消息、文件行号、带源码上下文的堆栈、请求/环境信息）；API 客户端（`Accept: application/json`）仍拿结构化 JSON（含 `trace`）。
-- 生产环境（`app.debug=false`）：一律返回极简错误（仅 `message`，不泄露内部信息与堆栈），并记日志。绝不把调试页暴露给公网。
-- `ValidationException` → `422`（标准模式 `errors` 进根级；信封模式进 `data`）；其它异常 → `500`；404 → `404`；405 → `405`。
+框架是 API 框架，**默认不渲染任何 HTML 错误页**，所有异常都被全局 `ExceptionMiddleware` 接管，经由 `kode/exception` 的 `ExceptionManager` + `UnifiedResponseFormatter` 直接产出结构化 JSON：
+
+```json
+{
+  "code": 50000,
+  "msg": "用户不存在",
+  "type": "RuntimeException",
+  "trace_id": "9f2c...",
+  "span_id": "a1b2...",
+  "location": { "file": "app/Services/UserService.php", "line": 42, "method": "App\\Services\\UserService::find" },
+  "context": { },
+  "chain": [ "app/Services/UserService.php:42", "app/Http/Controllers/UserController.php:17" ]
+}
+```
+
+- 开发期（`app.debug=true`）：响应中含 `location`（出错文件/行/方法）与 `chain`（完整调用链），可直接定位到源码位置，便于排查。
+- 生产环境（`app.debug=false`）：自动收敛绝对路径与系统异常细节，仅保留必要信息并记日志，绝不泄露内部堆栈。
+- `ValidationException` → `422`（附 `errors`）；其它异常 → `500`；404 → `404`；405 → `405`。
+- 想获取管理器实例：`exception_manager()` 助手或 `Exception` 门面（id = `Kode\Exception\ExceptionManager::class`）。
 
 ## 韧性层：限流 vs 熔断
 

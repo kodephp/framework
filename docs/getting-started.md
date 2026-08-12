@@ -219,7 +219,7 @@ public function store(): array
 | --- | --- |
 | 访问 502 / 连不上 | 端口被旧进程占用。`lsof -i tcp:9527` 找到进程 `kill` 掉，重启 `serve`。 |
 | 改了路由没生效 | 路由在 `app/routes.php`；多进程下重启 `serve` 才加载。 |
-| 返回空 / 500 | 看 `storage/logs/app.log`；`APP_DEBUG=true` 时浏览器会显示开发者友好的调试页，API 客户端拿到含栈信息的 JSON。 |
+| 返回空 / 500 | 看 `storage/logs/app.log`；框架是 API 框架，异常默认返回结构化 JSON（开发期含 `location` 文件/行号与 `chain` 调用链，生产期自动收敛细节），不存在 HTML 调试页。 |
 | 报错 "Class not found" | 新加了类？跑 `composer dump-autoload`。 |
 | 想看所有路由 | 命令行：`php bin/kode console route:list`（按分组展示数量）。 |
 

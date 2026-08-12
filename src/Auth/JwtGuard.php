@@ -64,15 +64,18 @@ final class JwtGuard implements AuthGuard
 
     /**
      * 校验令牌并返回载荷（失败抛异常）。
+     *
+     * 委托 kode/jwt 的 GuardInterface 实例（KodeJwt::guard）处理，
+     * 框架只保留「claims 数组 → 签发」「令牌 → 校验」的薄适配与契约封装。
      */
     public function authenticate(string $token, string $guard = 'api'): Payload
     {
-        return KodeJwt::authenticate($token, $guard);
+        return KodeJwt::guard($guard)->authenticate($token);
     }
 
     public function invalidate(string $token, string $guard = 'api'): bool
     {
-        return KodeJwt::invalidate($token, $guard);
+        return KodeJwt::guard($guard)->invalidate($token);
     }
 
     /**

@@ -56,7 +56,7 @@ $app->get('/me', fn() => resolve(UserController::class)->me())
     ->middleware(new \Kode\Framework\Http\Middleware\AuthMiddleware());
 ```
 
-框架已内置中间件：`AuthMiddleware`（JWT 鉴权）、`RateLimitMiddleware`（限流）、`CorsMiddleware`、`SecurityHeadersMiddleware`、`RequestIdMiddleware`、`LocaleMiddleware`。
+框架已内置中间件：`AuthMiddleware`（JWT 鉴权）、`RateLimitMiddleware`（限流）、`CorsMiddleware` / `SecurityHeaders` / `RequestId`（来自 `kode/http`，由 `HttpServiceProvider` 根据 config 开关装配）、`LocaleMiddleware`。
 
 ### 1.5 直接返回 vs 信封
 
@@ -146,7 +146,7 @@ final class ProductsController extends Controller
 
 ### 2.2 异常自动转响应（核心机制）
 
-框架的立场是：**你不必在每个方法里手写 try/catch 拼格式**。全局错误处理器（`ErrorPageMiddleware` + `ErrorRenderer`）自动把异常转成响应：
+框架是 API 框架，全局错误处理器（`ExceptionMiddleware` + `kode/exception` 的 `ExceptionManager` / `UnifiedResponseFormatter`）**默认直接产出结构化 JSON，不渲染任何友好错误页**。你不必在每个方法里手写 try/catch 拼格式：
 
 | 异常 / 场景 | 标准模式（HTTP） | 信封模式（code） |
 | --- | --- | --- |
@@ -157,7 +157,7 @@ final class ProductsController extends Controller
 | `RateLimitMiddleware` 拦截 | 429 | `E429` |
 | 其它未捕获异常 | 500 | `E500` |
 
-开发期（`app.debug=true`）浏览器访问还会看到 Whoops 风格的**友好调试页**（堆栈 + 源码上下文 + 请求/环境）；生产期只返回极简错误并记日志，绝不泄露堆栈。
+错误响应统一字段：`code` / `msg` / `type` / `trace_id` / `span_id` / `location{file,line,method}` / `context` / `chain`。开发期（`app.debug=true`）包含可定位到源码的 `location` 与 `chain`；生产期自动收敛绝对路径与系统细节，仅记日志不泄露。
 
 例子：业务里直接抛领域异常即可，格式交给框架：
 

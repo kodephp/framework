@@ -1,58 +1,33 @@
 <?php
 
 /*
- * HTTP 响应与错误页配置
+ * HTTP 响应与错误处理配置
  *
- * 设计立场（对齐 Laravel / webman / Hyperf 等主流框架）：
- *   - 框架**默认采用标准响应**：成功直接返回数据、错误直接带 HTTP 状态返回，
- *     不再强制统一的 {code, msg, data} 信封（那种风格更适合部分内网中文 API 契约）。
- *   - 需要「统一信封」的团队，把 envelope 设为 true 即可让 ok()/fail()/auto() 产出信封。
- *   - 开发期（app.debug = true）访问出错时，浏览器会看到 Whoops 风格的友好调试页；
- *     API 客户端（Accept: application/json）仍拿到结构化 JSON（含 trace）。
+ * 框架采用标准响应（对齐 Laravel / webman / Hyperf）：成功直接返回数据 JSON，
+ * 错误直接带 HTTP 状态返回，不套 {code,msg,data} 信封。信封由开发者自行组装。
+ *
+ * 错误处理：
+ *   - 统一交由 kode/exception 的 ExceptionManager + UnifiedResponseFormatter 完成；
+ *   - 默认即结构化 JSON，开发环境（app.debug=true）含 file / line / chain，
+ *     可直接追踪到出错的源文件与行号；生产环境（app.debug=false）自动收敛
+ *     绝对路径与系统异常细节（统一 message）。
+ *   - 框架不提供「开发者友好 HTML 调试页」——本就是 API 框架。
+ *
+ * 见 src/Providers/ExceptionServiceProvider.php 与 src/Http/Middleware/ExceptionMiddleware.php。
  */
 
 return [
     /*
-     * 是否启用统一信封 {code, msg, data}。
-     *
-     *   false（默认）：标准模式。
-     *     - 成功：Resp::json($data) / return [...]，直接返回数据 JSON。
-     *     - 错误：Resp::error($msg, $status)，返回 {"message": "...", ...} 带 HTTP 状态。
-     *   true：信封模式。
-     *     - 成功：Resp::ok($data) 返回 {code:0, msg, data}。
-     *     - 错误：Resp::fail($msg, $code, $status) 返回 {code, msg}。
-     *
-     * 无论哪种模式，Resp::auto() 都会跟随此开关自动选择；Controller::respond() 同理。
-     * 也可用更直白的别名：envelope('user.list', $data, ...)。
-     */
-    'envelope' => (bool) env('RESPONSE_ENVELOPE', false),
-
-    /*
-     * 信封模式下的键名（仅 envelope=true 时生效）。
-     */
-    'envelope_keys' => [
-        'code' => 'code',
-        'msg'  => 'msg',
-        'data' => 'data',
-    ],
-
-    /*
-     * 开发期错误页（Whoops 风格）。
-     *
-     *   仅当 app.debug = true 且请求方为浏览器（Accept 含 text/html）时渲染。
-     *   生产环境（debug=false）一律返回极简 JSON / 文本，绝不泄露堆栈。
-     */
-    'error_page' => [
-        'enabled' => (bool) env('ERROR_PAGE', true),
-        // 调试页顶部品牌名（纯展示）。
-        'brand'   => 'Kode Framework',
-    ],
-
-    /*
-     * 标准错误响应的默认键名（非信封模式）。
+     * 标准错误响应的默认键名（非信封模式，由 Resp::error 使用）。
      */
     'error_keys' => [
         'message' => 'message',
         'errors'  => 'errors',
     ],
+
+    /*
+     * kode/exception 生产模式收敛后的对外提示语（production 下系统异常不泄露内部细节）。
+     * 如需自定义覆盖，可在 config 中设置后由 ExceptionServiceProvider 注入格式化器。
+     */
+    'production_message' => '系统繁忙，请稍后重试',
 ];

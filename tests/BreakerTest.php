@@ -6,23 +6,24 @@ namespace Kode\Framework\Tests;
 
 use Kode\Framework\Resilience\Breaker;
 use Kode\Framework\Resilience\CircuitOpenException;
-use Kode\Framework\Resilience\InMemoryBreaker;
+use Kode\Framework\Resilience\FiberBreaker;
+use Kode\Fibers\Core\CircuitBreaker as FiberCircuitBreaker;
 use PHPUnit\Framework\TestCase;
 
 /**
- * 熔断器单元测试：直接构造 Breaker（注入框架中性 InMemoryBreaker 引擎工厂），
+ * 熔断器单元测试：直接构造 Breaker（注入 FiberBreaker 引擎工厂，算法委托 kode/fibers），
  * 验证成功放行、失败熔断、降级 fallback 与状态机语义。
- *
- * 验证点：Breaker 仅依赖 CircuitBreaker 契约，运行时无关（不绑定 kode/fibers）。
  */
 final class BreakerTest extends TestCase
 {
     private function makeBreaker(int $threshold = 2, float $timeout = 1.0): Breaker
     {
-        $factory = static fn(string $name, array $config): InMemoryBreaker => new InMemoryBreaker(
-            failureThreshold: $threshold,
-            recoveryTimeout: $timeout,
-            halfOpenMaxCalls: 1,
+        $factory = static fn(string $name, array $config): FiberBreaker => new FiberBreaker(
+            new FiberCircuitBreaker(
+                failureThreshold: $threshold,
+                recoveryTimeout: $timeout,
+                halfOpenMaxCalls: 1,
+            )
         );
 
         return new Breaker([], $factory);

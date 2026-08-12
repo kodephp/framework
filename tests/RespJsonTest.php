@@ -9,7 +9,7 @@ use Kode\Http\Response;
 use PHPUnit\Framework\TestCase;
 
 /**
- * 标准响应（无信封）单元测试：Resp::json / Resp::error / Resp::auto。
+ * 标准响应（无信封）单元测试：Resp::json / Resp::error / Resp::make。
  */
 final class RespJsonTest extends TestCase
 {
@@ -56,10 +56,13 @@ final class RespJsonTest extends TestCase
         self::assertArrayNotHasKey('data', $body);
     }
 
-    public function testAutoFollowsEnvelopeConfig(): void
+    public function testMakeBuildsJsonResponseBody(): void
     {
-        // envelope=false（默认）→ 标准 JSON
-        $resp = Resp::auto(['id' => 1], 'ok', 0, 200);
-        self::assertSame(['id' => 1], $this->decode($resp));
+        $resp = Resp::make(['id' => 1], 201, ['X-Trace' => 'abc']);
+        $body = $this->decode($resp);
+
+        self::assertSame(201, $resp->getStatusCode());
+        self::assertSame(['id' => 1], $body);
+        self::assertSame('abc', $resp->getHeaderLine('X-Trace'));
     }
 }

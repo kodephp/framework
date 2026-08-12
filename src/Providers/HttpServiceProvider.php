@@ -7,23 +7,22 @@ namespace Kode\Framework\Providers;
 use Kode\Attributes\Reader;
 use Kode\Framework\Application;
 use Kode\Framework\Http\ControllerScanner;
-use Kode\Framework\Http\Middleware\CorsMiddleware;
 use Kode\Framework\Http\Middleware\LocaleMiddleware;
-use Kode\Framework\Http\Middleware\RequestIdMiddleware;
-use Kode\Framework\Http\Middleware\SecurityHeadersMiddleware;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Providers\ServiceProvider;
+use Kode\Exception\ExceptionManager;
 use Kode\Framework\Http\Resp;
-use Kode\Framework\Http\ErrorRenderer;
 use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
 use Kode\Framework\Http\Middleware\RateLimitMiddleware;
+use Kode\Framework\Http\Middleware\ExceptionMiddleware;
 use Kode\Framework\Translation\Translator;
-use Kode\Framework\Http\Middleware\ErrorPageMiddleware;
 use Kode\Http\App;
+use Kode\Http\Middleware\CorsMiddleware;
 use Kode\Http\Middleware\JsonErrorHandlerMiddleware;
 use Kode\Http\Middleware\MiddlewareDispatcher;
-use Psr\Log\LoggerInterface;
+use Kode\Http\Middleware\RequestId;
+use Kode\Http\Middleware\SecurityHeaders;
 
 /**
  * HTTP 服务提供者
@@ -50,35 +49,30 @@ final class HttpServiceProvider extends ServiceProvider
     {
         /** @var App $app */
         $app = $this->container->get(App::class);
-        $debug = (bool) $this->config('app.debug', false);
 
-        /** @var LoggerInterface $logger */
-        $logger = $this->container->get(LoggerInterface::class);
+        // 用框架异常中间件替换 kode/http 默认的 JsonErrorHandlerMiddleware：
+        // 错误响应 100% 交给 kode/exception（结构化 JSON，含 file/line/chain，无 HTML 调试页）。
+        $this->pipeExceptionHandling($app);
 
-        // 用框架自有的 ErrorPageMiddleware 替换 kode/http 默认的 JsonErrorHandlerMiddleware，
-        // 以完全掌控错误响应形态（开发期调试页 / 标准 JSON），并规避部分 kode 生态版本组合下
-        // JsonErrorHandlerMiddleware 因 instanceof HttpException 触发的类声明冲突。
-        $this->replaceErrorHandling($app, $debug, $logger);
+        // 404 / 405：API 框架统一返回标准 JSON（不含堆栈，异常由 ExceptionMiddleware 处理）。
+        $app->notFound(fn(): \Kode\Http\Response => Resp::error('Not Found', 404));
 
-        // 404 / 405：直接由 ErrorRenderer 产出（调试期浏览器显示调试页，否则标准 JSON）。
-        $app->notFound(fn(?\Psr\Http\Message\ServerRequestInterface $request = null) => ErrorRenderer::renderMessage(
-            'Not Found', 404, $request, $debug
-        ));
-
-        $app->methodNotAllowed(fn(?\Psr\Http\Message\ServerRequestInterface $request = null) => ErrorRenderer::renderMessage(
-            'Method Not Allowed', 405, $request, $debug
-        ));
+        $app->methodNotAllowed(fn(): \Kode\Http\Response => Resp::error('Method Not Allowed', 405));
 
         // ---- 全局中间件链（顺序：追踪 → CORS → 安全头）----
         // 这些是企业级 API 基础设施，默认开启、配置驱动，可按需关闭。
-        $app->use(new RequestIdMiddleware([
-            'enabled' => !empty($this->config('security.request_id', true)),
-            'request_id_allow_client' => !empty($this->config('security.request_id_allow_client', true)),
-        ]));
+        // 实现全部委托 kode/http 原生中间件，框架只做「配置映射 + 开关」胶水。
+        if (!empty($this->config('security.request_id', true))) {
+            $app->use(new RequestId(header: 'X-Request-Id'));
+        }
 
-        $app->use(new CorsMiddleware((array) $this->config('cors', [])));
+        if (!empty($this->config('cors.enabled', true))) {
+            $app->use(new CorsMiddleware($this->corsConfig()));
+        }
 
-        $app->use(new SecurityHeadersMiddleware((array) $this->config('security', [])));
+        if (!empty($this->config('security.enabled', true))) {
+            $app->use(new SecurityHeaders(...$this->securityHeadersConfig()));
+        }
 
         // 国际化：Accept-Language 自动选语种（默认开启，config/locale.php 可关）。
         if (!empty($this->config('locale.enabled', true))) {
@@ -124,13 +118,13 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 用框架自有 ErrorPageMiddleware 替换 kode/http 内置的 JsonErrorHandlerMiddleware。
+     * 用框架异常中间件替换 kode/http 内置的 JsonErrorHandlerMiddleware。
      *
      * 做法：取出当前调度管线里的其它中间件，去掉 JsonErrorHandlerMiddleware 实例，
-     * 以「ErrorPageMiddleware(最外层) + 其余中间件 + RouteRunner」重建一条新管线，
+     * 以「ExceptionMiddleware(最外层) + 其余中间件 + RouteRunner」重建一条新管线，
      * 再通过反射写回 App 的 dispatcher 属性（不修改 vendor/kode）。
      */
-    private function replaceErrorHandling(App $app, bool $debug, ?LoggerInterface $logger): void
+    private function pipeExceptionHandling(App $app): void
     {
         $dispatcher = $app->getDispatcher();
         $runner = $dispatcher->getFinalHandler();
@@ -140,8 +134,11 @@ final class HttpServiceProvider extends ServiceProvider
             static fn($m) => !$m instanceof JsonErrorHandlerMiddleware
         ));
 
+        /** @var ExceptionManager $manager */
+        $manager = $this->container->get(ExceptionManager::class);
+
         $rebuilt = new MiddlewareDispatcher($runner);
-        $rebuilt->pipe(new ErrorPageMiddleware($debug, $logger));
+        $rebuilt->pipe(new ExceptionMiddleware($manager));
         foreach ($kept as $middleware) {
             $rebuilt->pipe($middleware);
         }
@@ -149,6 +146,57 @@ final class HttpServiceProvider extends ServiceProvider
         $ref = new \ReflectionProperty($app, 'dispatcher');
         $ref->setAccessible(true);
         $ref->setValue($app, $rebuilt);
+    }
+
+    /**
+     * 将框架 config/cors.php 映射为 kode/http 原生 CorsMiddleware 的配置键。
+     *
+     * @return array<string, mixed>
+     */
+    private function corsConfig(): array
+    {
+        $cors = (array) $this->config('cors', []);
+
+        return [
+            'origin' => $cors['allowed_origins'] ?? '*',
+            'methods' => $cors['allowed_methods'] ?? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+            'headers' => $cors['allowed_headers'] ?? ['Content-Type', 'Authorization'],
+            'expose_headers' => $cors['exposed_headers'] ?? [],
+            'max_age' => (int) ($cors['max_age'] ?? 86400),
+            'credentials' => !empty($cors['allow_credentials']),
+        ];
+    }
+
+    /**
+     * 将框架 config/security.php 映射为 kode/http 原生 SecurityHeaders 的构造参数。
+     *
+     * @return array{0: array<string, string>, 1: bool}
+     */
+    private function securityHeadersConfig(): array
+    {
+        $sec = (array) $this->config('security', []);
+
+        $headers = [];
+        if (!empty($sec['nosniff'])) {
+            $headers['X-Content-Type-Options'] = 'nosniff';
+        }
+        if (!empty($sec['frame_options'])) {
+            $headers['X-Frame-Options'] = (string) $sec['frame_options'];
+        }
+        if (!empty($sec['referrer_policy'])) {
+            $headers['Referrer-Policy'] = (string) $sec['referrer_policy'];
+        }
+        if (!empty($sec['xss_protection']) && (string) $sec['xss_protection'] !== '0') {
+            $headers['X-XSS-Protection'] = (string) $sec['xss_protection'];
+        }
+        // 自定义 HSTS 串（如 'max-age=31536000; includeSubDomains'）直接下发。
+        $hsts = !empty($sec['hsts']) ? (string) $sec['hsts'] : '';
+        if ($hsts !== '') {
+            $headers['Strict-Transport-Security'] = $hsts;
+        }
+
+        // hsts=false：HSTS 已通过 $headers 直接下发，避免原生中间件二次写入默认值。
+        return [$headers, false];
     }
 
     /**
@@ -173,7 +221,7 @@ final class HttpServiceProvider extends ServiceProvider
                 continue;
             }
 
-            /** @var list<\Kode\Framework\Http\RateLimit\RateLimitRule> $rules */
+            /** @var list<\Kode\Limiting\Attribute\RateLimit> $rules */
             $rules = $reader->read($class, $method);
             $registry->tagRateLimits($route, $rules);
         }
@@ -204,13 +252,12 @@ final class HttpServiceProvider extends ServiceProvider
 
     /**
      * 扫描属性路由：读取 attributes 配置下的控制器目录，自动注册路由。
+     *
+     * 默认即开启、递归扫描（Scanner 已递归子目录），新建任意子文件夹即成为模块，
+     * 无需任何配置开关；plugins/<name>/src/Controllers 在目录存在时自动纳入。
      */
     private function scanAttributeRoutes(App $app, RouteRegistry $registry): void
     {
-        if (empty($this->config('routes.attributes.enabled', true))) {
-            return;
-        }
-
         /** @var Reader $reader */
         $reader = $this->container->get(Reader::class);
         $scanner = new ControllerScanner($app, $reader, $registry);
@@ -222,17 +269,13 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 开启插件发现时，把 plugins/<name>/src/Controllers 纳入属性扫描。
+     * 目录存在时，把 plugins/<name>/src/Controllers 纳入属性扫描（自动发现，无需开关）。
      *
      * @param array<string, string> $dirs
      * @return array<string, string>
      */
     private function withPluginControllerDirs(array $dirs): array
     {
-        if (empty($this->config('routes.discover_plugins', false))) {
-            return $dirs;
-        }
-
         $pluginsDir = $this->config('path.base') . '/plugins';
         if (!is_dir($pluginsDir)) {
             return $dirs;
@@ -253,10 +296,13 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 解析所有路由来源（标签 => 文件路径）。
+     * 解析所有路由来源（标签 => 文件路径），全部自动发现，无需配置开关。
      *
-     * 顺序：主应用 app/routes.php → config/routes.php 声明的 sources →
-     * （可选）plugins/<name>/routes.php 自动发现。
+     * 顺序：
+     *  - 主应用 app/routes.php（单一入口文件，标签 app）；
+     *  - app/routes/*.php 全部文件（每个文件一个来源，标签 routes:<filename>）；
+     *  - config/routes.php 的 sources 额外声明；
+     *  - plugins/<name>/routes.php 自动发现（标签 plugin:<name>）。
      *
      * @return array<string, string>
      */
@@ -270,20 +316,29 @@ final class HttpServiceProvider extends ServiceProvider
             $sources['app'] = $appRoutes;
         }
 
+        // 自动 glob app/routes/*.php：新增路由文件即生效，无需登记。
+        // 跳过约定入口文件 app/routes.php（已由上方 'app' 标签加载，避免重复注册）。
+        foreach (glob($base . '/app/routes/*.php') ?: [] as $file) {
+            if (basename((string) $file) === 'routes.php') {
+                continue;
+            }
+            $label = 'routes:' . basename((string) $file, '.php');
+            $sources[$label] = $file;
+        }
+
         /** @var array<string, string> $extra */
         $extra = (array) $this->config('routes.sources', []);
         foreach ($extra as $key => $file) {
             $sources[$key] = $file;
         }
 
-        if (!empty($this->config('routes.discover_plugins', false))) {
-            $pluginsDir = $base . '/plugins';
-            if (is_dir($pluginsDir)) {
-                foreach (glob($pluginsDir . '/*', GLOB_ONLYDIR) ?: [] as $pluginDir) {
-                    $pluginRoutes = $pluginDir . '/routes.php';
-                    if (is_file($pluginRoutes)) {
-                        $sources['plugin:' . basename($pluginDir)] = $pluginRoutes;
-                    }
+        // 插件路由自动发现（目录存在即纳入）。
+        $pluginsDir = $base . '/plugins';
+        if (is_dir($pluginsDir)) {
+            foreach (glob($pluginsDir . '/*', GLOB_ONLYDIR) ?: [] as $pluginDir) {
+                $pluginRoutes = $pluginDir . '/routes.php';
+                if (is_file($pluginRoutes)) {
+                    $sources['plugin:' . basename($pluginDir)] = $pluginRoutes;
                 }
             }
         }

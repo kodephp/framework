@@ -1,7 +1,7 @@
 <?php
 
 /*
- * 熔断器配置（框架中性 InMemoryBreaker，运行时无关）
+ * 熔断器配置（算法由 kode/fibers CircuitBreaker 提供，经 FiberBreaker 薄适配）
  *
  * failure_threshold ：连续失败达到该次数后熔断（进入 open）。
  * recovery_timeout  ：熔断后多久进入半开探活（秒）。

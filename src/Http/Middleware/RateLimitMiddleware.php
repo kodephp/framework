@@ -5,29 +5,32 @@ declare(strict_types=1);
 namespace Kode\Framework\Http\Middleware;
 
 use Kode\Framework\Http\RateLimit\LimiterFactory;
-use Kode\Framework\Http\RateLimit\RateLimitRule;
 use Kode\Framework\Http\Resp;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Http\Routing\Router;
+use Kode\Limiting\Attribute\RateLimit;
+use Kode\Limiting\Enum\LimiterType;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
 /**
- * 限流中间件（kode/limiting）
+ * 限流中间件（薄适配 kode/limiting）
  *
  * 作为**全局中间件**运行，对每条路由统一限流：
  *  - 若路由上声明了 #[RateLimit]（类级 / 方法级，可多条叠加），逐条应用对应规则；
  *  - 否则回落到全局默认限流（config/limiting.php 的 capacity/rate/algorithm）。
+ *
+ * 限流规则即 kode/limiting 的 {@see RateLimit} 属性，限流算法与「规则对象」由该包提供；
+ * 本中间件只做「按路由查表 → 调 LimiterFactory 取 Limiter → 消费额度 → 落响应头」的编排，
+ * 不再在框架里重复定义限流规则结构。
  *
  * 限流状态存于「框架统一存储」：driver=memory 为单进程内存；改为 redis 即变为
  * 分布式（跨进程 / 跨机共享限额），支持 standalone / sentinel / cluster 三种部署。
  *
  * 超限返回 429，并附带标准限流响应头（X-RateLimit-Limit / Remaining / Reset、
  * Retry-After），遵循 IETF 草案。限流总开关见 config/limiting.enabled。
- *
- * 演示 PHP 8.3 新特性：#[\Override] 显式标注对接口方法的重写。
  */
 final class RateLimitMiddleware implements MiddlewareInterface
 {
@@ -98,7 +101,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
     private function applyGlobal(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $key = 'rl:' . $this->routeKey($request) . ':' . $this->clientIp($request);
-        $rule = RateLimitRule::fromConfig($this->globalConfig);
+        $rule = $this->defaultRule($this->globalConfig);
         $limiter = $this->factory->make($rule);
 
         $result = $limiter->consume($key, 1);
@@ -113,6 +116,20 @@ final class RateLimitMiddleware implements MiddlewareInterface
         }
 
         return $response;
+    }
+
+    /**
+     * 由全局配置构造默认 #[RateLimit] 规则（无 key 模板，由中间件按「路由 + 客户端 IP」推导）。
+     *
+     * @param array<string, mixed> $config
+     */
+    private function defaultRule(array $config): RateLimit
+    {
+        return new RateLimit(
+            capacity: (int) ($config['capacity'] ?? 10),
+            rate: (float) ($config['rate'] ?? 1.0),
+            type: self::typeFromName((string) ($config['algorithm'] ?? 'token_bucket')),
+        );
     }
 
     /**
@@ -167,5 +184,16 @@ final class RateLimitMiddleware implements MiddlewareInterface
         }
 
         return $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
+    }
+
+    private static function typeFromName(string $name): LimiterType
+    {
+        return match ($name) {
+            'sliding_window' => LimiterType::SLIDING_WINDOW,
+            'sliding_window_counter' => LimiterType::SLIDING_WINDOW_COUNTER,
+            'counter' => LimiterType::COUNTER,
+            'leaky_bucket' => LimiterType::LEAKY_BUCKET,
+            default => LimiterType::TOKEN_BUCKET,
+        };
     }
 }

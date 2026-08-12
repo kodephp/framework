@@ -10,8 +10,7 @@ use Kode\Framework\Http\Controller;
  * 演示 kode 生态能力（缓存 / 事件 / 日志）的集成。
  *
  * 响应风格：框架**默认标准模式**——成功直接返回数据（`json()` / `return [...]`），
- * 错误直接带 HTTP 状态（`error()`）。需要 {code,msg,data} 信封时用 `ok()`（显式）或
- * 开启 config('response.envelope') 后用 `respond()`（跟随配置）。
+ * 错误直接带 HTTP 状态（`error()`）。不套 {code,msg,data} 信封；如需信封请自行组装数组返回。
  */
 final class DemoController extends Controller
 {
@@ -21,12 +20,11 @@ final class DemoController extends Controller
             return random_int(1, 100);
         }, 60);
 
-        // 可选：统一信封模式（需 config response.envelope=true 或显式 ok()）。
-        // 默认推荐用 $this->json(...) 直接返回数据。
-        return $this->ok([
+        // 标准响应：直接返回数据 JSON（无信封）。
+        return $this->json([
             'driver' => cache()->getDefaultDriver(),
             'hits' => $hits,
-        ], '来自缓存');
+        ]);
     }
 
     public function fireEvent()

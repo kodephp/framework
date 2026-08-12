@@ -4,19 +4,23 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Http\RateLimit;
 
+use Kode\Limiting\Attribute\RateLimit;
 use Kode\Limiting\Enum\RedisMode;
 use Kode\Limiting\Enum\LimiterType;
 use Kode\Limiting\Limiter;
 
 /**
- * 限流器工厂：把「一条限流规则」与「框架统一存储配置」合成为可消费的 Limiter。
+ * 限流器工厂：把「一条 #[RateLimit] 属性规则」与「框架统一存储配置」合成为可消费的 Limiter。
  *
  * 设计立场：
- *  - **规则与存储解耦**。规则描述「限制什么」（容量/速率/算法），存储描述「状态存哪」
- *    （内存 / APCu / Redis / ...）。同一套规则在单机用内存、在集群把 driver 改为 redis
- *    即变为分布式、跨进程/跨机共享限额——无需改业务代码。
+ *  - **规则与存储解耦**。规则（kode/limiting 的 {@see RateLimit} 属性）描述「限制什么」
+ *    （容量/速率/算法），存储描述「状态存哪」（内存 / APCu / Redis / ...）。同一套规则在
+ *    单机用内存、在集群把 driver 改为 redis 即变为分布式、跨进程/跨机共享限额——无需改业务代码。
  *  - **按签名缓存**。同一条规则在多次请求间复用同一个 Limiter 实例，避免重复建连
  *    （尤其 Redis 场景，连接只建一次）。
+ *
+ * 限流算法与「规则对象」本身由 kode/limiting 提供，本工厂只做「框架存储配置 → kode/limiting
+ * 各后端工厂方法」的桥接，不重复实现限流算法。
  *
  * 支持 kode/limiting 的全部后端：memory / apcu / redis（standalone·sentinel·cluster）
  * / memcached / pdo。
@@ -38,9 +42,9 @@ final class LimiterFactory
     }
 
     /**
-     * 为一条规则构建（或取缓存的）限流器。
+     * 为一条 #[RateLimit] 属性规则构建（或取缓存的）限流器。
      */
-    public function make(RateLimitRule $rule): Limiter
+    public function make(RateLimit $rule): Limiter
     {
         $signature = $this->signature($rule);
 
@@ -55,7 +59,7 @@ final class LimiterFactory
         return $this->config;
     }
 
-    private function build(RateLimitRule $rule): Limiter
+    private function build(RateLimit $rule): Limiter
     {
         $driver = (string) ($this->config['driver'] ?? 'memory');
 
@@ -94,7 +98,7 @@ final class LimiterFactory
         };
     }
 
-    private function memoryLimiter(RateLimitRule $rule): Limiter
+    private function memoryLimiter(RateLimit $rule): Limiter
     {
         return match ($rule->type) {
             LimiterType::SLIDING_WINDOW => Limiter::slidingWindow($rule->capacity, $rule->rate),
@@ -134,7 +138,7 @@ final class LimiterFactory
         return is_array($raw) ? array_values(array_map('strval', $raw)) : ['127.0.0.1:7000'];
     }
 
-    private function signature(RateLimitRule $rule): string
+    private function signature(RateLimit $rule): string
     {
         $store = match ((string) ($this->config['driver'] ?? 'memory')) {
             'redis' => 'redis:' . $this->redisMode()->value

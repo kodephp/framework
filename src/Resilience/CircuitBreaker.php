@@ -11,8 +11,8 @@ namespace Kode\Framework\Resilience;
  * 不依赖 Fiber / 协程 / 事件循环。因此同一契约可被 process worker、
  * fiber 任务、普通 HTTP handler、queue consumer 等任意运行时共享。
  *
- * 默认引擎见 {@see InMemoryBreaker}（进程内纯 PHP 实现）；
- * 需要分布式熔断时替换工厂构造目标（如 Redis 引擎）即可，业务无感。
+ * 默认引擎见 {@see FiberBreaker}（薄适配，算法由 kode/fibers CircuitBreaker 提供，
+ * 与协程、多运行时通用）；需要分布式熔断时替换工厂构造目标即可，业务无感。
  */
 interface CircuitBreaker
 {

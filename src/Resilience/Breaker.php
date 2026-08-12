@@ -8,14 +8,13 @@ namespace Kode\Framework\Resilience;
  * 熔断器管理器（框架韧性层）
  *
  * ── 关于「是否限制于 kode/fibers」 ──
- * 框架自带的中性契约 {@see CircuitBreaker} 与默认引擎 {@see InMemoryBreaker}
- * 均为**纯 PHP 状态机**：仅用 microtime() + 类属性，不依赖 Fiber / 协程 /
- * 事件循环。因此它在 process worker、fiber 任务、普通 HTTP handler、queue
- * consumer 等**任意运行时通用**——从根上不绑定 kode/fibers。
+ * 框架自带的中性契约 {@see CircuitBreaker} 与默认引擎 {@see FiberBreaker}
+ * （薄适配）仅做**接口对齐**：状态机 / 恢复窗口 / 半开探活等算法完全委托
+ * kode/fibers 的 CircuitBreaker，从根上不重复实现，且与协程、多运行时通用。
  *
  * 本管理器刻意**只依赖框架中性契约 CircuitBreaker**，不直接 new 任何具体类；
  * 具体引擎通过可注入的工厂提供（默认工厂由 ResilienceServiceProvider 绑定
- * InMemoryBreaker）。将来要换成 Redis 分布式熔断，只需替换工厂，
+ * FiberBreaker）。将来要换成 Redis 分布式熔断，只需替换工厂，
  * 业务代码（breaker()->run(...)）完全无感。
  *
  * 语义边界（与限流区分）：

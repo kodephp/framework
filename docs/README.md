@@ -14,11 +14,11 @@
 ## 一句话定位
 
 - **地基思维**：框架只做「薄核 + 接线点」，能力尽量复用 kode 生态包，不重复造轮子。
-- **开发者友好**：统一响应信封 `{code, msg, data}`、异常自动转信封、短方法取参，让你少写样板代码。
+- **开发者友好**：统一响应形态、异常自动转结构化 JSON（由 `kode/exception` 接管，含出错文件/行号/调用链）、短方法取参，让你少写样板代码。
 - **企业级默认**：多进程 HTTP 服务、全局安全头、统一异常处理、限流/熔断/国际化均已接线。
 
 ## 版本
 
-- 当前版本：**[v0.7.1](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.7.2](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>

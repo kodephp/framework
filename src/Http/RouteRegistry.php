@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Http;
 
-use Kode\Framework\Http\RateLimit\RateLimitRule;
+use Kode\Limiting\Attribute\RateLimit;
 use Kode\Http\Routing\Route;
 
 /**
@@ -24,7 +24,7 @@ final class RouteRegistry
     /** @var array<int, string> spl_object_id(Route) => 来源标签 */
     private array $sources = [];
 
-    /** @var array<int, list<RateLimitRule>> spl_object_id(Route) => 限流规则 */
+    /** @var array<int, list<RateLimit>> spl_object_id(Route) => 限流规则 */
     private array $rateLimits = [];
 
     /**
@@ -36,9 +36,9 @@ final class RouteRegistry
     }
 
     /**
-     * 为一条路由登记限流规则（类级 + 方法级叠加后的结果）。
+     * 为一条路由登记限流规则（kode/limiting 的 #[RateLimit] 属性，类级 + 方法级叠加后的结果）。
      *
-     * @param list<RateLimitRule> $rules
+     * @param list<RateLimit> $rules
      */
     public function tagRateLimits(Route $route, array $rules): void
     {
@@ -58,7 +58,7 @@ final class RouteRegistry
     /**
      * 查询某条路由上的限流规则（无则返回空数组）。
      *
-     * @return list<RateLimitRule>
+     * @return list<RateLimit>
      */
     public function rateLimitsOf(Route $route): array
     {

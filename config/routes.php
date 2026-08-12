@@ -3,30 +3,30 @@
 /*
  * 路由来源配置
  *
- * 框架支持两套并存的路由模型：
- *  1) 属性路由（约定优于配置）：在控制器类/方法上用 #[Controller]/#[Get] 等声明，
- *     启动时自动扫描注册——「多应用自动路由匹配」。
- *  2) 显式路由（routes.php）：手动注册、可命名、可覆盖同名路径。
+ * 框架支持两套并存的路由模型，且「默认即自动发现，无需任何开关」：
+ *  1) 属性路由（约定优于配置）：启动时递归扫描控制器目录（见 attributes.controllers），
+ *     在控制器类/方法上用 #[Controller]/#[Get] 等声明，自动注册——「多应用自动路由匹配」。
+ *     在 app/Http/Controllers 下新建任意子文件夹（如 Admin/）即成为一个模块，无需配置开启。
+ *  2) 显式路由文件：app/routes.php 手写闭包/控制器路由；此外框架会自动 glob
+ *     app/routes/*.php（每个文件即一个来源），新增文件即生效，无需登记。
  *
- * route:list 默认只列主应用（无插件）。开发者开启 discover_plugins 后，
- * plugins/<name>/routes.php 与 plugins/<name>/src/Controllers 才被纳入，成为自定义来源。
+ * 插件（plugins/<name>）的 routes.php 与 Controllers 也会在目录存在时自动纳入，
+ * 成为独立来源（标签 plugin:<name>），同样不需要在配置里开启。
+ *
+ * 路由来源仅用于 route:list 的分组展示与可读性；不配置任何开关也能正常工作。
  */
 
 return [
-    // 属性路由扫描开关与目录（key=来源标签，value=控制器目录）。
+    // 属性路由扫描目录（key=来源标签，value=控制器目录）。递归扫描子目录。
     'attributes' => [
-        'enabled' => (bool) env('ROUTE_ATTRIBUTES', true),
         'controllers' => [
             'app' => base_path('app/Http/Controllers'),
-            // 'admin' => base_path('modules/admin/Controllers'),
         ],
     ],
 
     // 额外的显式路由文件（key=来源标签，value=文件路径）。
+    // 注意：app/routes.php 与 app/routes/*.php 已由框架自动加载，通常无需在此声明。
     'sources' => [
-        // 'admin' => base_path('modules/admin/routes.php'),
+        // 'admin' => base_path('app/routes/admin.php'),
     ],
-
-    // 插件自动发现（默认关闭；开启后扫描 plugins/<name> 作为独立模块来源）。
-    'discover_plugins' => (bool) env('ROUTES_DISCOVER_PLUGINS', false),
 ];

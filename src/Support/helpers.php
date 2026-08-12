@@ -167,9 +167,21 @@ if (!function_exists('messaging')) {
     }
 }
 
+if (!function_exists('exception_manager')) {
+    /**
+     * 获取异常管理器（kode/exception），负责统一异常格式化与链路追踪。
+     *
+     * 用法：exception_manager()->respond($e);  // → ['status' => int, 'body' => array]
+     */
+    function exception_manager(): object
+    {
+        return resolve(\Kode\Exception\ExceptionManager::class);
+    }
+}
+
 if (!function_exists('snowflake')) {
     /**
-     * 获取分布式 ID 生成器（Snowflake 算法，框架内置）。
+     * 获取分布式 ID 生成器（Snowflake 算法，由 kode/process 提供）。
      *
      * 用法：snowflake()->id();  // 生成下一个全局唯一 ID
      */
@@ -181,7 +193,7 @@ if (!function_exists('snowflake')) {
 
 if (!function_exists('breaker')) {
     /**
-     * 获取熔断器管理器（框架中性 InMemoryBreaker 封装，运行时无关）。
+     * 获取熔断器管理器（算法委托 kode/fibers CircuitBreaker，经 FiberBreaker 薄适配）。
      *
      * 用法：breaker()->run('user-service', fn () => ..., fallback: fn () => ...);
      */
