@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Providers;
 
 use Kode\Console\Kernel;
+use Kode\Framework\Console\Commands\ApiDocGenerateCommand;
 use Kode\Framework\Console\Commands\DbSeedCommand;
 use Kode\Framework\Console\Commands\MakeCommandCommand;
 use Kode\Framework\Console\Commands\MakeControllerCommand;
@@ -68,5 +69,6 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(MakeMiddlewareCommand::class);
         $kernel->add(MakeCommandCommand::class);
         $kernel->add(DbSeedCommand::class);
+        $kernel->add(ApiDocGenerateCommand::class);
     }
 }

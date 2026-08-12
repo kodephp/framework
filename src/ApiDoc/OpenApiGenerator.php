@@ -76,6 +76,52 @@ final class OpenApiGenerator
     }
 
     /**
+     * 找出「文档不完整」的操作，供 `apidoc:generate --check` 在 CI 中强制补全。
+     *
+     * 判定标准：
+     *  - 既无 summary 也无 description（操作不可读）；
+     *  - 未声明 200 响应（响应结构缺失）。
+     *
+     * @param array<string, mixed> $spec generate() 的产物
+     * @return list<array{path: string, method: string, reasons: list<string>}>
+     */
+    public function findIncomplete(array $spec): array
+    {
+        $issues = [];
+
+        foreach (($spec['paths'] ?? []) as $path => $methods) {
+            if (!is_array($methods)) {
+                continue;
+            }
+            foreach ($methods as $method => $op) {
+                if (!is_array($op)) {
+                    continue;
+                }
+                $reasons = [];
+
+                if (empty($op['summary']) && empty($op['description'])) {
+                    $reasons[] = 'missing summary/description';
+                }
+
+                $responses = $op['responses'] ?? [];
+                if (!isset($responses[200]) && !isset($responses['200'])) {
+                    $reasons[] = 'missing 200 response';
+                }
+
+                if ($reasons !== []) {
+                    $issues[] = [
+                        'path' => $path,
+                        'method' => $method,
+                        'reasons' => $reasons,
+                    ];
+                }
+            }
+        }
+
+        return $issues;
+    }
+
+    /**
      * 将单条路由并入 paths 树。
      *
      * @param array<string, mixed> $paths
@@ -102,29 +148,64 @@ final class OpenApiGenerator
     /**
      * 构建单个 operation 对象。
      *
-     * @param list<array{name: string, in: string, required: bool, schema: array<string, string>}> $params
-     * @param OpenApi|null $meta
+     * 路径参数由路由模式自动提取；#[OpenApi] 声明的 query/header 参数与之去重合并；
+     * 响应默认 200，被属性声明覆盖。
+     *
+     * @param list<array<string, mixed>> $pathParams 自动提取的路径参数
+     * @param OpenApi|null $meta 方法上的补充片段
      * @return array<string, mixed>
      */
-    private function buildOperation(Route $route, string $method, array $params, ?OpenApi $meta): array
+    private function buildOperation(Route $route, string $method, array $pathParams, ?OpenApi $meta): array
     {
         $operation = [
             'operationId' => $this->operationId($route, $method),
-            'parameters' => $params,
+            'parameters' => $pathParams,
+            'responses' => [200 => ['description' => 'OK']],
         ];
 
-        // 默认 200 响应（可被 #[OpenApi] 覆盖）
-        if ($meta === null || $meta->responses === null) {
-            $operation['responses'] = [
-                200 => ['description' => 'OK'],
-            ];
-        }
-
         if ($meta !== null) {
-            $operation = array_merge($operation, $meta->toOperationFragment());
+            $fragment = $meta->toOperationFragment();
+
+            // 合并显式声明的 query/header 参数（按 name|in 去重，避免与路径参数重复）
+            if (isset($fragment['parameters'])) {
+                $operation['parameters'] = $this->mergeParameters($operation['parameters'], $fragment['parameters']);
+                unset($fragment['parameters']);
+            }
+
+            // 声明的响应覆盖默认 200
+            if (isset($fragment['responses'])) {
+                $operation['responses'] = $fragment['responses'];
+                unset($fragment['responses']);
+            }
+
+            $operation = array_merge($operation, $fragment);
         }
 
         return $operation;
+    }
+
+    /**
+     * 将路径参数与显式声明的参数按 `name|in` 去重合并。
+     *
+     * @param list<array<string, mixed>> $path
+     * @param list<array<string, mixed>> $declared
+     * @return list<array<string, mixed>>
+     */
+    private function mergeParameters(array $path, array $declared): array
+    {
+        $seen = [];
+        foreach ($path as $p) {
+            $seen[($p['name'] ?? '') . '|' . ($p['in'] ?? 'path')] = true;
+        }
+        foreach ($declared as $p) {
+            $key = ($p['name'] ?? '?') . '|' . ($p['in'] ?? 'query');
+            if (!isset($seen[$key])) {
+                $seen[$key] = true;
+                $path[] = $p;
+            }
+        }
+
+        return $path;
     }
 
     /**

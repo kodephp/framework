@@ -602,6 +602,7 @@ final class KodeCli
         echo "  bin/kode make:migration <name>     生成数据库迁移\n";
         echo "  bin/kode make:middleware <Name>    生成 HTTP 中间件\n";
         echo "  bin/kode make:command <Name>       生成控制台命令\n";
+        echo "  bin/kode apidoc:generate [--output=] [--check]   生成/校验 OpenAPI 文档\n";
         echo "  bin/kode help                      显示本帮助\n\n";
         echo "serve 选项：--host 127.0.0.1  --port 9527  --workers 4\n";
         echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/Tasks 示例\n";

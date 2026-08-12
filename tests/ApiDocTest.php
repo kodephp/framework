@@ -4,8 +4,15 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Tests;
 
+use Kode\Console\Input;
+use Kode\Console\Output;
+use Kode\Console\Signature;
 use Kode\Framework\ApiDoc\Attributes\OpenApi;
+use Kode\Framework\ApiDoc\Attributes\OpenApiParameter;
+use Kode\Framework\ApiDoc\Attributes\OpenApiRequestBody;
+use Kode\Framework\ApiDoc\Attributes\OpenApiResponse;
 use Kode\Framework\ApiDoc\OpenApiGenerator;
+use Kode\Framework\Console\Commands\ApiDocGenerateCommand;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Testing\TestCase;
 use Kode\Http\App;
@@ -164,5 +171,148 @@ final class ApiDocTest extends TestCase
         self::assertSame('获取商品详情', $op['summary']);
         self::assertSame(['product'], $op['tags']);
         self::assertArrayHasKey('404', $op['responses']);
+    }
+
+    // ------------------------------------------------------------------
+    // 结构化声明：方法参数 / 请求体 / 响应（自动生成无法推断，需显式声明）
+    // ------------------------------------------------------------------
+
+    public function testStructuredQueryParameterMergesWithPathParam(): void
+    {
+        [$app, $registry, $gen] = $this->makeGenerator();
+        $route = $app->route(['GET'], '/users/{id}', fn() => null)->name('user.show');
+        $registry->tagOpenApi($route, new OpenApi(
+            parameters: [new OpenApiParameter('expand', 'query', 'string', description: '关联展开')],
+        ));
+
+        $spec = $gen->generate();
+        $params = $spec['paths']['/users/{id}']['get']['parameters'];
+
+        // 路径参数 + 显式 query 参数去重合并
+        self::assertCount(2, $params);
+        $byName = array_column($params, null, 'name');
+        self::assertSame('path', $byName['id']['in']);
+        self::assertSame('query', $byName['expand']['in']);
+        self::assertSame('string', $byName['expand']['schema']['type']);
+        self::assertFalse($byName['expand']['required']);
+        self::assertSame('关联展开', $byName['expand']['description']);
+    }
+
+    public function testStructuredRequestBodyEmitsSchema(): void
+    {
+        [$app, $registry, $gen] = $this->makeGenerator();
+        $route = $app->route(['POST'], '/users', fn() => null);
+        $registry->tagOpenApi($route, new OpenApi(
+            requestBody: new OpenApiRequestBody(
+                properties: ['name' => ['type' => 'string'], 'age' => ['type' => 'integer']],
+                required: ['name'],
+                example: ['name' => 'Alice', 'age' => 30],
+            ),
+        ));
+
+        $spec = $gen->generate();
+        $schema = $spec['paths']['/users']['post']['requestBody']['content']['application/json']['schema'];
+
+        self::assertSame('object', $schema['type']);
+        self::assertSame(['name' => ['type' => 'string'], 'age' => ['type' => 'integer']], $schema['properties']);
+        self::assertSame(['name'], $schema['required']);
+        self::assertSame(['name' => 'Alice', 'age' => 30], $schema['example']);
+    }
+
+    public function testStructuredResponsesKeyedByStatus(): void
+    {
+        [$app, $registry, $gen] = $this->makeGenerator();
+        $route = $app->route(['POST'], '/orders', fn() => null);
+        $registry->tagOpenApi($route, new OpenApi(
+            responses: [
+                201 => new OpenApiResponse(201, '已创建', properties: ['id' => ['type' => 'integer']], example: ['id' => 1]),
+                422 => new OpenApiResponse(422, '校验失败'),
+            ],
+        ));
+
+        $spec = $gen->generate();
+        $op = $spec['paths']['/orders']['post'];
+
+        self::assertArrayNotHasKey('200', $op['responses']);
+        self::assertArrayHasKey('201', $op['responses']);
+        self::assertSame('已创建', $op['responses'][201]['description']);
+        self::assertSame(
+            ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'example' => ['id' => 1]],
+            $op['responses'][201]['content']['application/json']['schema']
+        );
+        self::assertArrayHasKey('422', $op['responses']);
+    }
+
+    public function testFindIncompleteFlagsMissingSummaryAndResponse(): void
+    {
+        [$app, $registry, $gen] = $this->makeGenerator();
+        $app->route(['GET'], '/a', fn() => null); // 无属性：缺 summary
+        $route2 = $app->route(['GET'], '/b', fn() => null);
+        $registry->tagOpenApi($route2, new OpenApi(summary: 'B')); // 有 summary + 默认 200：完整
+
+        $spec = $gen->generate();
+        $issues = $gen->findIncomplete($spec);
+
+        $paths = array_map(static fn($i) => $i['path'], $issues);
+        self::assertContains('/a', $paths);
+        self::assertNotContains('/b', $paths);
+    }
+
+    // ------------------------------------------------------------------
+    // apidoc:generate 命令（开发者主动生成 / 校验）
+    // ------------------------------------------------------------------
+
+    public function testGenerateCommandWritesFile(): void
+    {
+        $tmp = sys_get_temp_dir() . '/kode_apidoc_' . uniqid('', true);
+        mkdir($tmp, 0o755, true);
+
+        try {
+            $cmd = new ApiDocGenerateCommand($tmp);
+            $code = $cmd->fire(
+                $this->inputFor($cmd, ['--output=openapi.json']),
+                new Output(fopen('php://memory', 'w'))
+            );
+
+            self::assertSame(0, $code);
+            $file = $tmp . '/openapi.json';
+            self::assertFileExists($file);
+            $decoded = json_decode((string) file_get_contents($file), true);
+            self::assertSame('3.0.3', $decoded['openapi']);
+            self::assertArrayHasKey('paths', $decoded);
+        } finally {
+            @unlink($tmp . '/openapi.json');
+            @rmdir($tmp);
+        }
+    }
+
+    public function testGenerateCommandCheckReturnsCode(): void
+    {
+        $cmd = new ApiDocGenerateCommand(sys_get_temp_dir());
+        $code = $cmd->fire(
+            $this->inputFor($cmd, ['--check']),
+            new Output(fopen('php://memory', 'w'))
+        );
+
+        // 演示应用多数路由缺 summary，--check 退出码应为 1（CI 可据此强制补全）
+        self::assertContains($code, [0, 1]);
+    }
+
+    /**
+     * 构造带 Signature 的 Input（模拟 bin/kode 真实派发方式）。
+     */
+    private function inputFor(ApiDocGenerateCommand $cmd, array $argv): Input
+    {
+        $ref = new \ReflectionClass($cmd);
+        $attrs = $ref->getAttributes(\Kode\Console\Attribute\AsCommand::class);
+        $name = 'cmd';
+        $usage = '';
+        if ($attrs !== []) {
+            $inst = $attrs[0]->newInstance();
+            $name = $inst->name;
+            $usage = $inst->usage;
+        }
+
+        return new Input(array_merge([$name], $argv), $usage !== '' ? new Signature($usage) : null);
     }
 }

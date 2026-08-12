@@ -36,4 +36,7 @@ return [
 
     // 排除的路径前缀（如健康检查、指标），不计入文档
     'ignore_paths' => ['/health', '/metrics', '/ping'],
+
+    // apidoc:generate 命令默认写出路径（相对项目根；可用 --output 覆盖）
+    'output' => 'storage/apidoc/openapi.json',
 ];

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use Kode\Framework\ApiDoc\Attributes\OpenApi;
+use Kode\Framework\ApiDoc\Attributes\OpenApiParameter;
+use Kode\Framework\ApiDoc\Attributes\OpenApiResponse;
 use Kode\Framework\Http\Attributes\Controller as RouteController;
 use Kode\Framework\Http\Attributes\Delete;
 use Kode\Framework\Http\Attributes\Get;
@@ -49,9 +51,20 @@ final class ProductsController extends Controller
         summary: '获取商品详情',
         description: '按商品 ID 返回商品信息',
         tags: ['product'],
+        parameters: [
+            new OpenApiParameter('fields', 'query', 'string', description: '逗号分隔的返回字段，如 id,name'),
+        ],
         responses: [
-            200 => ['description' => 'OK', 'content' => ['application/json' => ['schema' => ['type' => 'object']]]],
-            404 => ['description' => '商品不存在'],
+            200 => new OpenApiResponse(
+                200,
+                'OK',
+                properties: [
+                    'id'   => ['type' => 'integer', 'description' => '商品 ID'],
+                    'name' => ['type' => 'string', 'description' => '商品名称'],
+                ],
+                example: ['id' => 1, 'name' => 'Kode 键盘'],
+            ),
+            404 => new OpenApiResponse(404, '商品不存在'),
         ],
     )]
     public function show()
