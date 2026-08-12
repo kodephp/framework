@@ -16,7 +16,6 @@ use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
 use Kode\Framework\Http\Middleware\RateLimitMiddleware;
 use Kode\Framework\Http\Middleware\ExceptionMiddleware;
-use Kode\Framework\Translation\Translator;
 use Kode\Http\App;
 use Kode\Http\Middleware\CorsMiddleware;
 use Kode\Http\Middleware\RequestId;
@@ -73,10 +72,9 @@ final class HttpServiceProvider extends ServiceProvider
         }
 
         // 国际化：Accept-Language 自动选语种（默认开启，config/locale.php 可关）。
+        // 语种写入 kode/context（按 fiber/协程隔离），由 Translator 自动读取，避免并发污染。
         if (!empty($this->config('locale.enabled', true))) {
-            /** @var Translator $translator */
-            $translator = $this->container->get(Translator::class);
-            $app->use(new LocaleMiddleware((array) $this->config('locale', []), $translator));
+            $app->use(new LocaleMiddleware((array) $this->config('locale', [])));
         }
 
         // 全局限流：按路由上的 #[RateLimit] 细粒度限流，否则回落全局默认。

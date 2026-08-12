@@ -52,4 +52,15 @@ final class HttpBridgeTest extends TestCase
         self::assertStringContainsString('X-Request-Id: r1', $raw);
         self::assertStringContainsString('{"code":0}', $raw);
     }
+
+    public function testToRawHonorsProvidedProtocol(): void
+    {
+        $psr = Response::make('hi', 200)->withHeader('Content-Type', 'text/plain');
+
+        // 默认协议版本为 1.1。
+        self::assertStringStartsWith('HTTP/1.1 200', HttpBridge::toRaw($psr));
+
+        // 旧客户端协商出 1.0 时，状态行应反映真实协议而非硬编码 1.1。
+        self::assertStringStartsWith('HTTP/1.0 200', HttpBridge::toRaw($psr, '1.0'));
+    }
 }

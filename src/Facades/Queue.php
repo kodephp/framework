@@ -5,15 +5,16 @@ declare(strict_types=1);
 namespace Kode\Framework\Facades;
 
 use Kode\Core\Facade;
-use Kode\Queue\Queue;
 
 /**
  * 队列门面：Queue::push($job, $data) / later() / pop() / size()。
+ *
+ * 解析目标为 Kode\Queue\Queue（经容器单例）。
  */
 final class Queue extends Facade
 {
     protected static function id(): string
     {
-        return Queue::class;
+        return \Kode\Queue\Queue::class;
     }
 }

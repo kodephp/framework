@@ -64,18 +64,20 @@ final class HttpBridge
     }
 
     /**
-     * 将 PSR-7 响应序列化为原生 HTTP/1.1 报文（供连接 send($raw, true) 写出）。
+     * 将 PSR-7 响应序列化为原生 HTTP 报文（供连接 send($raw, true) 写出）。
      *
+     * 状态行的协议版本取自请求（默认 1.1），而非硬编码，
+     * 避免 Swoole/旧客户端协商出 1.0 时状态行不准确。
      * 不追加 Connection 头——keep-alive 由 kode/process 运行时依据请求头裁决；
      * 固定补 Content-Length，保证 keep-alive 下能正确切分报文。
      */
-    public static function toRaw(ResponseInterface $response): string
+    public static function toRaw(ResponseInterface $response, string $protocol = '1.1'): string
     {
         $status = $response->getStatusCode();
         $reason = $response->getReasonPhrase() ?: self::reasonPhrase($status);
         $body = (string) $response->getBody();
 
-        $lines = ["HTTP/1.1 {$status} {$reason}"];
+        $lines = ["HTTP/{$protocol} {$status} {$reason}"];
 
         $hasContentLength = false;
         foreach ($response->getHeaders() as $name => $values) {

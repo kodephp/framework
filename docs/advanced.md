@@ -410,38 +410,162 @@ php bin/kode serve --watch                  # 开发期热重载（监听 .php �
 
 ---
 
-## 14. 缓存 / 队列 / 数据库 / 事件 / HTTP 客户端 / 消息
+## 14. 生态能力（缓存 / 队列 / 数据库 / 事件 / HTTP 客户端 / 消息 / 国际化 / 跨域）
 
-这些能力由对应的 kode 生态包提供，框架只做薄封装与接线。统一通过门面或全局助手使用：
+这些能力由对应的 kode 生态包提供，框架只做薄封装与接线。统一通过门面或全局助手使用。
+完整 API 与配置项见各 `config/*.php` 与对应 kode 包的文档。
+
+### 14.1 缓存（kode/cache，PSR-16）
 
 ```php
-// 缓存（kode/cache）
-cache()->set('k', $v, 60);
-$v = cache()->get('k');
-Cache::put('k', $v);                 // 门面
+// 助手
+cache()->set('user:1', $profile, 3600);     // 写，TTL 秒
+$profile = cache()->get('user:1');          // 读，缺失返回 null
+cache()->forget('user:1');                  // 删
 
-// 队列（kode/queue）
-queue()->push(new \App\Jobs\SendMail(['to' => 'a@b.com']));
-Queue::later(5, new \App\Jobs\SendMail([...]));
+// 一次计算并缓存（回调结果缓存到命中）
+$hot = cache()->remember('hot_posts', 60, fn () => Post::topN(10));
 
-// 数据库（kode/database）
-$rows = db()->select('SELECT * FROM users WHERE id = ?', [1]);
-DB::table('users')->where('id', 1)->first();
-
-// 事件（kode/event）
-event(new \App\Events\UserRegistered($uid));
-Event::listen(...);
-
-// HTTP 客户端（kode/http-client，PSR-18）
-$resp = http()->get('http://svc/1');
-$body = $resp->getBody()->getContents();
-
-// 消息（kode/messaging）
-messaging()->bus('memory')->publish('channel', $payload);
-Messaging::publish('channel', $payload);
+// 门面等价写法
+Cache::put('k', $v, 60);
+$v = Cache::get('k');
 ```
 
-各能力的完整 API、配置项（见 `config/cache.php`、`config/queue.php`、`config/database.php`、`config/event.php`、`config/http-client.php`、`config/messaging.php）与高级用法，请查阅对应 kode 包的文档。
+driver 见 `config/cache.php`（默认 redis，可切 file/memory）。
+
+### 14.2 队列（kode/queue，内建 Worker）
+
+```php
+// 定义一个 job（普通类即可，消费时按构造参数反序列化）
+final class SendMail
+{
+    public function __construct(public array $data) {}
+    public function handle(): void { /* 调邮件服务发信 */ }
+}
+
+// 投递：推「类名 + 数据」，或推实例
+Queue::push(SendMail::class, ['to' => 'a@b.com']);
+Queue::push(new SendMail(['to' => 'a@b.com']));
+Queue::later(5, SendMail::class, ['to' => 'a@b.com']);   // 5 秒后
+
+// 助手等价
+queue()->push(SendMail::class, ['to' => 'a@b.com']);
+```
+
+driver 见 `config/queue.php`（redis/database/beanstalkd/amqp/kafka）。消费由 kode/queue 内建
+Worker 完成（启动方式见该包文档 / `config/queue.php` 注释）。
+
+### 14.3 数据库（kode/database）
+
+```php
+// 查询构造器（推荐，自动防注入）
+$user = DB::table('users')->where('id', 1)->first();          // 单行
+$rows = DB::table('users')->where('age', '>', 18)->get();     // 集合
+$page = DB::table('posts')->paginate(15);                     // 分页
+
+DB::table('users')->insert(['name' => 'Kode', 'age' => 20]);
+DB::table('users')->where('id', 1)->update(['age' => 21]);
+DB::table('users')->where('id', 1)->delete();
+
+// 原生 SQL（参数绑定，绝不拼接）
+$rows = db()->select('SELECT * FROM users WHERE id = ?', [1]);
+
+// 事务
+DB::transaction(function () {
+    DB::table('accounts')->where('id', 1)->decrement('balance', 100);
+    DB::table('accounts')->where('id', 2)->increment('balance', 100);
+});
+```
+
+连接配置见 `config/database.php`。
+
+### 14.4 事件（kode/event，PSR-14）
+
+```php
+// 监听
+Event::listen(\App\Events\UserRegistered::class, function (\App\Events\UserRegistered $e) {
+    // 发欢迎邮件、打点……
+});
+
+// 触发
+event(new \App\Events\UserRegistered($uid));
+```
+
+### 14.5 HTTP 客户端（kode/http-client，PSR-18）
+
+```php
+$resp = Http::get('http://user-svc/1');        // 助手 http() 等价
+$code = $resp->getStatusCode();
+$body = $resp->getBody()->getContents();
+$json = json_decode($body, true);
+
+$resp = Http::post('http://user-svc', ['json' => ['name' => 'Kode']]);
+```
+
+### 14.6 消息总线（kode/messaging）
+
+```php
+// 发布到主题
+Messaging::publish('order.created', ['id' => 123]);
+
+// 订阅（通常在常驻消费进程中）
+messaging()->subscribe('order.created', function (array $payload) {
+    // 处理订单
+});
+
+// 指定总线（默认 memory，可切 redis/nats/mqtt…）
+messaging()->bus('redis')->publish('order.created', $payload);
+```
+
+### 14.7 国际化（多语言）
+
+框架内置翻译能力（底层复用 symfony/translation），按语种从 `lang/<locale>/messages.php` 加载文案。
+
+```php
+// 在代码里取文案
+echo lang('welcome', ['name' => 'Kode']);      // 用当前语种渲染
+echo translator()->trans('user_not_found', ['id' => 42]);
+
+// 手动切语种（程序化）
+Translator::setLocale('en');
+```
+
+`lang/zh-CN/messages.php` 示例：
+
+```php
+<?php return [
+    'welcome'        => '欢迎，%name%',
+    'user_not_found' => '用户 %id% 不存在',
+];
+```
+
+`lang/en/messages.php` 示例：
+
+```php
+<?php return [
+    'welcome'        => 'Welcome, %name%',
+    'user_not_found' => 'User %id% not found',
+];
+```
+
+**按请求自动选语种**：开启 `LocaleMiddleware`（默认开，`config/locale.php` 的 `enabled`）后，
+框架读取请求头 `Accept-Language` 自动切换语种，并在响应写 `Content-Language`。语种存于请求上下文
+（kode/context，按 fiber/协程隔离），并发请求互不污染。可用语种在 `config/locale.php` 的
+`available` 中配置，默认语种在 `default`。
+
+### 14.8 跨域 CORS 与安全响应头
+
+默认开启 CORS 与安全头（见 `config/cors.php`、`config/security.php`）：
+
+- `config/cors.php`：允许的 origins / methods / headers / 是否带凭证。
+- `config/security.php`：默认注入 `X-Content-Type-Options`、`X-Frame-Options`、
+  `Content-Security-Policy` 等（开关 `enabled`）。
+
+需要自定义响应头时，在控制器里照常 `withHeader('X-Custom', $v)` 即可，安全头会在管线末端补上。
+
+
+
+
 
 ---
 

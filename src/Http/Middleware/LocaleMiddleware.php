@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Http\Middleware;
 
-use Kode\Framework\Translation\Translator;
+use Kode\Context\Context;
 use Kode\Http\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -25,7 +25,6 @@ final class LocaleMiddleware implements MiddlewareInterface
      */
     public function __construct(
         private readonly array $config,
-        private readonly Translator $translator,
     ) {
     }
 
@@ -37,7 +36,9 @@ final class LocaleMiddleware implements MiddlewareInterface
 
         $locale = $this->resolve($request);
         if ($locale !== null) {
-            $this->translator->setLocale($locale);
+            // 写入请求上下文（kode/context，按 fiber/协程隔离），而非改写共享单例，
+            // 避免并发请求之间语种互相污染。Translator::getLocale()/trans() 会自动读取。
+            Context::set('locale', $locale);
         }
 
         $response = $handler->handle($request);

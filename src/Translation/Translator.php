@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Translation;
 
+use Kode\Context\Context;
 use Symfony\Component\Translation\Loader\ArrayLoader;
 use Symfony\Component\Translation\Translator as SymfonyTranslator;
 
@@ -24,6 +25,9 @@ final class Translator
     /** @var array<int, string> */
     private array $paths;
 
+    /** 已加载资源的语种缓存，避免重复扫描磁盘。 */
+    private array $loadedLocales = [];
+
     /**
      * @param array<string, mixed> $config
      * @param array<int, string> $paths 候选 lang 目录（应用在前，框架默认在后）
@@ -31,17 +35,20 @@ final class Translator
     public function __construct(array $config = [], array $paths = [])
     {
         $this->paths = $paths ?: [base_path('lang')];
-        $this->translator = new SymfonyTranslator((string) ($config['default'] ?? 'zh-CN'));
+        $default = (string) ($config['default'] ?? 'zh-CN');
+        $this->translator = new SymfonyTranslator($default);
         $this->translator->addLoader('array', new ArrayLoader());
-        $this->loadAll();
+        $this->loadLocale($default);
     }
 
     /**
-     * 加载所有候选目录下当前语种的 messages 资源。
+     * 加载指定语种在所有候选目录下的 messages 资源（幂等）。
      */
-    private function loadAll(): void
+    private function loadLocale(string $locale): void
     {
-        $locale = $this->translator->getLocale();
+        if (isset($this->loadedLocales[$locale])) {
+            return;
+        }
 
         foreach ($this->paths as $path) {
             $file = rtrim((string) $path, '/') . '/' . $locale . '/messages.php';
@@ -51,16 +58,31 @@ final class Translator
                 $this->translator->addResource('array', $messages, $locale);
             }
         }
+
+        $this->loadedLocales[$locale] = true;
     }
 
+    /**
+     * 程序化切换默认语种（同步改写实例默认 + 加载资源）。
+     * 注意：并发运行时（fiber/Swoole）请改用 kode/context 的 'locale' 键，
+     * 避免污染其它请求；LocaleMiddleware 已自动走 context 路径。
+     */
     public function setLocale(string $locale): void
     {
         $this->translator->setLocale($locale);
-        $this->loadAll();
+        $this->loadLocale($locale);
     }
 
+    /**
+     * 当前生效语种：优先取请求上下文（kode/context，按 fiber/协程隔离），
+     * 否则取实例默认语种。
+     */
     public function getLocale(): string
     {
+        if (class_exists(Context::class) && Context::has('locale')) {
+            return (string) Context::get('locale');
+        }
+
         return $this->translator->getLocale();
     }
 
@@ -75,6 +97,9 @@ final class Translator
      */
     public function trans(string $id, array $parameters = [], ?string $domain = null, ?string $locale = null): string
     {
+        $locale ??= $this->getLocale();
+        $this->loadLocale($locale);
+
         $normalized = [];
         foreach ($parameters as $key => $value) {
             $k = is_string($key) && str_starts_with($key, '%') && str_ends_with($key, '%')

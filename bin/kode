@@ -50,6 +50,9 @@ match ($command) {
     'serve'        => (new KodeServeCommand())->run($args),
     'cron'         => (new KodeCronCommand())->run($args),
     'schedule:list' => (new KodeScheduleListCommand())->run($args),
+    'route:list'   => (new KodeConsoleCommand())->run(array_merge(['route:list'], $args)),
+    'process:list' => (new KodeConsoleCommand())->run(array_merge(['process:list'], $args)),
+    'process:check' => (new KodeConsoleCommand())->run(array_merge(['process:check'], $args)),
     'console'      => (new KodeConsoleCommand())->run($args),
     default        => KodeCli::help(),
 };

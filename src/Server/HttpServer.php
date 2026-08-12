@@ -107,7 +107,7 @@ final class HttpServer
                 $psr = HttpBridge::toPsr7($message);
                 /** @var HttpApp $http */
                 $response = $http->handle($psr);
-                $conn->send(HttpBridge::toRaw($response), true);
+                $conn->send(HttpBridge::toRaw($response, self::normalizeProtocol($message->protocol())), true);
             } catch (\Throwable $e) {
                 $debug = (bool) (Application::getInstance()?->config()->get('app.debug', false) ?? false);
                 $conn->send(HttpBridge::toRaw($this->errorResponse($e, $debug)), true);
@@ -115,6 +115,18 @@ final class HttpServer
         });
 
         $runtime->start();
+    }
+
+    /**
+     * 从请求协议头（如 "HTTP/1.1"）提取版本号（"1.1"）。
+     */
+    private static function normalizeProtocol(string $protocol): string
+    {
+        if (preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m)) {
+            return $m[1];
+        }
+
+        return '1.1';
     }
 
     private function defaultWorkers(): int
