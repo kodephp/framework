@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Kode\Framework\Providers;
 
 use Kode\Console\Kernel;
+use Kode\Framework\Console\Commands\ProcessCheckCommand;
+use Kode\Framework\Console\Commands\ProcessListCommand;
+use Kode\Framework\Console\Commands\ProcessStartCommand;
 use Kode\Framework\Console\Commands\RouteListCommand;
 use Kode\Framework\Providers\ServiceProvider;
 
@@ -44,5 +47,8 @@ final class ConsoleServiceProvider extends ServiceProvider
 
         // 框架内置命令（与用户命令隔离，避免命名冲突时覆盖用户）。
         $kernel->add(RouteListCommand::class);
+        $kernel->add(ProcessListCommand::class);
+        $kernel->add(ProcessCheckCommand::class);
+        $kernel->add(ProcessStartCommand::class);
     }
 }

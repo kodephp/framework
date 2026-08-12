@@ -229,6 +229,8 @@ app()->make(X::class);
 | `env()` | 读环境变量 |
 | `ctx()` | 协程/请求上下文 |
 | `runtime()` | 统一运行时（fork 隔离任务） |
+| `snowflake()` | 分布式 ID 生成器 |
+| `process()` | 常驻进程管理器（单例） |
 
 示例：
 
@@ -536,3 +538,98 @@ A：两者不冲突、无功能影响，只是约定不同：
 
 **Q：路由功能（分组/嵌套/中间件/别名/直接返回）都要自己实现吗？**
 A：不需要——`kode/http` 已全部提供（分组、嵌套分组、路由级中间件、命名路由/别名、参数正则、默认参数、URL 反向生成、直接返回数组/Response）。框架只做薄封装与约定，开箱即用。
+
+---
+
+## 14. 分布式 ID（Snowflake）
+
+需要全局唯一、趋势递增、可反解的 ID（订单号、消息 ID、分库分表主键）时，用 Twitter Snowflake 算法：`41 位时间戳 + 5 位数据中心 + 5 位机器 + 12 位序列`。
+
+门面 / 助手：
+
+```php
+use Kode\Framework\Facades\Snowflake;
+
+$id = Snowflake::id();              // 长整型，默认 worker=0/datacenter=0
+$id = snowflake()->id();            // 等价助手写法
+$parts = Snowflake::parse($id);     // ['worker_id'=>, 'datacenter_id'=>, 'timestamp'=>, 'sequence'=>]
+```
+
+自定义节点（多实例部署必须区分 `workerId`，否则会碰撞）：
+
+```php
+// config/snowflake.php 里声明，Provider 已按配置实例化单例
+$sf = new \Kode\Framework\Support\Snowflake(
+    workerId: (int) env('SNOWFLAKE_WORKER', 0),
+    datacenterId: (int) env('SNOWFLAKE_DATACENTER', 0),
+);
+```
+
+特性与边界：
+
+- **唯一 & 递增**：同一节点内毫秒级序列保证唯一，整体趋势递增（便于 B+Tree 索引）；
+- **时钟回拨保护**：轻微回拨（≤5s）自旋等待；大幅回拨（>5s）抛 `RuntimeException`，避免生成重复 ID；
+- **可反解**：`parse()` 还原节点与时间，便于排查问题；
+- **自定义 epoch**：构造函数第三参可设业务起始时间，延长可用年限。
+
+```bash
+# 单测覆盖：唯一性(2万)、单调(5千)、64位正整数、parse 往返、节点不相交、越界/回拨抛错
+vendor/bin/phpunit --filter SnowflakeTest
+```
+
+---
+
+## 15. 常驻进程（Process）
+
+需要后台常驻运行的「周期任务」（心跳上报、队列消费、指标采集、连接保活）时，用框架自建的轻量进程运行器（基于 `kode/process` 的 `fork()` + `Timer` 原语，避开官方 Worker 池「事件循环空转不调用用户回调」的坑）。
+
+### 15.1 定义 Worker
+
+只需实现 `name()` 与 `handle()`，可选覆盖 `interval()` / `instances()` / `onStart()` / `onStop()`：
+
+```php
+// app/Process/HeartbeatWorker.php
+use Kode\Framework\Process\Worker;
+
+final class HeartbeatWorker extends Worker
+{
+    public function name(): string   { return 'heartbeat'; }
+    public function handle(): void   { /* 单次工作量，按 interval() 周期执行 */ }
+    public function interval(): float { return 5.0; }   // 每 5 秒一次，默认 1.0
+    public function instances(): int  { return 2; }     // fork 2 个子进程并行，默认 1
+}
+```
+
+### 15.2 注册
+
+在 `config/process.php` 的 `workers` 声明（无参 / 带构造参数两种写法）：
+
+```php
+return [
+    'workers' => [
+        App\Process\HeartbeatWorker::class,                                  // 无参
+        ['class' => App\Process\CleanupWorker::class, 'config' => ['ttl' => 3600]], // 带参
+    ],
+];
+```
+
+框架启动时 `ProcessServiceProvider` 自动按配置实例化并注册到 `ProcessManager` 单例。门面 `Process` / 助手 `process()` 可随时访问：
+
+```php
+process()->count();          // 已注册 worker 数
+process()->has('heartbeat'); // 是否存在
+```
+
+### 15.3 运行与排查
+
+```bash
+php bin/kode console process:list     # 列出已注册 worker（Name / Interval / Instances）
+php bin/kode console process:check    # dryRun：同步跑一遍 handle()，验证业务逻辑（不 fork）
+php bin/kode console process:start    # 真正 fork 常驻进程（需 CLI + ext-pcntl + ext-posix）
+```
+
+- `process:check` 用 `dryRun()` **不依赖 pcntl / fork**，在 CI、单元测试、无 pcntl 环境也能验证 worker 可跑通；
+- `process:start` 为每个 worker fork `instances()` 个子进程，每个子进程用 `Timer` 按 `interval()` 周期调用 `handle()`，捕获 `SIGTERM/SIGINT` 优雅退出，`handle()` 单次异常不拖垮整个 worker；
+- 当前环境不支持 fork 时，`start()` 明确抛 `RuntimeException` 提示改用 `dryRun()`。
+
+> 与 §10 定时任务的区别：定时任务是「到点触发一次」（cron 语义）；常驻进程是「按固定间隔不停循环」的常驻服务（心跳 / 消费语义）。按需求二选一或并存。

@@ -167,6 +167,18 @@ if (!function_exists('messaging')) {
     }
 }
 
+if (!function_exists('snowflake')) {
+    /**
+     * 获取分布式 ID 生成器（Snowflake 算法，框架内置）。
+     *
+     * 用法：snowflake()->id();  // 生成下一个全局唯一 ID
+     */
+    function snowflake(): object
+    {
+        return resolve('snowflake');
+    }
+}
+
 if (!function_exists('breaker')) {
     /**
      * 获取熔断器管理器（框架中性 InMemoryBreaker 封装，运行时无关）。
@@ -211,5 +223,20 @@ if (!function_exists('route')) {
     function route(string $name, array $parameters = []): string
     {
         return resolve(\Kode\Http\App::class)->url($name, $parameters);
+    }
+}
+
+if (!function_exists('process')) {
+    /**
+     * 获取常驻进程管理器（框架自建，基于 kode/process 的 fork + Timer 原语）。
+     *
+     * 用法：
+     *   process()->register(new App\Process\HeartbeatWorker);
+     *   process()->dryRun();        // 无 fork 验证逻辑
+     *   process()->start();         // 真正 fork 常驻进程（CLI + pcntl）
+     */
+    function process(): object
+    {
+        return resolve('process.manager');
     }
 }
