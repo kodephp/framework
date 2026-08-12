@@ -18,6 +18,7 @@ use Kode\Framework\Providers\JwtServiceProvider;
 use Kode\Framework\Providers\LimitingServiceProvider;
 use Kode\Framework\Providers\LogServiceProvider;
 use Kode\Framework\Providers\MessagingServiceProvider;
+use Kode\Framework\Providers\PluginServiceProvider;
 use Kode\Framework\Providers\ResilienceServiceProvider;
 use Kode\Framework\Providers\TranslationServiceProvider;
 use Kode\Framework\Providers\HttpClientServiceProvider;
@@ -39,7 +40,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.7.6';
+    public const VERSION = '0.7.7';
 
     private static ?Application $instance = null;
 
@@ -162,6 +163,7 @@ final class Application
             ResilienceServiceProvider::class,
             TranslationServiceProvider::class,
             HttpServiceProvider::class,
+            PluginServiceProvider::class,
             SnowflakeServiceProvider::class,
             ProcessServiceProvider::class,
             ConsoleServiceProvider::class,

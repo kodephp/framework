@@ -33,5 +33,15 @@ final class EventServiceProvider extends ServiceProvider
                 $dispatcher->listen((string) $event, $handler);
             }
         }
+
+        // 订阅者：一个类批量注册多个监听器（webman/hyperf 的 subscribe 风格）。
+        // config/event.php 的 subscribe 数组放「实现了 Kode\Event\SubscriberInterface 的类名」。
+        /** @var array<int, class-string<\Kode\Event\SubscriberInterface>> $subscribers */
+        $subscribers = (array) $this->config('event.subscribe', []);
+        foreach ($subscribers as $subscriber) {
+            if (is_string($subscriber) && class_exists($subscriber)) {
+                $dispatcher->subscribe(new $subscriber());
+            }
+        }
     }
 }

@@ -137,6 +137,18 @@ if (!function_exists('db')) {
     }
 }
 
+if (!function_exists('schema')) {
+    /**
+     * 获取 Schema 便捷入口（生成即执行的 DDL 构建器，kode/database）。
+     *
+     * 用法：schema()->create('users', fn ($t) => $t->id()->string('name'));
+     */
+    function schema(): object
+    {
+        return resolve('schema');
+    }
+}
+
 if (!function_exists('queue')) {
     /**
      * 获取默认队列连接（kode/queue）。

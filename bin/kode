@@ -53,6 +53,9 @@ match ($command) {
     'route:list'   => (new KodeConsoleCommand())->run(array_merge(['route:list'], $args)),
     'process:list' => (new KodeConsoleCommand())->run(array_merge(['process:list'], $args)),
     'process:check' => (new KodeConsoleCommand())->run(array_merge(['process:check'], $args)),
+    'migrate'        => (new KodeConsoleCommand())->run(array_merge(['migrate'], $args)),
+    'migrate:rollback' => (new KodeConsoleCommand())->run(array_merge(['migrate:rollback'], $args)),
+    'migrate:reset' => (new KodeConsoleCommand())->run(array_merge(['migrate:reset'], $args)),
     'console'      => (new KodeConsoleCommand())->run($args),
     default        => KodeCli::help(),
 };
@@ -65,7 +68,7 @@ exit(0);
 final class KodeNewCommand
 {
     /** 需要复制的骨架目录 */
-    private const SKELETON_DIRS = ['app', 'config', 'public', 'bin', 'lang'];
+    private const SKELETON_DIRS = ['app', 'config', 'public', 'bin', 'lang', 'database'];
 
     /** 需要复制的骨架文件 */
     private const SKELETON_FILES = ['.env.example', '.gitignore', 'README.md'];
@@ -530,9 +533,13 @@ final class KodeCli
         echo "  bin/kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  bin/kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
         echo "  bin/kode console <args...>         透传执行控制台命令\n";
+        echo "  bin/kode migrate                   执行待运行的数据库迁移\n";
+        echo "  bin/kode migrate:rollback          回滚最近一批迁移\n";
+        echo "  bin/kode migrate:reset             回滚全部迁移\n";
         echo "  bin/kode help                      显示本帮助\n\n";
         echo "serve 选项：--host 127.0.0.1  --port 9527  --workers 4\n";
         echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/Tasks 示例\n";
+        echo "迁移文件放在 database/migrations/，文件名形如 2024_01_01_000000_create_users_table.php\n";
         exit(0);
     }
 }

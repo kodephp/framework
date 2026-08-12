@@ -326,6 +326,28 @@ public function me(): array
 
 也可手动校验：`$payload = jwt()->authenticate($token);`，注销：`jwt()->invalidate($token)`。
 
+> 契约解耦：控制器/中间件只依赖 `Kode\Framework\Contracts\AuthGuard`，更换鉴权方案
+> （换 JWT 算法、改 OAuth2、切 Session-Cookie）只需在 `JwtServiceProvider` 重新绑定，业务代码零改动。
+
+### 9.4 续期与黑名单（kode/jwt 1.12+）
+
+```php
+// 续期：用未过期的旧令牌换取新令牌（refresh_ttl 内有效）
+$next = jwt()->refresh($oldToken);          // ['token' => '...', 'exp' => ...]
+
+// 即时失效：把某令牌（或 jti）加入黑名单
+jwt()->revokeToken($token);                 // 按令牌
+jwt()->revokeJti($jti, 600);                // 按 jti，指定存活秒数
+jwt()->isBlacklisted($jti);                  // 是否已在黑名单
+jwt()->unblacklist($jti);                    // 移出黑名单（恢复可用）
+
+// 强制下线：撤销某用户在某平台下的全部令牌（SSO）
+jwt()->revokeUserTokens($uid, 'web');
+```
+
+底层走 `kode/jwt` 的存储黑名单（memory / redis …），`config/jwt.php` 里 `blacklist_enabled`
+与 `blacklist_ttl` 控制行为；`isTokenValid($token)` 可在不抛异常的情况下判断令牌是否有效。
+
 ---
 
 ## 10. 限流
@@ -479,16 +501,121 @@ DB::transaction(function () {
 
 连接配置见 `config/database.php`。
 
+#### 表结构（Schema 门面）
+
+`Schema` 门面把 kode/database 的 DDL 构建器变成「生成即执行」的便捷入口：
+
+```php
+use Kode\Framework\Database\Schema;
+
+// 建表（回调接收 Schema 实例，可链式定义字段/索引/外键）
+Schema::create('users', function (Schema $t): void {
+    $t->id();
+    $t->string('name', 64);
+    $t->string('email', 191)->uniqueKey();
+    $t->timestamps();
+});
+
+Schema::table('users', fn (Schema $t) => $t->string('avatar')->nullable());
+Schema::drop('users');
+
+Schema::tableExists('users');          // bool
+Schema::columnExists('users', 'email'); // bool
+```
+
+> 当前 kode/database 的 DDL/存在性判断为 MySQL 方言（INFORMATION_SCHEMA），生产以 MySQL 为准；
+> sqlite 等其它驱动的支持以包版本为准。
+
+#### ORM 模型
+
+继承 `Kode\Framework\Database\Model`（对齐 Laravel/Hyperf/ThinkPHP 用法）：
+
+```php
+use Kode\Framework\Database\Model;
+
+final class User extends Model
+{
+    protected string $table = 'users';
+    protected array $fillable = ['name', 'email'];
+}
+
+$user = User::create(['name' => 'Kode', 'email' => 'k@kode.dev']);
+$user->name = 'K'; $user->save();
+$found = User::find($user->id);
+User::where('name', 'K')->paginate(15);
+```
+
+表名默认取「类名复数蛇形」（User → users），可用 `$table` 覆盖；连接默认走
+`config/database.php` 的 `default`，可用 `$connection` 覆盖。
+
+#### 数据库迁移
+
+迁移文件放在 `database/migrations/`，文件名形如 `2024_01_01_000000_create_users_table.php`：
+
+```php
+use Kode\Framework\Database\Migration;
+use Kode\Framework\Database\Schema;
+
+final class CreateUsersTable extends Migration
+{
+    public function up(): void
+    {
+        $this->create('users', function (Schema $t): void {
+            $t->id();
+            $t->string('name', 64);
+            $t->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        $this->drop('users');
+    }
+}
+```
+
+执行与回滚（需配置可用的 MySQL 连接）：
+
+```bash
+php bin/kode migrate            # 执行待运行迁移
+php bin/kode migrate:rollback  # 回滚最近一批
+php bin/kode migrate:reset      # 回滚全部
+```
+
+迁移记录写入 `migrations` 表（首次自动创建），按文件名时间戳排序、支持按批次回滚。
+
 ### 14.4 事件（kode/event，PSR-14）
 
 ```php
-// 监听
+// 监听（config/event.php 的 listeners 也可声明）
 Event::listen(\App\Events\UserRegistered::class, function (\App\Events\UserRegistered $e) {
     // 发欢迎邮件、打点……
 });
 
 // 触发
 event(new \App\Events\UserRegistered($uid));
+```
+
+**订阅者**（一个类批量注册多个监听器，对齐 webman/hyperf 的 subscribe 风格）：
+
+```php
+use Kode\Event\Dispatcher;
+use Kode\Event\SubscriberInterface;
+
+final class UserEventSubscriber implements SubscriberInterface
+{
+    public function subscribe(Dispatcher $dispatcher): void
+    {
+        $dispatcher->listen('user.registered', fn () => /* ... */);
+        $dispatcher->listen('user.deleted',   fn () => /* ... */);
+    }
+}
+```
+
+在 `config/event.php` 的 `subscribe` 数组里声明类名即可启用：
+
+```php
+return ['subscribe' => [\App\Listeners\UserEventSubscriber::class]];
 ```
 
 ### 14.5 HTTP 客户端（kode/http-client，PSR-18）
@@ -547,6 +674,32 @@ Translator::setLocale('en');
     'user_not_found' => 'User %id% not found',
 ];
 ```
+
+**多模块/域（domain）**：不同业务模块的文案放在独立文件 `lang/<locale>/<module>.php`，
+通过 `module::key` 简写或显式域取用，各模块互不污染：
+
+```php
+// 写法一：module::key 简写（自动按 order 域取文案）
+echo lang('order::created', ['id' => 1001]);     // 读 lang/zh-CN/order.php 的 created
+
+// 写法二：显式指定域
+echo translator()->trans('created', ['id' => 1001], 'order');
+
+// 写法三：语义化助手
+echo translator()->transModule('order', 'created', ['id' => 1001]);
+```
+
+对应 `lang/zh-CN/order.php`：
+
+```php
+<?php return [
+    'created' => '订单 %id% 已创建',
+    'paid'    => '订单 %id% 已支付',
+];
+```
+
+默认域为 `messages`（即 `lang/<locale>/messages.php`）；`order` 等模块域独立加载，
+不会覆盖默认域，也不会互相串味。
 
 **按请求自动选语种**：开启 `LocaleMiddleware`（默认开，`config/locale.php` 的 `enabled`）后，
 框架读取请求头 `Accept-Language` 自动切换语种，并在响应写 `Content-Language`。语种存于请求上下文
@@ -659,15 +812,56 @@ final class LogAspect
 
 ---
 
-## 19. 插件
+## 19. 插件（对齐 webman，轻量实现）
 
-`plugins/<name>/` 下的 `src/Controllers`、`routes.php`、调度任务会被**自动发现**，来源标记 `plugin:<name>`：
+插件是一段「可独立开关的能力包」：一个实现 `Kode\Framework\Plugin\PluginInterface` 的类，
+在 `config/plugins.php` 的 `plugins` 数组里声明即可启用。框架启动期会实例化并依次调用
+`register()` / `boot()`，插件通过 `PluginManager` 注册路由 / 服务 / 监听器 / 命令。
 
-- 控制器：`plugins/blog/src/Controllers` → 属性路由自动纳入。
-- 路由：`plugins/blog/routes.php` → 自动加载。
-- 定时任务：`plugins/blog/src/Tasks` → `bin/kode cron` 自动扫描（开启 `discover_plugins`）。
+示例插件（`app/Plugins/DemoPlugin.php`）：
 
-无需在配置里逐条登记。
+```php
+use Kode\Framework\Plugin\PluginInterface;
+use Kode\Framework\Plugin\PluginManager;
+
+final class DemoPlugin implements PluginInterface
+{
+    public function name(): string { return 'demo'; }
+
+    public function register(PluginManager $manager): void
+    {
+        $manager->addRoute('demo.hello', 'GET', '/plugin/demo', fn (): array => [
+            'plugin' => 'demo', 'hello' => 'world',
+        ]);
+        $manager->bind('demo.service', fn (): DemoService => new DemoService());
+    }
+
+    public function boot(PluginManager $manager): void {}
+}
+```
+
+开启（`config/plugins.php`）：
+
+```php
+return ['plugins' => [\App\Plugins\DemoPlugin::class]];
+```
+
+`PluginManager` 提供的注册接口：
+
+| 方法 | 作用 |
+| --- | --- |
+| `addRoute($name, $methods, $pattern, $handler)` | 注册路由，自动打 `plugin:<name>` 来源标签 |
+| `bind($id, $factory)` | 绑定一个单例服务到容器 |
+| `alias($abstract, $alias)` | 为服务注册别名 |
+| `addListener($event, $handler)` | 注册事件监听器 |
+| `addCommand($class)` | 注册控制台命令 |
+| `make($id)` | 从容器解析服务 |
+
+插件路由可用 `bin/kode route:list --source=plugin:demo` 单独查看；插件定时器放到
+`plugins/<name>/src/Tasks` 下可被 `bin/kode cron`（开启 `discover_plugins`）自动扫描。
+
+> 设计取舍：插件不引入独立的「生命周期/钩子总线」，而是复用框架既有的
+> 服务提供者、路由、事件、控制台机制——保持薄核，不重复造轮子（与 webman 思路一致）。
 
 ---
 

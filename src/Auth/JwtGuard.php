@@ -77,9 +77,75 @@ final class JwtGuard implements AuthGuard
         return KodeJwt::guard($guard)->authenticate($token);
     }
 
+    /**
+     * 续期：用未过期的旧令牌换取新令牌（refresh_ttl 内有效）。
+     */
+    public function refresh(string $token, string $guard = 'api'): array
+    {
+        return KodeJwt::guard($guard)->refresh($token);
+    }
+
     public function invalidate(string $token, string $guard = 'api'): bool
     {
         return KodeJwt::guard($guard)->invalidate($token);
+    }
+
+    /**
+     * 按令牌把 jti 加入黑名单（即时失效，无需等过期）。
+     */
+    public function revokeToken(string $token, string $guard = 'api'): bool
+    {
+        return KodeJwt::revokeToken($token, $guard);
+    }
+
+    /**
+     * 按 jti 把令牌加入黑名单（可指定存活秒数）。
+     */
+    public function revokeJti(string $jti, int $ttl = 3600, string $guard = 'api'): bool
+    {
+        return KodeJwt::revokeJti($jti, $ttl, $guard);
+    }
+
+    /**
+     * 判断 jti 是否已在黑名单中。
+     */
+    public function isBlacklisted(string $jti, string $guard = 'api'): bool
+    {
+        return KodeJwt::isBlacklisted($jti, $guard);
+    }
+
+    /**
+     * 把 jti 移出黑名单（恢复可用）。
+     */
+    public function unblacklist(string $jti, string $guard = 'api'): bool
+    {
+        return KodeJwt::unblacklist($jti, $guard);
+    }
+
+    /**
+     * 撤销某用户在某平台下的全部令牌（SSO 强制下线）。
+     */
+    public function revokeUserTokens(string $uid, ?string $platform = null, string $guard = 'api'): int
+    {
+        return KodeJwt::revokeUserTokens($uid, $platform, $guard);
+    }
+
+    /**
+     * 仅校验令牌结构/签名/黑名单，不抛异常，返回是否有效。
+     */
+    public function isTokenValid(string $token, string $guard = 'api'): bool
+    {
+        return KodeJwt::isTokenValid($token, $guard);
+    }
+
+    /**
+     * 解析令牌元信息（jti / exp / 是否被黑名单等），不抛异常。
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getTokenInfo(string $token, string $guard = 'api'): ?array
+    {
+        return KodeJwt::getTokenInfo($token, $guard);
     }
 
     /**

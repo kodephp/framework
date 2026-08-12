@@ -13,8 +13,15 @@ use Symfony\Component\Translation\Translator as SymfonyTranslator;
  *
  * 复用成熟的 symfony/translation（PSR 兼容、框架无关），框架只做薄封装：
  *  - 从 lang 目录按语种加载 PHP 数组资源（资源key => 文案）；
- *  - 支持应用目录与框架内置默认目录合并（应用覆盖框架）；
+ *  - 按「域/模块」(domain) 组织：lang/<locale>/messages.php 为默认域，
+ *    lang/<locale>/<module>.php 为某业务模块的专属文案（多模块互不污染）；
+ *  - 应用目录与框架内置默认目录合并（应用覆盖框架）；
  *  - 占位符遵循 Symfony 约定：%name%（例如 'user %id% not found'）。
+ *
+ * 多模块用法：
+ *  - lang('module::key')            // 自动按 module 域取文案
+ *  - translator()->trans('key', [], 'module')   // 显式指定域
+ *  - translator()->transModule('module', 'key') // 语义化写法
  *
  * 使用：lang('user.not_found', ['id' => 1]) 或 translator()->trans(...)。
  */
@@ -25,8 +32,8 @@ final class Translator
     /** @var array<int, string> */
     private array $paths;
 
-    /** 已加载资源的语种缓存，避免重复扫描磁盘。 */
-    private array $loadedLocales = [];
+    /** 已加载资源的「语种:域」缓存，避免重复扫描磁盘。 */
+    private array $loaded = [];
 
     /**
      * @param array<string, mixed> $config
@@ -38,28 +45,31 @@ final class Translator
         $default = (string) ($config['default'] ?? 'zh-CN');
         $this->translator = new SymfonyTranslator($default);
         $this->translator->addLoader('array', new ArrayLoader());
-        $this->loadLocale($default);
+        $this->loadDomain($default, 'messages');
     }
 
     /**
-     * 加载指定语种在所有候选目录下的 messages 资源（幂等）。
+     * 加载指定语种、指定域在所有候选目录下的 messages 资源（幂等）。
      */
-    private function loadLocale(string $locale): void
+    private function loadDomain(string $locale, string $domain): void
     {
-        if (isset($this->loadedLocales[$locale])) {
+        $key = $locale . ':' . $domain;
+        if (isset($this->loaded[$key])) {
             return;
         }
 
         foreach ($this->paths as $path) {
-            $file = rtrim((string) $path, '/') . '/' . $locale . '/messages.php';
+            $file = rtrim((string) $path, '/') . '/' . $locale . '/' . $domain . '.php';
             if (is_file($file)) {
                 /** @var array<string, string> $messages */
                 $messages = require $file;
-                $this->translator->addResource('array', $messages, $locale);
+                if (is_array($messages)) {
+                    $this->translator->addResource('array', $messages, $locale, $domain);
+                }
             }
         }
 
-        $this->loadedLocales[$locale] = true;
+        $this->loaded[$key] = true;
     }
 
     /**
@@ -70,7 +80,7 @@ final class Translator
     public function setLocale(string $locale): void
     {
         $this->translator->setLocale($locale);
-        $this->loadLocale($locale);
+        $this->loadDomain($locale, 'messages');
     }
 
     /**
@@ -89,6 +99,10 @@ final class Translator
     /**
      * 翻译文案。
      *
+     * 多模块（域）支持：
+     *  - $id 形如 'module::key' 会自动拆出域 module（当 $domain 为 null 时）；
+     *  - 显式传入 $domain 则以其为准；缺省为 'messages'。
+     *
      * 占位符约定：%name%（与 symfony/translation 一致）。
      * 为开发者友好，参数键会自动补百分号：传 ['name' => 'Kode']
      * 等价于 symfony 的 ['%name%' => 'Kode']。
@@ -97,8 +111,14 @@ final class Translator
      */
     public function trans(string $id, array $parameters = [], ?string $domain = null, ?string $locale = null): string
     {
+        if ($domain === null && str_contains($id, '::')) {
+            [$domain, $id] = explode('::', $id, 2);
+        }
+
+        $domain ??= 'messages';
         $locale ??= $this->getLocale();
-        $this->loadLocale($locale);
+
+        $this->loadDomain($locale, $domain);
 
         $normalized = [];
         foreach ($parameters as $key => $value) {
@@ -108,6 +128,25 @@ final class Translator
             $normalized[$k] = $value;
         }
 
-        return $this->translator->trans($id, $normalized, $domain ?? 'messages', $locale);
+        return $this->translator->trans($id, $normalized, $domain, $locale);
+    }
+
+    /**
+     * 按模块（域）翻译：transModule('order', 'created', [...]) 等价于
+     * trans('order::created', ...) 或 trans('created', [], 'order')。
+     *
+     * @param array<string, mixed> $parameters
+     */
+    public function transModule(string $module, string $id, array $parameters = [], ?string $locale = null): string
+    {
+        return $this->trans($id, $parameters, $module, $locale);
+    }
+
+    /**
+     * 某语种下某域是否已加载过文案资源。
+     */
+    public function hasDomain(string $locale, string $domain = 'messages'): bool
+    {
+        return isset($this->loaded[$locale . ':' . $domain]);
     }
 }

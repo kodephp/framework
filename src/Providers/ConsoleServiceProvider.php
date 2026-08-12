@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Kode\Framework\Providers;
 
 use Kode\Console\Kernel;
+use Kode\Framework\Console\Commands\MigrateCommand;
+use Kode\Framework\Console\Commands\MigrateResetCommand;
+use Kode\Framework\Console\Commands\MigrateRollbackCommand;
 use Kode\Framework\Console\Commands\ProcessCheckCommand;
 use Kode\Framework\Console\Commands\ProcessListCommand;
 use Kode\Framework\Console\Commands\ProcessStartCommand;
@@ -50,5 +53,8 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(ProcessListCommand::class);
         $kernel->add(ProcessCheckCommand::class);
         $kernel->add(ProcessStartCommand::class);
+        $kernel->add(MigrateCommand::class);
+        $kernel->add(MigrateRollbackCommand::class);
+        $kernel->add(MigrateResetCommand::class);
     }
 }

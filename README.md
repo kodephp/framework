@@ -18,7 +18,7 @@ php bin/kode serve
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"0.7.6","php":"8.3.x","env":"local","time":"..."}
+# {"status":"ok","service":"kode-app","version":"0.7.7","php":"8.3.x","env":"local","time":"..."}
 ```
 
 第一个接口：
@@ -100,7 +100,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 
 ## 版本
 
-- 当前版本：**[v0.7.6](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.7.7](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

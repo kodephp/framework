@@ -72,4 +72,60 @@ final class JwtGuardTest extends TestCase
         $this->expectException(\Kode\Jwt\Exception\JwtException::class);
         $guard->authenticate($token);
     }
+
+    public function testRevokeTokenBlacklistsJti(): void
+    {
+        $guard = $this->guard();
+        $token = $guard->issue(['uid' => 7]);
+        $info = $guard->getTokenInfo($token);
+        $jti = (string) ($info['jti'] ?? '');
+
+        self::assertNotEmpty($jti);
+        self::assertFalse($guard->isBlacklisted($jti));
+
+        self::assertTrue($guard->revokeToken($token));
+        self::assertTrue($guard->isBlacklisted($jti));
+
+        // 黑名单中的令牌校验应失败。
+        $this->expectException(\Kode\Jwt\Exception\JwtException::class);
+        $guard->authenticate($token);
+    }
+
+    public function testUnblacklistRestoresToken(): void
+    {
+        $guard = $this->guard();
+        $token = $guard->issue(['uid' => 8]);
+        $jti = (string) ($guard->getTokenInfo($token)['jti'] ?? '');
+
+        $guard->revokeJti($jti, 600);
+        self::assertTrue($guard->isBlacklisted($jti));
+
+        self::assertTrue($guard->unblacklist($jti));
+        self::assertFalse($guard->isBlacklisted($jti));
+        // 移出黑名单后应可再次校验。
+        self::assertNotNull($guard->authenticate($token));
+    }
+
+    public function testRefreshProducesNewToken(): void
+    {
+        $guard = $this->guard();
+        $token = $guard->issue(['uid' => 9]);
+        $oldJti = (string) ($guard->getTokenInfo($token)['jti'] ?? '');
+
+        $next = $guard->refresh($token);
+        self::assertIsArray($next);
+        self::assertArrayHasKey('token', $next);
+
+        $newJti = (string) ($guard->getTokenInfo((string) $next['token'])['jti'] ?? '');
+        self::assertNotSame($oldJti, $newJti, '续期应生成新的 jti');
+    }
+
+    public function testIsTokenValid(): void
+    {
+        $guard = $this->guard();
+        $token = $guard->issue(['uid' => 10]);
+
+        self::assertTrue($guard->isTokenValid($token));
+        self::assertFalse($guard->isTokenValid('not-a-real-token'));
+    }
 }
