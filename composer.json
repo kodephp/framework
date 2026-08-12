@@ -52,6 +52,7 @@
         "kode/queue": "^2.2",
         "kode/router": "*",
         "kode/runtime": "*",
+        "kode/scheduling": "^1.3",
         "kode/session": "*",
         "monolog/monolog": "^3.0",
         "nyholm/psr7": "^1.8",
@@ -96,6 +97,8 @@
         "serve": "php bin/kode serve",
         "console": "php bin/console",
         "new": "php bin/kode new",
+        "init": "php bin/kode init",
+        "post-create-project-cmd": "php bin/kode init",
         "test": "php vendor/bin/phpunit"
     }
 }

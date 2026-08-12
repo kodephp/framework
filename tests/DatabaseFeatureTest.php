@@ -34,10 +34,9 @@ final class DatabaseFeatureTest extends TestCase
 
     public function testSchemaToSqlBuildsDdl(): void
     {
-        // 注：kode/database 的 Schema 构建器在 id()/列定义时会触发一条包内
-        // PHP warning（Column.php: Undefined array key "primary_key"），属包内已知问题，
-        // 此处按包内行为抑制，仅校验框架薄封装产出的 DDL 正确。
-        $sql = @FrameworkSchema::preview('users', function (FrameworkSchema $t): void {
+        // kode/database 1.15.1 已修复 Column.php 的 primary_key 未初始化 warning，
+        // 此处不再需要 @ 抑制，直接校验框架薄封装产出的 DDL 正确。
+        $sql = FrameworkSchema::preview('users', function (FrameworkSchema $t): void {
             $t->id();
             $t->string('name', 64);
             $t->timestamps();
@@ -121,5 +120,32 @@ final class DatabaseFeatureTest extends TestCase
         // 直接调用静态方法，断言在连库之前即抛出校验异常（安全前置）。
         $this->expectException(\InvalidArgumentException::class);
         FrameworkSchema::tableExists("users'; DROP TABLE users; --");
+    }
+
+    /**
+     * 回归：kode/database 1.15.0 三个异常类的 make() 与父类签名不兼容，类被加载即 fatal。
+     * 1.15.1 父类移除 make()（改 sql()），子类 make() 不再覆盖父类，加载无致命。
+     * 此处显式加载并调用 make() 确认该回归已修复。
+     */
+    public function testDatabaseExceptionClassesLoadWithoutFatal(): void
+    {
+        $classes = [
+            \Kode\Database\Exception\ConnectionException::class,
+            \Kode\Database\Exception\QueryException::class,
+            \Kode\Database\Exception\ModelNotFoundException::class,
+        ];
+        foreach ($classes as $class) {
+            self::assertTrue(class_exists($class), "{$class} 应可加载");
+        }
+
+        // 调用 make() 工厂不应触发致命/异常（仅构造一个异常实例）。
+        $connEx = \Kode\Database\Exception\ConnectionException::make('default');
+        self::assertInstanceOf(\Kode\Database\Exception\ConnectionException::class, $connEx);
+
+        $queryEx = \Kode\Database\Exception\QueryException::make('SELECT 1', []);
+        self::assertInstanceOf(\Kode\Database\Exception\QueryException::class, $queryEx);
+
+        $modelEx = \Kode\Database\Exception\ModelNotFoundException::make(\Kode\Framework\Database\Model::class);
+        self::assertInstanceOf(\Kode\Database\Exception\ModelNotFoundException::class, $modelEx);
     }
 }

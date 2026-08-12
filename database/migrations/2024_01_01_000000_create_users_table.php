@@ -18,7 +18,8 @@ final class CreateUsersTable extends Migration
         Schema::create('users', function (Schema $t): void {
             $t->id();
             $t->string('name', 64);
-            $t->string('email', 191)->uniqueKey();
+            $t->string('email', 191);
+            $t->uniqueKey('email');
             $t->string('password', 255);
             $t->timestamps();
         });

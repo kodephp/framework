@@ -7,13 +7,15 @@ declare(strict_types=1);
  * Kode Framework 命令行工具
  *
  * 用法：
- *   bin/kode new <path> [--install]   一键脚手架：从框架骨架生成可运行项目
+ *   bin/kode init                    初始化当前项目（生成 .env + storage/，composer create-project 后自动执行）
+ *   bin/kode new <path> [--install]   脚手架：从框架骨架生成独立项目到 <path>
  *   bin/kode serve [--host H] [--port P] [--workers N]
  *                                    启动多进程 HTTP 服务（kode/process master-worker）
  *   bin/kode console <args...>        透传执行控制台命令
  *   bin/kode help                     帮助
  *
  * 作为 composer 包发布后，用户安装 kode/framework 即可通过 vendor/bin/kode 调用。
+ * 推荐安装方式：composer create-project kode/framework <项目名>（自动下载 + composer install + 初始化）。
  */
 
 // ---- 定位自动加载器（兼容「仓库内」与「composer 安装后」两种上下文）----
@@ -47,6 +49,7 @@ $args = array_slice($argv, 2);
 
 match ($command) {
     'new'          => (new KodeNewCommand($packageRoot))->run($args),
+    'init'         => (new KodeInitCommand($packageRoot))->run($args),
     'serve'        => (new KodeServeCommand())->run($args),
     'cron'         => (new KodeCronCommand())->run($args),
     'schedule:list' => (new KodeScheduleListCommand())->run($args),
@@ -72,9 +75,6 @@ final class KodeNewCommand
 
     /** 需要复制的骨架文件 */
     private const SKELETON_FILES = ['.env.example', '.gitignore', 'README.md'];
-
-    /** 新项目默认创建的存储子目录（带 .gitkeep） */
-    private const STORAGE_DIRS = ['logs', 'cache', 'framework/cache', 'framework/sessions', 'framework/views'];
 
     public function __construct(private string $packageRoot)
     {
@@ -121,25 +121,18 @@ final class KodeNewCommand
             }
         }
 
-        // 3) .env（由 .env.example 生成，避免直接提交密钥）
-        if (is_file($this->packageRoot . '/.env.example') && !is_file($target . '/.env')) {
-            copy($this->packageRoot . '/.env.example', $target . '/.env');
-        }
+        // 3) 初始化 .env 与存储目录（与 composer create-project 后的 kode init 共用逻辑）
+        (new KodeInitCommand($target))->run([]);
 
-        // 4) 存储目录（运行时写入，随 .gitignore 忽略内容，仅保留 .gitkeep）
-        foreach (self::STORAGE_DIRS as $sub) {
-            $this->ensureDir($target . '/storage/' . $sub);
-        }
-
-        // 5) 测试目录 + phpunit 配置 + 示例冒烟测试
+        // 4) 测试目录 + phpunit 配置 + 示例冒烟测试
         $this->ensureDir($target . '/tests');
         $this->writePhpunitXml($target);
         $this->writeSmokeTest($target);
 
-        // 6) 项目级 .gitignore（忽略 vendor / .env / 运行时产物）
+        // 5) 项目级 .gitignore（忽略 vendor / .env / 运行时产物）
         $this->writeProjectGitignore($target);
 
-        // 7) 消费者 composer.json（只依赖框架包，不自带框架源码）
+        // 6) 消费者 composer.json（只依赖框架包，不自带框架源码）
         $this->writeComposerJson($target);
 
         echo "✅ 已生成项目骨架：{$target}\n";
@@ -323,6 +316,48 @@ TXT;
             } else {
                 copy($s, $d);
             }
+        }
+    }
+}
+
+// ============================================================
+// 初始化：生成 .env 与存储目录（composer create-project 后自动执行）
+// ============================================================
+final class KodeInitCommand
+{
+    /** 运行时存储子目录（仅保留 .gitkeep，内容随 .gitignore 忽略） */
+    private const STORAGE_DIRS = ['logs', 'cache', 'framework/cache', 'framework/sessions', 'framework/views'];
+
+    public function __construct(private string $projectRoot)
+    {
+    }
+
+    public function run(array $args): void
+    {
+        // 1) .env（由 .env.example 生成，避免直接提交密钥）
+        $example = $this->projectRoot . '/.env.example';
+        $env = $this->projectRoot . '/.env';
+        if (is_file($example) && !is_file($env)) {
+            copy($example, $env);
+            echo "✅ 已生成 .env（请按需修改 JWT_SECRET 等配置）\n";
+        }
+
+        // 2) 存储目录（运行时写入，随 .gitignore 忽略内容，仅保留 .gitkeep）
+        foreach (self::STORAGE_DIRS as $sub) {
+            $this->ensureDir($this->projectRoot . '/storage/' . $sub);
+        }
+
+        echo "✅ 基础架构初始化完成（.env + storage/）\n";
+    }
+
+    private function ensureDir(string $path): void
+    {
+        if (!is_dir($path)) {
+            @mkdir($path, 0o755, true);
+        }
+        $keep = $path . '/.gitkeep';
+        if (!is_file($keep)) {
+            file_put_contents($keep, '');
         }
     }
 }
@@ -528,7 +563,9 @@ final class KodeCli
     public static function help(): void
     {
         echo "Kode Framework 命令行工具\n\n";
-        echo "  bin/kode new <path> [--install]   一键脚手架：生成可运行项目（--install 自动 composer install）\n";
+        echo "  composer create-project kode/framework <项目名>   一句话安装（下载 + composer install + 初始化）\n";
+        echo "  bin/kode init                    初始化当前项目（生成 .env + storage/）\n";
+        echo "  bin/kode new <path> [--install]   脚手架：生成独立项目到 <path>（--install 自动 composer install）\n";
         echo "  bin/kode serve [--host H] [--port P] [--workers N] [--watch]   启动多进程 HTTP 服务（--watch 开热重载）\n";
         echo "  bin/kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  bin/kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";

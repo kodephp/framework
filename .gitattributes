@@ -1,0 +1,14 @@
+# Composer 分发归档（create-project / require 下载的 zip）导出规则。
+# 仅影响分发包，不改 git 仓库内容；框架自身的 src/ 必须保留（消费者依赖它）。
+
+# 开发/文档产物不进入分发包
+/tests/                export-ignore
+/docs/                 export-ignore
+/.workbuddy/           export-ignore
+/.github/              export-ignore
+
+# 运行时产物（仅保留目录占位 .gitkeep，由 bin/kode init 重建）
+/storage/cache/*       export-ignore
+/storage/logs/*        export-ignore
+/storage/framework/*   export-ignore
+/storage/heartbeat.log export-ignore

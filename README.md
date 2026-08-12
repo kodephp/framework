@@ -9,8 +9,8 @@
 ## 5 分钟跑起来
 
 ```bash
-# 1. 用脚手架生成一个独立项目（只依赖 kode/framework）
-php vendor/bin/kode new myapp --install
+# 1. 一句话安装：下载框架 + composer install + 初始化（项目名 myapp 写在包名后）
+composer create-project kode/framework myapp
 cd myapp
 
 # 2. 启动多进程 HTTP 服务（默认 http://127.0.0.1:9527）
@@ -20,6 +20,9 @@ php bin/kode serve
 curl http://127.0.0.1:9527/health
 # {"status":"ok","service":"kode-app","version":"0.7.7","php":"8.3.x","env":"local","time":"..."}
 ```
+
+> 安装时 `composer create-project` 会自动生成 `.env` 与 `storage/` 目录。
+> 若把框架作为依赖引入已有项目：`composer require kode/framework`，再把仓库里的 `app/`、`config/`、`bin/`、`lang/`、`database/` 复制进项目根，然后 `php vendor/bin/kode init`。
 
 第一个接口：
 
@@ -100,7 +103,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 
 ## 版本
 
-- 当前版本：**[v0.7.7](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.7.8](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

@@ -19,19 +19,19 @@ php -m | grep -E "pcntl|posix|sockets"   # 三个都要有
 
 ## 2. 三步跑起来
 
-框架以 Composer 包发布。用自带脚手架生成一个独立项目（业务只写在生成的 `app/` 里，框架包保持精简、可独立升级）：
+框架以 Composer 包发布。**一句话安装**（项目名 `myapp` 写在包名后，可任意命名）：
 
 ```bash
-php vendor/bin/kode new myapp --install
+composer create-project kode/framework myapp
 cd myapp
 php bin/kode serve
 ```
 
-打开 <http://127.0.0.1:9527/health> ，看到 `{"status":"ok",...}` 即成功。
+`composer create-project` 会完成三件事：下载框架 → 运行 `composer install` 安装全部依赖 → 自动执行 `kode init` 生成 `.env` 与 `storage/` 目录。打开 <http://127.0.0.1:9527/health> ，看到 `{"status":"ok",...}` 即成功。
 
 > 默认端口 **9527**。换端口：`php bin/kode serve --port 8080`。
 
-> 若你是把框架作为依赖引入已有项目：`composer require kode/framework`，再把仓库里的 `app/`、`config/`、`bin/`、`lang/` 复制到项目根即可。
+> 若把框架作为依赖引入已有项目：`composer require kode/framework`，再把仓库里的 `app/`、`config/`、`bin/`、`lang/`、`database/` 复制到项目根，然后 `php vendor/bin/kode init`。
 
 ---
 
