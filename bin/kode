@@ -419,7 +419,11 @@ final class KodeServeCommand
             exit(0);
         }
 
-        HttpServer::make($config)->run($root);
+        try {
+            HttpServer::make($config)->run($root);
+        } catch (\Throwable $e) {
+            KodeCli::fail($e);
+        }
     }
 
     /**
@@ -446,10 +450,14 @@ final class KodeConsoleCommand
 {
     public function run(array $args): void
     {
-        $root = getcwd();
-        $app = Application::make($root);
-        $code = $app->console()->run(array_merge([$GLOBALS['argv'][0] ?? 'kode'], $args));
-        exit(is_int($code) ? $code : 0);
+        try {
+            $root = getcwd();
+            $app = Application::make($root);
+            $code = $app->console()->run(array_merge([$GLOBALS['argv'][0] ?? 'kode'], $args));
+            exit(is_int($code) ? $code : 0);
+        } catch (\Throwable $e) {
+            KodeCli::fail($e);
+        }
     }
 }
 
@@ -495,8 +503,12 @@ final class KodeCronCommand extends KodeScheduleCommand
 {
     public function run(array $args): void
     {
-        $root = getcwd();
-        $app = Application::make($root);
+        try {
+            $root = getcwd();
+            $app = Application::make($root);
+        } catch (\Throwable $e) {
+            KodeCli::fail($e);
+        }
 
         $runOnce = null;
         foreach ($args as $a) {
@@ -550,8 +562,12 @@ final class KodeScheduleListCommand extends KodeScheduleCommand
 {
     public function run(array $args): void
     {
-        $root = getcwd();
-        $app = Application::make($root);
+        try {
+            $root = getcwd();
+            $app = Application::make($root);
+        } catch (\Throwable $e) {
+            KodeCli::fail($e);
+        }
 
         $tasks = $this->scanner()->scan($this->taskDirs($app));
 
@@ -583,6 +599,27 @@ final class KodeScheduleListCommand extends KodeScheduleCommand
 // ============================================================
 final class KodeCli
 {
+    /**
+     * 命令行「最后一道防线」：把启动期 / 未捕获的异常转成清晰的报错，
+     * 而非裸堆栈，并以非 0 退出码结束（便于 CI / 编排系统感知失败）。
+     *
+     * APP_DEBUG=true（或环境变量 APP_DEBUG=true）时附上堆栈，便于本地排查。
+     */
+    public static function fail(\Throwable $e): never
+    {
+        fwrite(STDERR, "\n❌ " . get_class($e) . ': ' . $e->getMessage() . "\n");
+
+        $debug = ($_SERVER['APP_DEBUG'] ?? null) === 'true'
+            || ($_ENV['APP_DEBUG'] ?? null) === 'true'
+            || (getenv('APP_DEBUG') ?: 'false') === 'true';
+
+        if ($debug) {
+            fwrite(STDERR, $e->getTraceAsString() . "\n");
+        }
+
+        exit(1);
+    }
+
     public static function help(): void
     {
         echo "Kode Framework 命令行工具\n\n";

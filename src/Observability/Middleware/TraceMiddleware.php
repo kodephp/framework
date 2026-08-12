@@ -25,14 +25,33 @@ final class TraceMiddleware implements MiddlewareInterface
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        TraceContext::ensure($request);
+        // 链路上下文建立失败绝不应阻断请求——降级为「无链路头」继续处理。
+        try {
+            TraceContext::ensure($request);
+        } catch (\Throwable $e) {
+            $this->log($e);
+        }
 
         $response = $handler->handle($request);
 
-        foreach (TraceContext::responseHeaders() as $name => $value) {
-            $response = $response->withHeader($name, $value);
+        // 尽力附加链路头；任一头构造失败只跳过该头，不影响主响应。
+        try {
+            foreach (TraceContext::responseHeaders() as $name => $value) {
+                $response = $response->withHeader($name, $value);
+            }
+        } catch (\Throwable) {
+            // best-effort：链路头缺失不影响业务响应。
         }
 
         return $response;
+    }
+
+    private function log(\Throwable $e): void
+    {
+        try {
+            logger()->warning('链路上下文初始化失败，已降级', ['exception' => $e]);
+        } catch (\Throwable) {
+            // logger 不可用时忽略，避免二次异常。
+        }
     }
 }

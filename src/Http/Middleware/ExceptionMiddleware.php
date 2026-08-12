@@ -6,6 +6,7 @@ namespace Kode\Framework\Http\Middleware;
 
 use Kode\Exception\ExceptionManager;
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Observability\Trace\TraceContext;
 use Kode\Framework\Validation\ValidationException;
 use Kode\Http\Response;
 use Psr\Http\Message\ResponseInterface;
@@ -44,19 +45,48 @@ final class ExceptionMiddleware implements MiddlewareInterface
 
     private function toResponse(\Throwable $e): ResponseInterface
     {
-        $result = $this->manager->respond($e);
-        $body = $result['body'];
+        try {
+            $result = $this->manager->respond($e);
+            $body = $result['body'];
 
-        $response = Response::json($body)->status($result['status']);
+            $response = Response::json($body)->status($result['status']);
 
-        // 透传分布式链路标识，便于网关 / 日志串联。
-        if (!empty($body['trace_id'])) {
-            $response = $response->header('X-Trace-Id', (string) $body['trace_id']);
+            // 透传分布式链路标识，便于网关 / 日志串联。
+            if (!empty($body['trace_id'])) {
+                $response = $response->header('X-Trace-Id', (string) $body['trace_id']);
+            }
+            if (!empty($body['span_id'])) {
+                $response = $response->header('X-Span-Id', (string) $body['span_id']);
+            }
+
+            return $response;
+        } catch (\Throwable $renderError) {
+            // 错误处理器自身出错（如 kode/exception 内部异常、循环依赖）时，绝不让请求
+            // 以「裸 PHP 错误 / 空白 500」结束——返回最小安全 JSON，并记录原始错误。
+            return $this->fallback($e, $renderError);
         }
-        if (!empty($body['span_id'])) {
-            $response = $response->header('X-Span-Id', (string) $body['span_id']);
+    }
+
+    private function fallback(\Throwable $e, \Throwable $renderError): ResponseInterface
+    {
+        try {
+            $traceId = TraceContext::traceId();
+        } catch (\Throwable) {
+            $traceId = '';
         }
 
-        return $response;
+        try {
+            logger()->error('异常响应渲染失败，已回退最小安全响应', [
+                'exception' => $renderError,
+                'original' => $e,
+            ]);
+        } catch (\Throwable) {
+            // logger 也可能不可用，尽力而为，不二次抛错。
+        }
+
+        return Response::json([
+            'message' => 'Internal Server Error',
+            'trace_id' => $traceId,
+        ])->status(500);
     }
 }

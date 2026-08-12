@@ -44,7 +44,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.1';
+    public const VERSION = '0.8.2';
 
     private static ?Application $instance = null;
 
@@ -79,18 +79,26 @@ final class Application
 
         $this->loadEnvironment();
 
-        $this->app = CoreApp::boot([
-            'base_path'   => $this->basePath,
-            'config_path' => $this->basePath . '/config',
-            'providers'   => $this->providers(),
-            'runtime'     => $this->runtimeModes(),
-            // path.base 必须在启动期可用（部分 provider 在 boot 阶段就要拼路径），
-            // 故通过 boot 的内联配置预置。注意 core\Config 的 get() 按点号遍历
-            // 嵌套数组，因此此处必须用嵌套结构（而非字面键 'path.base'）。
-            'config'      => [
-                'path' => ['base' => $this->basePath],
-            ],
-        ]);
+        try {
+            $this->app = CoreApp::boot([
+                'base_path'   => $this->basePath,
+                'config_path' => $this->basePath . '/config',
+                'providers'   => $this->providers(),
+                'runtime'     => $this->runtimeModes(),
+                // path.base 必须在启动期可用（部分 provider 在 boot 阶段就要拼路径），
+                // 故通过 boot 的内联配置预置。注意 core\Config 的 get() 按点号遍历
+                // 嵌套数组，因此此处必须用嵌套结构（而非字面键 'path.base'）。
+                'config'      => [
+                    'path' => ['base' => $this->basePath],
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException(
+                '应用启动失败（' . $this->basePath . '）：' . $e->getMessage(),
+                0,
+                $e
+            );
+        }
 
         // 用户引导：AOP 切面、事件监听等（此时 App 已就绪，门面/助手均可用）。
         $this->loadUserBootstrap();
@@ -216,23 +224,7 @@ final class Application
 
     private function loadEnvironment(): void
     {
-        $dot = $this->basePath . '/.env';
-        if (!is_file($dot)) {
-            return;
-        }
-
-        foreach (file($dot, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
-            $line = trim($line);
-            if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
-                continue;
-            }
-            [$key, $value] = explode('=', $line, 2);
-            $key = trim($key);
-            $value = trim(trim($value), "\"'");
-            $_ENV[$key] = $value;
-            $_SERVER[$key] = $value;
-            putenv("$key=$value");
-        }
+        \Kode\Framework\Support\EnvLoader::load($this->basePath . '/.env');
     }
 
     private function loadUserBootstrap(): void

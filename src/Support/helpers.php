@@ -63,7 +63,14 @@ if (!function_exists('resolve')) {
      */
     function resolve(string $id, array $parameters = [])
     {
-        return app()->make($id, $parameters);
+        $app = app();
+        if ($app === null) {
+            throw new \RuntimeException(
+                "服务容器尚未启动，无法解析 [{$id}]。请确保在 Application::make() 引导完成后再调用助手函数。"
+            );
+        }
+
+        return $app->make($id, $parameters);
     }
 }
 

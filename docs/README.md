@@ -40,6 +40,7 @@
 | [安全与合规](security-compliance.md) | 安全响应头(CSP/COOP/CORP)、审计日志、API 版本化 |
 | [可观测性](observability.md) | 指标(Prometheus) + 链路追踪(W3C traceparent) + /metrics |
 | [API 文档自动化](api-docs.md) | OpenAPI 3.0 生成 + /docs Swagger UI + #[OpenApi] |
+| [健壮性设计](robustness.md) | 错误处理器防御、链路外层不可失败、.env 解析、CLI 优雅退出、容器守卫 |
 
 ### 五、数据层
 | 文档 | 内容 |
@@ -77,6 +78,6 @@
 
 ## 版本
 
-- 当前版本：**[v0.8.1](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.8.2](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
