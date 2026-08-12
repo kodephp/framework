@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Http;
 
+use Kode\Attributes\MetaList;
 use Kode\Attributes\Reader;
 use Kode\Attributes\Scanner;
+use Kode\Framework\ApiDoc\Attributes\OpenApi;
 use Kode\Framework\Http\Attributes\Controller;
 use Kode\Framework\Http\Attributes\Route;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
@@ -77,7 +79,7 @@ final class ControllerScanner
                 }
                 /** @var Route $attr */
                 $attr = $routeMeta->getInstance();
-                $this->register($class, $method, $attr, $prefix, $classMiddleware, $source);
+                $this->register($class, $method, $attr, $prefix, $classMiddleware, $source, $metas);
             }
         }
     }
@@ -89,6 +91,7 @@ final class ControllerScanner
         string $prefix,
         array $classMiddleware,
         string $source,
+        MetaList $metas,
     ): void {
         $path = $this->fullPath($prefix, $attr->path);
         $handler = fn($req) => resolve($class)->{$method}($req);
@@ -108,6 +111,14 @@ final class ControllerScanner
         $middleware = array_values(array_unique([...$classMiddleware, ...$attr->middleware]));
         foreach ($middleware as $mw) {
             $route->middleware($mw);
+        }
+
+        // OpenAPI：捕获方法上的 #[OpenApi] 补充片段，供 ApiDoc 生成器读取。
+        $openApiMeta = $metas->get(OpenApi::class);
+        if ($openApiMeta !== null) {
+            /** @var OpenApi $openApi */
+            $openApi = $openApiMeta->getInstance();
+            $this->registry->tagOpenApi($route, $openApi);
         }
     }
 

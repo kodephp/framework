@@ -16,4 +16,9 @@
             <directory>src</directory>
         </include>
     </source>
+    <php>
+        <!-- 测试用 /metrics 令牌（protect=token）。config 为进程级单例，只能于首次 boot 前注入。 -->
+        <env name="OBS_METRICS_PROTECT" value="token"/>
+        <env name="OBS_METRICS_TOKEN" value="test-token"/>
+    </php>
 </phpunit>

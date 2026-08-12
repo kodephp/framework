@@ -5,6 +5,12 @@ declare(strict_types=1);
 namespace Kode\Framework\Providers;
 
 use Kode\Console\Kernel;
+use Kode\Framework\Console\Commands\DbSeedCommand;
+use Kode\Framework\Console\Commands\MakeCommandCommand;
+use Kode\Framework\Console\Commands\MakeControllerCommand;
+use Kode\Framework\Console\Commands\MakeMiddlewareCommand;
+use Kode\Framework\Console\Commands\MakeMigrationCommand;
+use Kode\Framework\Console\Commands\MakeModelCommand;
 use Kode\Framework\Console\Commands\MigrateCommand;
 use Kode\Framework\Console\Commands\MigrateResetCommand;
 use Kode\Framework\Console\Commands\MigrateRollbackCommand;
@@ -56,5 +62,11 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(MigrateCommand::class);
         $kernel->add(MigrateRollbackCommand::class);
         $kernel->add(MigrateResetCommand::class);
+        $kernel->add(MakeControllerCommand::class);
+        $kernel->add(MakeModelCommand::class);
+        $kernel->add(MakeMigrationCommand::class);
+        $kernel->add(MakeMiddlewareCommand::class);
+        $kernel->add(MakeCommandCommand::class);
+        $kernel->add(DbSeedCommand::class);
     }
 }

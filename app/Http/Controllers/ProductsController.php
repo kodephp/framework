@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use Kode\Framework\ApiDoc\Attributes\OpenApi;
 use Kode\Framework\Http\Attributes\Controller as RouteController;
 use Kode\Framework\Http\Attributes\Delete;
 use Kode\Framework\Http\Attributes\Get;
@@ -44,6 +45,15 @@ final class ProductsController extends Controller
      * GET /products/{id:\d+}  （命名路由 product.show）
      */
     #[Get('/{id:\d+}', name: 'product.show')]
+    #[OpenApi(
+        summary: '获取商品详情',
+        description: '按商品 ID 返回商品信息',
+        tags: ['product'],
+        responses: [
+            200 => ['description' => 'OK', 'content' => ['application/json' => ['schema' => ['type' => 'object']]]],
+            404 => ['description' => '商品不存在'],
+        ],
+    )]
     public function show()
     {
         $id = (int) $this->param('id');

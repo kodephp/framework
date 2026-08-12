@@ -15,6 +15,10 @@ use Kode\Framework\Providers\ExceptionServiceProvider;
 use Kode\Framework\Providers\EventServiceProvider;
 use Kode\Framework\Providers\HttpServiceProvider;
 use Kode\Framework\Providers\JwtServiceProvider;
+use Kode\Framework\Providers\LifecycleServiceProvider;
+use Kode\Framework\Providers\ApiDocServiceProvider;
+use Kode\Framework\Providers\ComplianceServiceProvider;
+use Kode\Framework\Providers\ObservabilityServiceProvider;
 use Kode\Framework\Providers\LimitingServiceProvider;
 use Kode\Framework\Providers\LogServiceProvider;
 use Kode\Framework\Providers\MessagingServiceProvider;
@@ -40,7 +44,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.7.9';
+    public const VERSION = '0.8.0';
 
     private static ?Application $instance = null;
 
@@ -163,6 +167,10 @@ final class Application
             ResilienceServiceProvider::class,
             TranslationServiceProvider::class,
             HttpServiceProvider::class,
+            ObservabilityServiceProvider::class,
+            LifecycleServiceProvider::class,
+            ComplianceServiceProvider::class,
+            ApiDocServiceProvider::class,
             PluginServiceProvider::class,
             SnowflakeServiceProvider::class,
             ProcessServiceProvider::class,

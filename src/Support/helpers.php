@@ -264,3 +264,57 @@ if (!function_exists('process')) {
         return resolve('process.manager');
     }
 }
+
+if (!function_exists('metrics')) {
+    /**
+     * 获取指标注册表（Prometheus 指标，可观测性）。
+     *
+     * 用法：
+     *   metrics()->counter('orders_total', '订单数', ['channel'])->with(['channel' => 'web'])->inc();
+     *   metrics()->histogram('job_seconds', '任务耗时', [])->observe(1.2);
+     */
+    function metrics(): object
+    {
+        return resolve('metrics');
+    }
+}
+
+if (!function_exists('audit')) {
+    /**
+     * 获取审计服务（合规审计，通常由审计中间件自动调用，业务亦可手动补记）。
+     *
+     * 用法：audit()->record($request, $response, $start, $userId);
+     */
+    function audit(): object
+    {
+        return resolve('audit');
+    }
+}
+
+if (!function_exists('trace')) {
+    /**
+     * 获取链路上下文类名（trace_id / span_id，分布式追踪）。
+     *
+     * 用法：
+     *   trace()::traceId();                    // 当前链路 ID
+     *   $headers = trace()::outgoingHeaders(); // 注入到下游 HTTP 调用实现跨服务串联
+     */
+    function trace(): string
+    {
+        return \Kode\Framework\Observability\Trace\TraceContext::class;
+    }
+}
+
+if (!function_exists('openapi')) {
+    /**
+     * 获取 OpenAPI 生成器（API 文档自动化）。
+     *
+     * 用法：
+     *   openapi()->generate();  // 返回 spec 数组
+     *   openapi()->toJson();    // 返回格式化 JSON
+     */
+    function openapi(): object
+    {
+        return resolve('apidoc');
+    }
+}

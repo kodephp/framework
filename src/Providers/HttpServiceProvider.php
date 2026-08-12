@@ -7,15 +7,19 @@ namespace Kode\Framework\Providers;
 use Kode\Attributes\Reader;
 use Kode\Framework\Application;
 use Kode\Framework\Http\ControllerScanner;
+use Kode\Framework\Http\Middleware\AccessLogMiddleware;
 use Kode\Framework\Http\Middleware\LocaleMiddleware;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Providers\ServiceProvider;
 use Kode\Exception\ExceptionManager;
 use Kode\Framework\Http\Resp;
+use Psr\Log\LoggerInterface;
 use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
+use Kode\Framework\Health\HealthChecker;
 use Kode\Framework\Http\Middleware\RateLimitMiddleware;
 use Kode\Framework\Http\Middleware\ExceptionMiddleware;
+use Kode\Database\Db\Db;
 use Kode\Http\App;
 use Kode\Http\Middleware\CorsMiddleware;
 use Kode\Http\Middleware\RequestId;
@@ -61,6 +65,13 @@ final class HttpServiceProvider extends ServiceProvider
         // 实现全部委托 kode/http 原生中间件，框架只做「配置映射 + 开关」胶水。
         if (!empty($this->config('security.request_id', true))) {
             $app->use(new RequestId(header: 'X-Request-Id'));
+        }
+
+        // 访问日志：紧跟 RequestId 之后，确保能记录链路 ID；记录 method/uri/status/延迟。
+        if (!empty($this->config('logging.access_log.enabled', true))) {
+            /** @var LoggerInterface $logger */
+            $logger = $this->container->get(LoggerInterface::class);
+            $app->use(new AccessLogMiddleware($logger, true));
         }
 
         if (!empty($this->config('cors.enabled', true))) {
@@ -176,6 +187,24 @@ final class HttpServiceProvider extends ServiceProvider
         $hsts = !empty($sec['hsts']) ? (string) $sec['hsts'] : '';
         if ($hsts !== '') {
             $headers['Strict-Transport-Security'] = $hsts;
+        }
+
+        // 进阶安全头（合规加固）：CSP / Permissions-Policy / COOP / CORP / COEP。
+        $csp = $sec['csp'] ?? '';
+        if ($csp !== '' && $csp !== false) {
+            $headers['Content-Security-Policy'] = (string) $csp;
+        }
+        if (!empty($sec['permissions_policy'])) {
+            $headers['Permissions-Policy'] = (string) $sec['permissions_policy'];
+        }
+        if (!empty($sec['cross_origin_opener_policy'])) {
+            $headers['Cross-Origin-Opener-Policy'] = (string) $sec['cross_origin_opener_policy'];
+        }
+        if (!empty($sec['cross_origin_resource_policy'])) {
+            $headers['Cross-Origin-Resource-Policy'] = (string) $sec['cross_origin_resource_policy'];
+        }
+        if (!empty($sec['cross_origin_embedder_policy'])) {
+            $headers['Cross-Origin-Embedder-Policy'] = (string) $sec['cross_origin_embedder_policy'];
         }
 
         // hsts=false：HSTS 已通过 $headers 直接下发，避免原生中间件二次写入默认值。
@@ -383,26 +412,55 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 注册框架内置健康探针：/health、/ping。
+     * 注册框架内置健康探针：/health、/health/live、/health/ready、/ping。
      *
      * 设计立场：
      *  - 始终存在，不依赖用户路由；便于编排系统（k8s/LB）做存活与就绪检查。
-     *  - /health 返回结构化 JSON（版本、PHP、环境、时间），可用于就绪（ready）判断；
-     *  - /ping 返回极简 pong，用于轻量存活（liveness）探测。
+     *  - /health/live：liveness（存活）。进程能响应即视为存活，永远 200，不含外部依赖探测，
+     *    用于重启判定（k8s livenessProbe）。
+     *  - /health/ready：readiness（就绪）。经 {@see HealthChecker} 探测所有启用组件（db/cache/queue/
+     *    自定义）；任一 error 即 503，使流量在依赖未就绪时被摘除（k8s readinessProbe）。
+     *  - /health：聚合视图，返回版本/PHP/环境/时间 + components 明细，便于人工巡检。
+     *  - /ping：极简 pong，轻量探活。
      */
     private function registerHealthEndpoints(App $app): void
     {
-        $app->get('/health', static function () {
+        $app->get('/health/live', static fn() => Resp::json([
+            'status' => 'ok',
+        ]));
+
+        $app->get('/health/ready', function () {
+            $result = $this->healthChecker()->check();
+            $status = $result['healthy'] ? 200 : 503;
+
             return Resp::json([
-                'status'  => 'ok',
-                'service' => Application::getInstance()?->config()->get('app.name', 'kode-app'),
-                'version' => Application::VERSION,
-                'php'     => PHP_VERSION,
-                'env'     => Application::getInstance()?->config()->get('app.env', 'local'),
-                'time'    => date('c'),
+                'status'  => $result['healthy'] ? 'ok' : 'degraded',
+                'checks'  => $result['checks'],
+            ], $status);
+        });
+
+        $app->get('/health', static function () {
+            $result = (new HealthChecker((array) Application::getInstance()?->config()->get('health', []), null))->check();
+
+            return Resp::json([
+                'status'      => 'ok',
+                'service'     => Application::getInstance()?->config()->get('app.name', 'kode-app'),
+                'version'     => Application::VERSION,
+                'php'         => PHP_VERSION,
+                'env'         => Application::getInstance()?->config()->get('app.env', 'local'),
+                'time'        => date('c'),
+                'components'  => $result['checks'],
             ]);
         });
 
         $app->get('/ping', static fn() => Resp::json(['pong' => true]));
+    }
+
+    /**
+     * 构建探针聚合器（注入容器以便解析 db/cache/queue 连接器）。
+     */
+    private function healthChecker(): HealthChecker
+    {
+        return new HealthChecker((array) $this->config('health', []), $this->container);
     }
 }

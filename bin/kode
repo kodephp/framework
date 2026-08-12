@@ -48,6 +48,7 @@ $command = $argv[1] ?? 'help';
 $args = array_slice($argv, 2);
 
 match ($command) {
+    'help'         => KodeCli::help(),
     'new'          => (new KodeNewCommand($packageRoot))->run($args),
     'init'         => (new KodeInitCommand($packageRoot))->run($args),
     'serve'        => (new KodeServeCommand())->run($args),
@@ -59,8 +60,14 @@ match ($command) {
     'migrate'        => (new KodeConsoleCommand())->run(array_merge(['migrate'], $args)),
     'migrate:rollback' => (new KodeConsoleCommand())->run(array_merge(['migrate:rollback'], $args)),
     'migrate:reset' => (new KodeConsoleCommand())->run(array_merge(['migrate:reset'], $args)),
+    'make:controller' => (new KodeConsoleCommand())->run(array_merge(['make:controller'], $args)),
+    'make:model'     => (new KodeConsoleCommand())->run(array_merge(['make:model'], $args)),
+    'make:migration' => (new KodeConsoleCommand())->run(array_merge(['make:migration'], $args)),
+    'make:middleware' => (new KodeConsoleCommand())->run(array_merge(['make:middleware'], $args)),
+    'make:command'   => (new KodeConsoleCommand())->run(array_merge(['make:command'], $args)),
+    'db:seed'      => (new KodeConsoleCommand())->run(array_merge(['db:seed'], $args)),
     'console'      => (new KodeConsoleCommand())->run($args),
-    default        => KodeCli::help(),
+    default        => (new KodeConsoleCommand())->run(array_merge([$command], $args)),
 };
 
 exit(0);
@@ -589,6 +596,12 @@ final class KodeCli
         echo "  bin/kode migrate                   执行待运行的数据库迁移\n";
         echo "  bin/kode migrate:rollback          回滚最近一批迁移\n";
         echo "  bin/kode migrate:reset             回滚全部迁移\n";
+        echo "  bin/kode db:seed [--class=Name]    运行数据库填充\n";
+        echo "  bin/kode make:controller <Name>    生成 HTTP 控制器\n";
+        echo "  bin/kode make:model <Name>         生成数据模型\n";
+        echo "  bin/kode make:migration <name>     生成数据库迁移\n";
+        echo "  bin/kode make:middleware <Name>    生成 HTTP 中间件\n";
+        echo "  bin/kode make:command <Name>       生成控制台命令\n";
         echo "  bin/kode help                      显示本帮助\n\n";
         echo "serve 选项：--host 127.0.0.1  --port 9527  --workers 4\n";
         echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/Tasks 示例\n";

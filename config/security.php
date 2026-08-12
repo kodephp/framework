@@ -31,4 +31,25 @@ return [
 
     // X-Request-Id 是否允许客户端用同名请求头覆盖（便于跨服务透传）
     'request_id_allow_client' => (bool) env('SECURITY_REQUEST_ID_ALLOW_CLIENT', true),
+
+    // ------------------------------------------------------------------
+    // 进阶安全头（合规 / 加固）
+    // ------------------------------------------------------------------
+
+    // Content-Security-Policy：默认开启一套「纯 API 友好」基线（不含 unsafe-inline，
+    // 因 API 通常只返回 JSON，无需执行脚本）。按需收紧 / 放宽。
+    // 设为 false 关闭 CSP 下发。
+    'csp' => env('SECURITY_CSP', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"),
+
+    // Permissions-Policy：禁用浏览器冗余特性（减少攻击面）。
+    'permissions_policy' => env('SECURITY_PERMISSIONS_POLICY', 'geolocation=(), microphone=(), camera=(), payment=(), usb=()'),
+
+    // Cross-Origin-Opener-Policy：隔离浏览上下文，缓解 XS-Leaks / 跨源攻击。
+    'cross_origin_opener_policy' => env('SECURITY_COOP', 'same-origin'),
+
+    // Cross-Origin-Resource-Policy：限制跨源资源加载（仅同源 / 同源+同站）。
+    'cross_origin_resource_policy' => env('SECURITY_CORP', 'same-origin'),
+
+    // Cross-Origin-Embedder-Policy：需配合 COOP 开启跨源隔离（凭据类 API 可开 require-corp）。
+    'cross_origin_embedder_policy' => env('SECURITY_COEP', false),
 ];

@@ -37,6 +37,9 @@
 | [限流](rate-limit.md) | kode/limiting 多算法、属性、分布式 |
 | [熔断](circuit-breaker.md) | kode/fibers CircuitBreaker 保护下游 |
 | [跨域 CORS 与安全响应头](cors.md) | 预检、安全头中间件 |
+| [安全与合规](security-compliance.md) | 安全响应头(CSP/COOP/CORP)、审计日志、API 版本化 |
+| [可观测性](observability.md) | 指标(Prometheus) + 链路追踪(W3C traceparent) + /metrics |
+| [API 文档自动化](api-docs.md) | OpenAPI 3.0 生成 + /docs Swagger UI + #[OpenApi] |
 
 ### 五、数据层
 | 文档 | 内容 |
@@ -74,6 +77,6 @@
 
 ## 版本
 
-- 当前版本：**[v0.7.9](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.8.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>

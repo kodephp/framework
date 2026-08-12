@@ -110,11 +110,12 @@ final class ExceptionMiddlewareTest extends TestCase
     }
 
     /**
-     * 守护 L-2 修复：启动真实应用后，框架异常中间件必须以 prepend 方式成为
-     * 全局管线的最外层（替代 kode/http 默认的 JsonErrorHandlerMiddleware），
-     * 且整个过程不再依赖反射改写 App 的私有 dispatcher 属性。
+     * 守护 L-2 修复：启动真实应用后，框架异常中间件必须以 prepend 方式进入
+     * 全局管线（替代 kode/http 默认的 JsonErrorHandlerMiddleware），且整个过程
+     * 不再依赖反射改写 App 的私有 dispatcher 属性。链路追踪中间件（TraceMiddleware）
+     * 位于其更外层，保证每个响应（含异常响应）都带 trace 头。
      */
-    public function testExceptionMiddlewareIsOutermostInRealApp(): void
+    public function testExceptionMiddlewareInPipelineAndTraceOutermost(): void
     {
         Application::make(dirname(__DIR__));
 
@@ -123,6 +124,9 @@ final class ExceptionMiddlewareTest extends TestCase
         $middlewares = $app->getDispatcher()->getMiddlewares();
 
         self::assertNotEmpty($middlewares);
-        self::assertInstanceOf(ExceptionMiddleware::class, $middlewares[0]);
+        // 链路追踪中间件在最外层（保证每个响应带 trace 头）。
+        self::assertInstanceOf(\Kode\Framework\Observability\Middleware\TraceMiddleware::class, $middlewares[0]);
+        // 异常中间件仍在管线内（位于追踪中间件之内层）。
+        self::assertContainsEquals(ExceptionMiddleware::class, array_map(static fn ($m): string => $m::class, $middlewares));
     }
 }

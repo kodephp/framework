@@ -87,6 +87,10 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 | 国际化 | `lang()` / `LocaleMiddleware` | Symfony Translation |
 | 分布式 ID | `snowflake()` | kode/process |
 | 配置 / 日志 / 门面 / DI | `config()` / `logger()` / 门面 / `resolve()` | kode/core · Monolog · kode/di |
+| 可观测性 | `/metrics`(Prometheus) + W3C 链路追踪 + `Metrics` 门面 | kode/context + 框架本地薄实现 |
+| 运维与生命周期 | `/health` `/health/ready` `/ping` 探针 + 启动/停机事件 | kode/event + 框架本地薄实现 |
+| 安全与合规 | 安全响应头(CSP/COOP/CORP) + 审计日志 + API 版本化 | 框架本地薄实现 |
+| API 文档自动化 | `/docs/openapi.json` + Swagger UI + `#[OpenApi]` | 框架本地薄实现 |
 
 ---
 
@@ -103,7 +107,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 
 ## 版本
 
-- 当前版本：**[v0.7.9](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.8.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

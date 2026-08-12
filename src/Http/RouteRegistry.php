@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Http;
 
+use Kode\Framework\ApiDoc\Attributes\OpenApi;
 use Kode\Limiting\Attribute\RateLimit;
 use Kode\Http\Routing\Route;
 
@@ -26,6 +27,9 @@ final class RouteRegistry
 
     /** @var array<int, list<RateLimit>> spl_object_id(Route) => 限流规则 */
     private array $rateLimits = [];
+
+    /** @var array<int, OpenApi> spl_object_id(Route) => OpenAPI 补充片段（属性路由才会写入） */
+    private array $openApi = [];
 
     /**
      * 为一条路由标记来源。
@@ -63,6 +67,22 @@ final class RouteRegistry
     public function rateLimitsOf(Route $route): array
     {
         return $this->rateLimits[spl_object_id($route)] ?? [];
+    }
+
+    /**
+     * 为一条路由登记 OpenAPI 补充片段（来自控制器方法上的 #[OpenApi] 属性）。
+     */
+    public function tagOpenApi(Route $route, OpenApi $meta): void
+    {
+        $this->openApi[spl_object_id($route)] = $meta;
+    }
+
+    /**
+     * 查询某条路由上的 OpenAPI 补充片段（无标注则返回 null）。
+     */
+    public function openApiOf(Route $route): ?OpenApi
+    {
+        return $this->openApi[spl_object_id($route)] ?? null;
     }
 
     /**

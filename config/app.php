@@ -10,6 +10,19 @@ return [
     'timezone' => env('APP_TIMEZONE', 'Asia/Shanghai'),
     'env' => env('APP_ENV', 'local'),
 
+    /*
+     * 启动期必填配置（fail-fast）。
+     *
+     * 应用启动时逐一校验下列点号路径配置是否存在且非空；任一缺失即抛出
+     * RuntimeException，使「缺配置」在启动即失败（而非运行到某请求才 500）。
+     * 默认仅校验最基础两项（它们都有 env() 兜底，通常不会触发）；业务可追加，例如：
+     *   'required' => ['app.name', 'app.env', 'services.stripe.key', 'mail.host'],
+     */
+    'required' => [
+        'app.name',
+        'app.env',
+    ],
+
     // 额外 ServiceProvider 类（框架内置 Provider 已默认注册，这里仅用于扩展）
     'providers' => [],
 

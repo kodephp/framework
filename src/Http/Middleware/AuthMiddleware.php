@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Http\Middleware;
 
+use Kode\Context\Context;
 use Kode\Framework\Contracts\AuthGuard;
 use Kode\Framework\Http\Resp;
 use Kode\Http\Request;
@@ -36,6 +37,13 @@ final class AuthMiddleware implements MiddlewareInterface
         }
 
         $request = $request->withAttribute('auth', $payload);
+
+        // 把用户标识写入 kode/context（按执行单元隔离），供审计中间件合规记录。
+        // 审计读取后会清除，避免多进程顺序处理时跨请求泄漏（默认审计开启即被清除）。
+        $userId = $payload->getSubject() ?? $payload->getUserIdentifier();
+        if ($userId !== null) {
+            Context::set('auth_user_id', (string) $userId);
+        }
 
         // 回写「当前请求」，使下游控制器可通过 Request::attr('auth') 取到载荷。
         Request::setRequest($request);

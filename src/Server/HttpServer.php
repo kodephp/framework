@@ -91,6 +91,20 @@ final class HttpServer
         ])
         ->on('workerStart', static function (int $workerId) use ($bootWorker): void {
             $bootWorker();
+            // worker 级启动钩子：应用已就绪，可建立独立连接池 / 启动周期任务。
+            try {
+                event(new \Kode\Framework\Lifecycle\WorkerStarting($workerId));
+            } catch (\Throwable) {
+                // 事件系统未就绪：不阻断启动。
+            }
+        })
+        ->on('workerStop', static function (int $workerId): void {
+            // 优雅停机钩子：刷新指标 / 关闭连接 / 落盘 / 注册中心下线，应在宽限期内完成。
+            try {
+                event(new \Kode\Framework\Lifecycle\WorkerStopping($workerId));
+            } catch (\Throwable) {
+                // 忽略。
+            }
         })
         ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, $bootWorker): void {
             if (!$message instanceof ProcessRequest) {
