@@ -10,13 +10,13 @@ use Kode\Framework\Scheduling\ScheduleDispatcher;
 use Kode\Framework\Scheduling\TaskScanner;
 use Kode\Framework\Tests\Fixtures\Tasks\MultiTask;
 use Kode\Framework\Tests\Fixtures\Tasks\RecordTask;
-use Kode\Process\Timer;
 use PHPUnit\Framework\TestCase;
 
 /**
- * 任务调度单元测试：
+ * 任务调度单元测试（执行引擎委托 kode/scheduling）：
  *  - TaskScanner 自动发现 #[Cron]（类级 + 方法级 + 禁用）。
- *  - ScheduleDispatcher 把任务注册进 kode/process 定时器，并能手动触发一次。
+ *  - ScheduleDispatcher 把任务注册进 kode/scheduling Scheduler，并保留 runOnce 手动触发。
+ *  - Scheduler 单轮 run() 会在到期时刻执行对应任务。
  */
 final class SchedulingTest extends TestCase
 {
@@ -37,15 +37,8 @@ final class SchedulingTest extends TestCase
         foreach (glob($this->fixturesDir . '/*.php') ?: [] as $file) {
             require_once $file;
         }
-        Timer::reset();
         RecordTask::$calls = [];
         MultiTask::$calls = [];
-    }
-
-    protected function tearDown(): void
-    {
-        Timer::reset();
-        parent::tearDown();
     }
 
     public function testScannerDiscoversClassAndMethodLevelTasks(): void
@@ -67,22 +60,40 @@ final class SchedulingTest extends TestCase
 
         self::assertArrayHasKey('fixture-a', $byName);
         self::assertSame('a', $byName['fixture-a']->method);
+        self::assertSame('* * * * *', $byName['fixture-a']->expression);
 
         // 禁用任务仍被发现，但 enabled=false。
         self::assertArrayHasKey('fixture-b', $byName);
         self::assertFalse($byName['fixture-b']->enabled);
     }
 
-    public function testDispatcherRegistersEnabledTasksIntoTimer(): void
+    public function testDispatcherBuildsSchedulerWithEnabledTasks(): void
     {
         $tasks = (new TaskScanner(new Reader()))->scan(['app' => $this->fixturesDir]);
         $dispatcher = new ScheduleDispatcher();
         $n = $dispatcher->register($tasks);
 
-        // 3 条里 1 条禁用 → 注册 2 条启用任务。
+        // 3 条里 1 条禁用 → 注册返回 2 条启用任务。
         self::assertSame(2, $n);
-        self::assertSame(2, Timer::countCronJobs());
+        // registered() 含全部（含禁用占位）。
         self::assertCount(3, $dispatcher->registered());
+        // 底层 kode/scheduling Scheduler 也含全部 3 条（禁用条目以 enabled(false) 注册）。
+        self::assertCount(3, $dispatcher->scheduler()->tasks());
+
+        // 到期判定：中午时刻 fixture-a(* * * * *) 到期；fixture-record(0 0 * * *) 不到期。
+        $noon = new \DateTimeImmutable('2026-08-12 12:00:00');
+        $due = $dispatcher->scheduler()->dueTasks($noon);
+        $dueNames = array_map(static fn ($t) => $t->name(), $due);
+        self::assertContains('fixture-a', $dueNames);
+        self::assertNotContains('fixture-record', $dueNames);
+
+        // 午夜时刻 fixture-record 也到期。
+        $midnight = new \DateTimeImmutable('2026-08-12 00:00:00');
+        $dueNames2 = array_map(
+            static fn ($t) => $t->name(),
+            $dispatcher->scheduler()->dueTasks($midnight)
+        );
+        self::assertContains('fixture-record', $dueNames2);
     }
 
     public function testRunOnceExecutesTaskMethod(): void
@@ -101,5 +112,21 @@ final class SchedulingTest extends TestCase
 
         // 不存在的任务返回 false。
         self::assertFalse($dispatcher->runOnce('no-such-task'));
+    }
+
+    public function testSchedulerRunsDueTasksOnSinglePass(): void
+    {
+        $tasks = (new TaskScanner(new Reader()))->scan(['app' => $this->fixturesDir]);
+        $dispatcher = new ScheduleDispatcher(static fn(string $class): object => new $class());
+        $dispatcher->register($tasks);
+
+        // 中午单轮：仅 fixture-a 到期并执行；fixture-record 未到期、fixture-b 禁用。
+        $report = $dispatcher->run(new \DateTimeImmutable('2026-08-12 12:00:00'));
+
+        self::assertContains('a', MultiTask::$calls);
+        self::assertNotContains('b', MultiTask::$calls);
+        self::assertSame([], RecordTask::$calls);
+        self::assertGreaterThanOrEqual(1, $report->succeededCount());
+        self::assertSame(0, $report->failedCount());
     }
 }

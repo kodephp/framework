@@ -74,6 +74,6 @@
 
 ## 版本
 
-- 当前版本：**[v0.7.8](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.7.9](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>

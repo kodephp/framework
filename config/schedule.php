@@ -10,7 +10,8 @@
  * plugins/<name>/src/Tasks 中的 #[Cron] 任务才被纳入，并标记来源 plugin:<name>。
  *
  * 集群「至多一次」：任务上 #[Cron(cluster: true)] 即可，无需在此全局开关；
- * 但前提是已通过 Cluster::make('redis'|'file'...) 配置协调存储。
+ * 但前提是已在下方 cluster.store 配置了协调存储（委托 kode/process 分布式锁）。
+ * 未配置时 #[Cron(cluster: true)] 退化为 LocalCoordinator（单进程/单机安全，多机重复）。
  */
 
 return [
@@ -24,4 +25,12 @@ return [
 
     // 插件自动发现（默认关闭；开启后扫描 plugins/<name>/src/Tasks 作为独立模块来源）。
     'discover_plugins' => (bool) env('SCHEDULE_DISCOVER_PLUGINS', false),
+
+    // 集群协调（可选）。配置 store 后，#[Cron(cluster: true)] 任务走分布式锁，
+    // 保证集群内同一调度时刻至多执行一次；store 为空（默认）则本地恒派发。
+    // store 取值同 Kode\Process\Cluster::make()（如 'redis' / 'file'）。
+    'cluster' => [
+        'store' => env('SCHEDULE_CLUSTER_STORE', ''),
+        'ttl'   => (float) env('SCHEDULE_CLUSTER_TTL', 30),
+    ],
 ];

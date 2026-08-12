@@ -511,14 +511,30 @@ final class KodeCronCommand extends KodeScheduleCommand
             exit(1);
         }
 
+        $runSingle = in_array('--run-once', $args, true);
+
         $n = count(array_filter($dispatcher->registered(), static fn ($t) => $t->enabled));
         if ($n === 0) {
             echo "未发现任何启用的 #[Cron] 任务。请在 app/Tasks 下用 #[Cron] 声明任务。\n";
             exit(0);
         }
 
-        echo sprintf("已注册 %d 条定时任务，启动调度器...\n", $n);
-        $dispatcher->run();
+        if ($runSingle) {
+            // 单轮执行（适合由系统 crontab 每分钟触发一次；不进入常驻循环）。
+            echo sprintf("已注册 %d 条定时任务，执行单轮调度...\n", $n);
+            $report = $dispatcher->run();
+            printf(
+                "调度完成：成功 %d / 失败 %d / 跳过 %d\n",
+                $report->succeededCount(),
+                $report->failedCount(),
+                $report->skippedCount()
+            );
+            exit(0);
+        }
+
+        // 默认常驻：keepAlive 守护循环，Ctrl+C 优雅退出。
+        echo sprintf("已注册 %d 条定时任务，启动调度器（常驻）...\n", $n);
+        $dispatcher->daemon();
         exit(0);
     }
 }
