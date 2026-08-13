@@ -8,6 +8,8 @@ use Kode\Attributes\MetaList;
 use Kode\Attributes\Reader;
 use Kode\Attributes\Scanner;
 use Kode\Framework\ApiDoc\Attributes\OpenApi;
+use Kode\Framework\Feature\FeatureAttributeReader;
+use Kode\Framework\Feature\FeatureRegistry;
 use Kode\Framework\Http\Attributes\Controller;
 use Kode\Framework\Http\Attributes\Route;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
@@ -34,6 +36,8 @@ final class ControllerScanner
         private readonly Reader $reader,
         private readonly RouteRegistry $registry,
         private readonly RateLimitAttributeReader $rateLimitReader = new RateLimitAttributeReader(),
+        private readonly FeatureRegistry $featureRegistry = new FeatureRegistry(),
+        private readonly FeatureAttributeReader $featureReader = new FeatureAttributeReader(),
     ) {
     }
 
@@ -119,6 +123,12 @@ final class ControllerScanner
             /** @var OpenApi $openApi */
             $openApi = $openApiMeta->getInstance();
             $this->registry->tagOpenApi($route, $openApi);
+        }
+
+        // 声明式功能开关：类级 #[Feature] 默认、方法级覆盖。
+        $feature = $this->featureReader->read($class, $method);
+        if ($feature !== null) {
+            $this->featureRegistry->tag($route, $feature['flag'], $feature['fallback']);
         }
     }
 

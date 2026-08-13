@@ -324,3 +324,55 @@ v0.8.6 补齐了对应的 ServiceProvider，使框架对**已安装的全部 kod
 
 > 设计立场：优雅停机的「信号/连接 draining」交给 kode/process；框架只负责「业务层在途计数 +
 > 退出前清理」这一薄薄一层，二者职责边界清晰，互不重写。
+
+## 14. Feature Flags：声明式功能开关 + 灰度（v0.8.9）
+
+生产级发布需要「功能开关 / 灰度 / A-B 实验」能力：未验证的功能默认关闭、按百分比灰度放量、
+按用户/租户稳定分桶、关闭时路由优雅 404/403。本框架以**原生薄实现**提供（无 kode 包对应），
+复用已验证的「属性路由 + 中间件」范式（与限流同构）：
+
+新增组件：
+
+- `config/feature.php`：`enabled` 总开关、`default` 未配置回落、以及 `flags` 声明（`enabled` /
+  `rollout` 0-100 / `description`）。
+- `src/Feature/FeatureManager.php`：判定核心。`isEnabled(name, key)` 模型：
+  - 动态 resolver 优先（`registerResolver()` 接入 DB/Redis/配置中心/租户覆盖）；
+  - 未配置 flag → 回落 `feature.default`（默认 false，即「默认关闭、显式开启」）；
+  - `enabled=false` 直接关（无视 rollout）；`enabled=true` 结合 `rollout` 灰度：
+    `rollout>=100` 全量、`rollout<=0` 无、`0<rollout<100` 按 `crc32(name:key)%100 < rollout` 稳定分桶。
+  - `status()/all()` 返回含分桶结果的快照，便于排查灰度命中。
+- `src/Feature/Attributes/Feature.php`：`#[Feature('flag', fallback: 404)]`，可用在控制器类（对所有方法）
+  或方法（覆盖类级）。
+- `src/Feature/FeatureAttributeReader.php` + `FeatureRegistry.php`：反射读取 + 路由→flag 登记表
+  （`spl_object_id` 零侵入，与限流同范式）。
+- `src/Feature/Middleware/FeatureMiddleware.php`：全局中间件，对命中 `#[Feature]` 的路由做开关校验，
+  关闭时返回 `fallback`（默认 404，可声明 403）；未声明路由直接放行。分桶键 `X-User-Id →
+  X-Tenant-Id → 客户端 IP`，保证同一用户/租户在灰度窗口内命中稳定、不抖动。
+- `feature()` 助手：`feature('x')` 即时判定；`feature('x','user:42')` 按 key 分桶；`feature()` 取管理器。
+
+接线（`FeatureServiceProvider`，已接入 `Application::$defaults`）：
+
+- `ControllerScanner` 在属性路由注册时给每条路由打 `#[Feature]` 标（与限流打标同一处）；
+- `HttpServiceProvider::boot()` 在 `feature.enabled`（默认 true）下注册 `FeatureMiddleware`，
+  并对显式路由（可反射 handler）补登记 `#[Feature]`；与限流的「属性 + 显式」双路径对称。
+
+用法：
+
+```php
+// 路由级 gating（控制器方法）
+#[Feature('new-checkout')]
+public function checkout() {}
+
+// 业务内即时判定（不依赖路由属性）
+if (!feature('beta-search')) {
+    return Resp::error('Not Found', 404);
+}
+```
+
+验证：`tests/FeatureManagerTest.php`（enabled/rollout/默认/resolver/状态 + 属性读取器）、
+`tests/FeatureMiddlewareTest.php`（命中放行、关闭 404/403、全局关闭放行、按用户稳定分桶）。
+全量 **219 tests / 25563 assertions OK**（1 skipped）。
+
+> 设计立场：开关判定逻辑全部内聚在 `FeatureManager`，中间件只做「匹配路由 → 查表 → 调判定 →
+> 放行/拒绝」的薄编排；灰度/分桶的存储后端（Redis/DB/配置中心）通过 `registerResolver()` 注入，
+> 框架不内置存储策略，保持可插拔、不越界（与多租户原语同一哲学）。

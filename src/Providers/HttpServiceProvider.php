@@ -22,6 +22,10 @@ use Kode\Framework\Http\Middleware\ExceptionMiddleware;
 use Kode\Framework\Http\Middleware\TransactionMiddleware;
 use Kode\Framework\Http\Middleware\JsonBodyMiddleware;
 use Kode\Framework\Http\Middleware\ConnectionCleanupMiddleware;
+use Kode\Framework\Feature\FeatureManager;
+use Kode\Framework\Feature\FeatureRegistry;
+use Kode\Framework\Feature\FeatureAttributeReader;
+use Kode\Framework\Feature\Middleware\FeatureMiddleware;
 use Kode\Database\Db\Db;
 use Kode\Http\App;
 use Kode\Http\Middleware\CorsMiddleware;
@@ -155,6 +159,22 @@ final class HttpServiceProvider extends ServiceProvider
             $app->use($tenantMiddleware);
         }
 
+        // 功能开关（Feature Flags）：路由级 gating（#[Feature] 声明），关闭返回 fallback。
+        // 总开关见 config/feature.enabled；分桶键 X-User-Id → X-Tenant-Id → 客户端 IP。
+        if (!empty($this->config('feature.enabled', true))) {
+            /** @var FeatureManager $featureManager */
+            $featureManager = $this->container->get(FeatureManager::class);
+            /** @var FeatureRegistry $featureRegistry */
+            $featureRegistry = $this->container->get(FeatureRegistry::class);
+
+            $app->use(new FeatureMiddleware(
+                $app->getRouter(),
+                $featureRegistry,
+                $featureManager,
+                (array) $this->config('feature', []),
+            ));
+        }
+
         // ---- 框架内置探针（适配 k8s / 负载均衡健康检查）----
         $this->registerHealthEndpoints($app);
 
@@ -173,6 +193,13 @@ final class HttpServiceProvider extends ServiceProvider
         // 3) 为显式路由（[类, 方法] / "类@方法" / 类名 等可反射 handler）补充
         //    #[RateLimit] 规则登记。属性路由已在扫描阶段登记，此处仅处理显式路由。
         $this->scanExplicitRateLimits($app, $registry);
+
+        // 4) 为显式路由（可反射 handler）补充 #[Feature] 开关登记（与限流同范式）。
+        if (!empty($this->config('feature.enabled', true))) {
+            /** @var FeatureRegistry $featureRegistry */
+            $featureRegistry = $this->container->get(FeatureRegistry::class);
+            $this->scanExplicitFeatures($app, $featureRegistry);
+        }
     }
 
     /**
@@ -291,6 +318,35 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
+     * 扫描显式路由 handler，对可反射出控制器类/方法且带 #[Feature] 的，登记到 FeatureRegistry。
+     *
+     * 与 scanExplicitRateLimits 同一范式：属性路由（ControllerScanner）已在扫描阶段登记，
+     * 此处仅处理显式路由里可被反射出 [类, 方法] 的 handler，闭包 handler 跳过。
+     */
+    private function scanExplicitFeatures(App $app, FeatureRegistry $registry): void
+    {
+        /** @var FeatureAttributeReader $reader */
+        $reader = $this->container->get(FeatureAttributeReader::class);
+
+        foreach ($app->getRouter()->getRoutes() as $route) {
+            // 已由属性路由扫描登记过（闭包 handler）则跳过。
+            if ($registry->flagOf($route) !== null) {
+                continue;
+            }
+
+            [$class, $method] = $this->resolveHandler($route->getHandler());
+            if ($class === null) {
+                continue;
+            }
+
+            $entry = $reader->read($class, $method);
+            if ($entry !== null) {
+                $registry->tag($route, $entry['flag'], $entry['fallback']);
+            }
+        }
+    }
+
+    /**
      * 把各种形态的路由 handler 解析为 [类名, 方法名]。无法反射的（闭包等）返回 [null, null]。
      *
      * @return array{0: ?string, 1: ?string}
@@ -323,7 +379,11 @@ final class HttpServiceProvider extends ServiceProvider
     {
         /** @var Reader $reader */
         $reader = $this->container->get(Reader::class);
-        $scanner = new ControllerScanner($app, $reader, $registry);
+        /** @var FeatureRegistry $featureRegistry */
+        $featureRegistry = $this->container->get(FeatureRegistry::class);
+        /** @var FeatureAttributeReader $featureReader */
+        $featureReader = $this->container->get(FeatureAttributeReader::class);
+        $scanner = new ControllerScanner($app, $reader, $registry, featureRegistry: $featureRegistry, featureReader: $featureReader);
 
         /** @var array<string, string> $dirs */
         $dirs = (array) $this->config('routes.attributes.controllers', []);

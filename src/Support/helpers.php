@@ -8,6 +8,7 @@
  */
 
 use Kode\Core\App;
+use Kode\Framework\Feature\FeatureManager;
 use Psr\Log\LoggerInterface;
 
 /*
@@ -378,6 +379,32 @@ if (!function_exists('graceful')) {
         }
 
         return app()->container->get(\Kode\Framework\Server\GracefulShutdown::class);
+    }
+}
+
+if (!function_exists('feature')) {
+    /**
+     * Feature Flags 快速判定 / 取管理器。
+     *
+     *   feature('new-checkout')          → bool：该 flag 是否对当前上下文开启
+     *   feature('beta-search', 'user:42')→ bool：按 key 稳定分桶（灰度）
+     *   feature()                        → FeatureManager：取管理器（注册 resolver / 看状态）
+     *
+     * 判定模型见 config/feature.php 与 FeatureManager：未配置回落 default，
+     * enabled=false 直接关，enabled=true 结合 rollout 灰度。
+     *
+     * @return \Kode\Framework\Feature\FeatureManager|bool
+     */
+    function feature(string $name = null, ?string $key = null): FeatureManager|bool
+    {
+        /** @var \Kode\Framework\Feature\FeatureManager $manager */
+        $manager = resolve(\Kode\Framework\Feature\FeatureManager::class);
+
+        if ($name === null) {
+            return $manager;
+        }
+
+        return $manager->isEnabled($name, $key);
     }
 }
 
