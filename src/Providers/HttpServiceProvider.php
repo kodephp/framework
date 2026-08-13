@@ -147,6 +147,14 @@ final class HttpServiceProvider extends ServiceProvider
             ));
         }
 
+        // 多租户上下文原语（kode/context）：请求入口解析租户 → 写入每请求隔离 scope。
+        // 业务侧用 tenant() 读取；存储隔离由应用层自行实现（框架不越界）。
+        if (!empty($this->config('tenant.enabled', false))) {
+            /** @var \Kode\Framework\Tenant\TenantMiddleware $tenantMiddleware */
+            $tenantMiddleware = $this->container->get(\Kode\Framework\Tenant\TenantMiddleware::class);
+            $app->use($tenantMiddleware);
+        }
+
         // ---- 框架内置探针（适配 k8s / 负载均衡健康检查）----
         $this->registerHealthEndpoints($app);
 

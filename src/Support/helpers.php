@@ -206,6 +206,21 @@ if (!function_exists('session')) {
     }
 }
 
+if (!function_exists('tenant')) {
+    /**
+     * 获取当前请求的租户标识（kode/context 请求级 scope）。
+     *
+     * 由 TenantMiddleware 在请求入口解析并写入；请求外（CLI / 未启用 / 未解析）返回 null。
+     * 框架只提供此上下文原语，租户对应的存储隔离由应用层实现。
+     *
+     *   $tid = tenant();   // 当前租户标识，或 null
+     */
+    function tenant(): ?string
+    {
+        return \Kode\Framework\Tenant\TenantContext::id();
+    }
+}
+
 if (!function_exists('aop')) {
     /**
      * 获取 AOP 内核（kode/aop），用于诊断 / 取已注册切面信息。

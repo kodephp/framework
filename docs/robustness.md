@@ -258,6 +258,31 @@ v0.8.6 补齐了对应的 ServiceProvider，使框架对**已安装的全部 kod
 
 ---
 
+## 12. 每请求上下文隔离：租户 / 追踪绝不跨请求串扰（v0.8.7 多租户原语）
+
+生产级框架的隐性坑：**请求级状态若写进全局/单例上下文，会在常驻 Worker（Workerman/Swoole）
+里跨请求串扰**。本框架与 kode/http 均未在请求外层包 `Context::run`，`TraceContext` 也是直接
+`Context::set`（无 scope），因此任何「按请求设置、期望请求内可见」的状态都必须自带隔离。
+
+多租户原语（`src/Tenant/`）正是按此约束设计的：
+
+- `TenantMiddleware` 用 `Context::runWith(['tenant.id' => $id], fn() => $handler->handle($request))`
+  建立**每请求隔离 scope**——下游中间件 / 控制器 / `tenant()` 助手在该 scope 内可见当前租户；
+  请求结束 scope 自动出栈，下一个请求重新解析，**绝不串扰**（与 P1 时期 SessionManager 单例
+  残留会话是同一类坑，这里在架构层规避）。
+- 框架只提供「租户上下文原语」，**不绑定任何存储隔离策略**（库 / schema / 判别列由应用层自行实现）。
+  理由：具体租户存储是强业务决策，框架硬塞会变成错误的强约束，违背薄壳原则。`TenantResolver`
+  接口 + 内置 `Header` / `Subdomain` 策略 + `tenant()` 助手，应用注入自定义解析器即可。
+- 启用：`config/tenant.php` 的 `enabled=true` + `resolver`（'header' | 'subdomain' | 自定义
+  `TenantResolver` 类名）+ 可选 `default` 回退；`HttpServiceProvider::boot()` 按开关把
+  `TenantMiddleware` 接进 HTTP 管道。
+
+> 通用规则：凡是在请求内「设置、期望请求内读到」的上下文（租户、请求 ID、trace、租户化缓存键前缀等），
+> 一律走 `kode/context` 的 request/协程 scope（`Context::runWith` / `Context::with`），不要写进
+> 单例或全局静态（除非该单例在每次请求入口显式 reset）。
+
+---
+
 ## 设计取舍
 
 - **不安装全局 `set_exception_handler`**：kode/process、kode/core 运行时自身接管进程级异常，
