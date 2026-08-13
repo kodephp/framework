@@ -739,3 +739,66 @@ $r = health()?->check('ready');          // 就绪语义
 > 能力感知探针随对应子系统自动纳入，未启用即 `not_configured`——与配置中心、服务发现、OTLP 追踪、
 > 多租户存储同一哲学：框架给「契约 + 钩子 + 聚合」，不给「绑定实现」。
 
+## 20. 分布式锁薄壳层（Distributed Lock）（v0.8.15）
+
+防止多副本 / 多 worker / 多进程下的重复执行与竞态——典型场景：同机多副本 cron、队列消费幂等、
+缓存击穿重建互斥、定时报表生成。框架只给「契约 + 内置静态后端 + 事件 + 命令 + 助手」，
+跨主机共享锁由实现契约的后端提供（不重造分布式协调算法）。
+
+### 抽象与边界
+
+- `Lock\LockManager`（契约）：`acquire / release / isLocked / owner / ttl / forceRelease / keys / run`；
+- `Lock\StaticLockManager`（内置后端，零依赖）：
+  - `driver=memory`：进程内静态表，覆盖单实例与同进程内并发（Fiber / 协程 / 同请求多次调用）；
+  - `driver=file`：文件落盘（默认 `storage_path('framework/locks')`），覆盖同主机多进程互斥；
+  - owner 令牌：每个管理器实例持有唯一令牌，释放 / 强制释放仅当 owner 匹配（或强制）时生效，
+    避免多副本误释放他人持有的锁；
+  - 惰性过期：每次访问校验 TTL，到期即视为未持有（无需后台 reaper）；
+- 跨主机分布式锁（Redis / etcd / DB 乐观锁）不在此实现：在应用层实现 `LockManager` 并经
+  `config/app.php` 的 `providers` 绑定即可零改动替换，`lock()` 助手与 `lock:list` 命令 API 完全一致。
+
+### 接线与用法
+
+`LockServiceProvider` 无条件绑定 `LockManager` 单例（注入事件派发闭包），已接入 `Application::$defaults`。
+
+```php
+use function Kode\Framework\lock;
+
+// 获取 → 执行 → 释放（获取失败抛 LockAcquireException，finally 保证释放）
+$ok = lock()?->run('report:daily', function () {
+    return buildDailyReport();
+}, 120);
+
+// 手动获取 / 释放（仅 owner 可释放）
+if (lock()?->acquire('cache:rebuild', 30)) {
+    try { rebuild(); } finally { lock()?->release('cache:rebuild'); }
+}
+
+// 运维兜底 / 死锁清理（忽略 owner）
+lock()?->forceRelease('report:daily');
+```
+
+- HTTP / CLI 之外：`bin/kode console lock:list`（表格 / `--json`）列出当前持有的锁（键 / owner / 剩余 TTL）；
+  memory 后端反映当前进程，file 后端反映同主机多进程。
+- 事件：`Lock\LockAcquired` / `Lock\LockReleased`（含 `$forced`）在每次成功获取 / 释放后派发，
+  便于接入指标（锁竞争 / 持有时长）/ 审计。
+
+### 关键约定
+
+- **TTL 必须保守且业务幂等**：锁只防并发，不防进程崩溃；持有者崩溃且 TTL 内未释放，锁会「假性持有」
+  直到过期——故被保护操作必须幂等，过期后由下一个持有者重入重试。
+- **owner 不匹配拒绝释放**：`release($key, $owner)` 仅当 owner 为 null（用管理器实例令牌）或显式匹配时成功；
+  跨进程用不同 owner 令牌可正确互斥。
+- **不要依赖 memory 后端做跨进程互斥**：跨进程 / 跨机请实现 `LockManager` 接 Redis 等共享存储。
+
+验证：`tests/LockTest.php`（acquire / 异 owner 互斥 / 同 owner 重入刷新 TTL / owner-only 释放 / 惰性过期 /
+forceRelease 标记 forced / keys 过期过滤 / run 执行释放 / 占用抛异常 / 异常仍释放 / file 后端落盘）、
+`tests/LockIntegrationTest.php`（`#[RunInSeparateProcess]` 真实引导：lock() 解析单例、run 经真实容器、
+LockAcquired / LockReleased 经框架事件系统派发）。全量 **303 tests / 25821 assertions OK**（1 skipped=MySQL）。
+
+> 设计立场：分布式锁是「协作互斥原语」，框架只做契约 + 内置零依赖后端（进程内 / 同主机文件），
+> 把「跨主机一致性」交给专业后端——与配置中心、服务发现、OTLP 追踪、多租户存储、健康巡检同一哲学：
+> 框架给「契约 + 钩子 + 默认值」，不给「绑定实现」。
+
+
+

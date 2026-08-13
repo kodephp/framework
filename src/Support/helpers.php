@@ -10,6 +10,7 @@
 use Kode\Core\App;
 use Kode\Framework\Feature\FeatureManager;
 use Kode\Framework\Health\HealthChecker;
+use Kode\Framework\Lock\LockManager;
 use Kode\Framework\Observability\Trace\Tracer;
 use Kode\Framework\ServiceDiscovery\ServiceDiscovery;
 use Kode\Framework\ServiceDiscovery\ServiceInstance;
@@ -592,6 +593,27 @@ if (!function_exists('health')) {
         }
 
         return resolve(HealthChecker::class);
+    }
+}
+
+if (!function_exists('lock')) {
+    /**
+     * 获取分布式锁管理器（薄壳层）。
+     *
+     * 未引导或 LockServiceProvider 未接线时返回 null。
+     *
+     * 用法：
+     *   lock()?->acquire('cron:daily', 60);            // 返回 bool
+     *   lock()?->run('report:gen', fn () => build(), 120);  // 获取 → 执行 → 释放
+     *   lock()?->release('cron:daily');                // 仅 owner 可释放
+     */
+    function lock(): ?LockManager
+    {
+        if (app() === null || !app()->container->bound(LockManager::class)) {
+            return null;
+        }
+
+        return resolve(LockManager::class);
     }
 }
 

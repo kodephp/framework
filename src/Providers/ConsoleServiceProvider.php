@@ -29,6 +29,7 @@ use Kode\Framework\Console\Commands\ServiceListCommand;
 use Kode\Framework\Console\Commands\HealthCheckCommand;
 use Kode\Framework\Console\Commands\TenantStorageCommand;
 use Kode\Framework\Console\Commands\TracingFlushCommand;
+use Kode\Framework\Console\Commands\LockListCommand;
 use Kode\Framework\Providers\ServiceProvider;
 
 /**
@@ -102,5 +103,8 @@ final class ConsoleServiceProvider extends ServiceProvider
 
         // 健康检查（薄壳层）：运行探针并打印状态，degraded 以非零码退出（k8s exec / CI）
         $kernel->add(HealthCheckCommand::class);
+
+        // 分布式锁（薄壳层）：列出当前持有的锁（运维排查 / 死锁巡检）
+        $kernel->add(LockListCommand::class);
     }
 }
