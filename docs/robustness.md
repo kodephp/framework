@@ -376,3 +376,62 @@ if (!feature('beta-search')) {
 > 设计立场：开关判定逻辑全部内聚在 `FeatureManager`，中间件只做「匹配路由 → 查表 → 调判定 →
 > 放行/拒绝」的薄编排；灰度/分桶的存储后端（Redis/DB/配置中心）通过 `registerResolver()` 注入，
 > 框架不内置存储策略，保持可插拔、不越界（与多租户原语同一哲学）。
+
+## 15. 配置中心薄壳层：可插拔配置源 + 运行时热重载（v0.8.10）
+
+生产级部署需要「不重启进程即可改配置」的能力（接入 Nacos / Apollo / etcd 等远程配置中心，
+或本地覆盖层做灰度/紧急降级）。框架**不内置任何远程中心客户端**（那是基础设施决策），只提供：
+
+- **可插拔配置源抽象** `ConfigSource`：任意后端把「一份配置」暴露成数组即可接入；
+- **运行时热重载** `ConfigCenter::reload()`：重新拉取可重载源并合并进 `Config`，派发 `ConfigReloaded` 事件；
+- **优先级**：配置中心 sources 覆盖 `config/*.php` 文件值（高 → 低）。
+
+新增组件：
+
+- `config/center.php`：`enabled` 总开关、`sources` 列表（每项 `['class' => X, 'config' => [...]]`）。
+- `src/Config/ConfigSource.php`：契约 `name() / load(): array / isReloadable(): bool`。
+- `src/Config/FileConfigSource.php`：内置文件后端（PHP/JSON）。既是立即可用的本地覆盖层，
+  也是远程中心的「本地镜像」范本——应用侧 watch 中心变更 → 写此文件 → 调 reload 生效。
+- `src/Config/ConfigCenter.php`：管理器。`seed()` 启动期合并 sources；`reload()` 运行期合并可重载源、
+  对比重载前后顶层键返回变化列表、派发 `ConfigReloaded` 事件（`?Closure` 注入解耦事件系统启动顺序）。
+- `src/Config/ConfigReloaded.php`：事件对象（变化键 + 时间戳）。
+- `src/Console/Commands/ConfigReloadCommand.php`：`bin/kode console config:center:reload` 触发热重载并打印变化键。
+- `config_center()` 助手：取管理器（`null` 安全，未启用返回 null）。
+- `ConfigCenterServiceProvider`：已接入 `Application::$defaults`，且**置于 `ConfigServiceProvider` 之前 boot**，
+  使中心覆盖值在「必填校验 / 其他读配置 Provider」之前生效。
+
+接入远程中心（零框架改动）：
+
+```php
+// App\Config\NacosConfigSource implements \Kode\Framework\Config\ConfigSource
+// 构造接收 ['server'=>...,'dataId'=>...]，load() 拉取并解析成数组返回即可。
+// 然后在 config/center.php 的 sources 加一项：
+['class' => App\Config\NacosConfigSource::class, 'config' => ['server' => env('NACOS_ADDR'), 'dataId' => 'my-app']]
+```
+
+运行期再配置（监听事件做不重启调整）：
+
+```php
+event()->listen(ConfigReloaded::class, function (ConfigReloaded $e) {
+    // 例如：调整日志级别、重建限流阈值、通知连接池重连新地址
+});
+```
+
+用法：
+
+```php
+config_center()?->reload();                 // 返回变化的顶层键，如 ['log','app']
+$keys = config_center()?->lastChangedKeys();
+```
+
+验证：`tests/ConfigCenterTest.php`（FileConfigSource 加载/缺省/异常类型、seed 合并与覆盖、
+reload 变化键 + 事件派发、非可重载源跳过、诊断 API）、`tests/ConfigCenterIntegrationTest.php`
+（`#[RunInSeparateProcess]` 真实引导：Provider 接线 + 中心值覆盖文件值 + 运行期 reload 生效）、
+`tests/ConfigCenterDisabledTest.php`（未启用时 `config_center()` 返回 null，零副作用）。
+全量 **230 tests / 25591 assertions OK**（1 skipped）。
+
+> 设计立场：配置中心薄壳层**只定义抽象与热重载机制**，具体中心客户端交给应用/基础设施。
+> 多进程（kode/process master-worker）下每个 worker 各持一份 `Config`，reload 作用范围由调用方决定
+> （CLI 命令只影响当前进程；远程中心 watch 需在每 worker 触发，或由进程信号统一通知——后者交给
+> 运维编排，框架不越界）。这与多租户原语、Feature Flags 一脉相承：框架给「契约 + 钩子」，不给「绑定实现」。
+

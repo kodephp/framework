@@ -8,6 +8,7 @@ use Kode\Console\Kernel as ConsoleKernel;
 use Kode\Core\App as CoreApp;
 use Kode\Http\App as HttpApp;
 use Kode\Framework\Providers\CacheServiceProvider;
+use Kode\Framework\Providers\ConfigCenterServiceProvider;
 use Kode\Framework\Providers\ConfigServiceProvider;
 use Kode\Framework\Providers\ConsoleServiceProvider;
 use Kode\Framework\Providers\DatabaseServiceProvider;
@@ -51,7 +52,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.9';
+    public const VERSION = '0.8.10';
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。
@@ -189,6 +190,7 @@ final class Application
     private function providers(): array
     {
         $defaults = [
+            ConfigCenterServiceProvider::class,
             ConfigServiceProvider::class,
             LogServiceProvider::class,
             ExceptionServiceProvider::class,

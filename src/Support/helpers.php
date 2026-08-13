@@ -434,6 +434,27 @@ if (!function_exists('audit')) {
     }
 }
 
+if (!function_exists('config_center')) {
+    /**
+     * 获取配置中心管理器（薄壳层运行时核心）。
+     *
+     * 用法：
+     *   config_center()?->reload();                 // 运行期热重载，返回变化的顶层键
+     *   $keys = config_center()?->lastChangedKeys(); // 最近一次 reload 的变化键
+     *   config_center()?->sources();                // 已注册源名称
+     *
+     * 注意：未启用（config/center.php 的 center.enabled = false）时返回 null，调用方需判空。
+     */
+    function config_center(): ?object
+    {
+        if (app() === null || !app()->container->bound(\Kode\Framework\Config\ConfigCenter::class)) {
+            return null;
+        }
+
+        return resolve(\Kode\Framework\Config\ConfigCenter::class);
+    }
+}
+
 if (!function_exists('trace')) {
     /**
      * 获取链路上下文类名（trace_id / span_id，分布式追踪）。

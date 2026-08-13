@@ -6,6 +6,7 @@ namespace Kode\Framework\Providers;
 
 use Kode\Console\Kernel;
 use Kode\Framework\Console\Commands\ApiDocGenerateCommand;
+use Kode\Framework\Console\Commands\ConfigReloadCommand;
 use Kode\Framework\Console\Commands\DbSeedCommand;
 use Kode\Framework\Console\Commands\MakeCommandCommand;
 use Kode\Framework\Console\Commands\MakeControllerCommand;
@@ -75,6 +76,7 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(MakeCommandCommand::class);
         $kernel->add(DbSeedCommand::class);
         $kernel->add(ApiDocGenerateCommand::class);
+        $kernel->add(ConfigReloadCommand::class);
 
         // 消费端命令（修复「框架最大坑」：此前只有生产者被绑定，没有任何运行消费进程的手段）
         $kernel->add(QueueWorkCommand::class);
