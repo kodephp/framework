@@ -435,3 +435,307 @@ reload 变化键 + 事件派发、非可重载源跳过、诊断 API）、`tests
 > （CLI 命令只影响当前进程；远程中心 watch 需在每 worker 触发，或由进程信号统一通知——后者交给
 > 运维编排，框架不越界）。这与多租户原语、Feature Flags 一脉相承：框架给「契约 + 钩子」，不给「绑定实现」。
 
+## 16. 服务发现薄壳层：可插拔注册表 + 负载均衡 + 健康检查（v0.8.11）
+
+微服务/多上游架构需要「不写死地址」的能力（接入 Consul / Nacos / ZooKeeper / Etcd 等，
+或本地静态声明做开发/灰度）。框架**不内置任何分布式发现客户端**（那是基础设施决策），只提供：
+
+- **可插拔注册表抽象** `ServiceRegistry`：任意后端把「服务 → 实例」暴露出来即可接入；
+- **内置静态注册表** `StaticServiceRegistry`：把 `config/services.php` 的声明加载为本地注册表，立即可用；
+- **运行时解析** `ServiceDiscovery::resolve()`：从健康实例中按策略（`round_robin` / `random` / `first`）做客户端负载均衡；
+- **健康检查** `heartbeat($id, $healthy)`：上报实例健康，状态由健康→不健康时派发 `ServiceUnhealthy` 事件；
+- **事件**：`ServiceDiscovered`（新实例注册）、`ServiceUnhealthy`（健康→不健康）。
+
+新增组件：
+
+- `config/services.php`：`enabled` 总开关、`default_strategy` 默认负载均衡策略、`services` 静态声明。
+- `src/ServiceDiscovery/ServiceInstance.php`：实例运行期表示（身份字段不可变，健康字段由 heartbeat 更新）。
+- `src/ServiceDiscovery/Contracts/ServiceRegistry.php`：契约 `register/unregister/get/discover/all/names/count`。
+- `src/ServiceDiscovery/StaticServiceRegistry.php`：内置后端。`seed()` 从 config 批量播种；同时是真实发现后端的范本
+  （应用侧 watch 远程中心变更 → 调 register/unregister 同步，框架其余逻辑零改动）。
+- `src/ServiceDiscovery/ServiceDiscovery.php`：管理器。`resolve()` 负载均衡、`heartbeat()` 健康检查 + 事件、
+  `stats()` 健康统计（供探针/诊断），`?Closure` 注入解耦事件系统启动顺序。
+- `src/ServiceDiscovery/ServiceDiscovered.php` / `ServiceUnhealthy.php`：事件对象。
+- `src/Console/Commands/ServiceListCommand.php`：`bin/kode console service:list` 列出已注册服务及其实例/健康/权重。
+- `service()` / `service_url()` 助手：`service('pay')` 取健康实例、`service_url('pay')` 取完整 URL、`service()` 取管理器（均 null 安全）。
+- `ServiceDiscoveryServiceProvider`：已接入 `Application::$defaults`（位于 `FeatureServiceProvider` 之后），boot 期按 config 播种。
+
+接入真实分布式发现（零框架改动）：
+
+```php
+// App\Discovery\ConsulRegistry implements \Kode\Framework\ServiceDiscovery\Contracts\ServiceRegistry
+// 构造接收 ['address'=>..., 'token'=>...]，discover() 调 Consul Catalog API 返回 ServiceInstance[]。
+// 然后在 ServiceDiscoveryServiceProvider 的 boot() 中把内置 StaticServiceRegistry
+// 换成 $this->container->instance(ServiceRegistry::class, new ConsulRegistry($cfg));
+// 即可。service()/service_url() 助手与心跳事件机制无需任何改动。
+```
+
+用法：
+
+```php
+// 解析支付服务的健康实例地址（默认 round_robin）
+$url = service_url('payment');                 // → http://10.0.0.1:8080
+
+// 取实例对象做更细操作
+$inst = service('payment');                    // → ?ServiceInstance
+$inst?->url();
+
+// 运行期上报健康（通常由健康检查协程/探针调用）
+service()->heartbeat($inst->id, false);        // 健康→不健康 → 派发 ServiceUnhealthy
+
+// 监听发现事件
+event()->listen(ServiceUnhealthy::class, function (ServiceUnhealthy $e) {
+    // 摘除实例 / 告警 / 触发重新发现
+});
+```
+
+验证：`tests/ServiceDiscoveryTest.php`（实例/注册表/负载均衡策略/健康检查事件/统计/事件派发）、
+`tests/ServiceDiscoveryIntegrationTest.php`（`#[RunInSeparateProcess]` 真实引导：Provider 接线 + config 播种 +
+`service()`/`service_url()` 助手 + 运行期注册与解析）。全量 **244 tests / 25641 assertions OK**（1 skipped）。
+
+> 设计立场：服务发现薄壳层**只定义抽象、负载均衡与健康机制**，具体发现后端交给应用/基础设施。
+> 多进程（kode/process master-worker）下每个 worker 各自持有注册表；跨进程同步的发现/健康检查由真实后端或
+> 运维编排负责，框架不越界。这与配置中心、Feature Flags、多租户原语一脉相承：框架给「契约 + 钩子」，不给「绑定实现」。
+
+
+
+---
+
+## 17. 分布式追踪 / OTLP 导出（Tracer）
+
+框架此前已内置 **W3C traceparent 传播**（`TraceContext` + `TraceMiddleware`）+ **Metrics** 子系统，但缺「span 录制 + 导出」——链路只生成 ID 不落地。本節补齐 OTLP 分布式追踪薄壳层。
+
+### 组件与边界
+
+- `Observability/Trace/Span`：span 运行期表示（身份只读，end/status/events 由 Tracer 回填）。
+- `Observability/Trace/Tracer`：核心管理器。
+  - `start()` 基于当前链路（kode/context 的 `trace_id/span_id`）开子跨度；`end()` 回填时长/状态并入缓冲；
+    `flush()` 经导出器落盘。
+  - **active 栈与待导出缓冲存于 `kode/context`**（按执行单元隔离），并发 fiber / 进程 / 线程各持独立链路，
+    天然支持 kode/fibers 的 active runtime。
+  - **采样**：根 span 按 `sample_ratio` 决策，子 span 继承父采样，保证一条链路一致。
+  - **导出时机**：根 span 结束且 `flush_on_request_end=true` 时自动 flush；CLI / 常驻 worker 用
+    `bin/kode console tracing:flush` 或 `tracer()->flush()` 手动落盘；worker 优雅停机时由
+    `GracefulShutdown` 注册清理回调自动 flush。
+- `Observability/Trace/Exporters/*`：**内置 OTLP/HTTP(JSON) 与文件(NDJSON) 两种导出器**；
+  真实后端（OTLP/gRPC、protobuf、第三方 APM）只需实现 `Contracts/SpanExporter` 注入容器，Tracer 零改动复用。
+- `Observability/Trace/SpansFlushed`：导出完成事件（成功/失败均派发），可接指标/告警。
+- `tracer()` 助手（null 安全）、`tracing:flush` 命令、`config/observability.php` 的 `tracing.*` 配置段。
+
+### TraceMiddleware 增强
+
+`TraceMiddleware`（全局最外层）在请求进入时若 tracing 启用，开启一个 **SERVER 根 span** 覆盖整条请求
+（含下游中间件与处理）；其 `span_id` 与响应 `traceparent` 一致，子调用经 `tracer()->start()` 自然嵌套；
+响应返回时回填状态（5xx → ERROR）并 flush。
+
+### 用法
+
+```php
+// HTTP 入口自动产生 SERVER 根 span（无需手写）
+// 业务内手动开子跨度：
+$span = tracer()->start('订单创建', ['order.id' => 123], \Kode\Framework\Observability\Trace\SpanKind::INTERNAL);
+try {
+    // ... 业务 ...
+} catch (\Throwable $e) {
+    tracer()->recordException($span, $e);
+    tracer()->end($span, \Kode\Framework\Observability\Trace\SpanStatus::ERROR, $e->getMessage());
+    throw $e;
+}
+tracer()->end($span);
+
+// 跨服务串联：把当前链路头注入下游 HTTP 调用
+$headers = trace()::outgoingHeaders();   // 已由 TraceContext 提供
+```
+
+配置（`config/observability.php`）：
+
+```php
+'tracing' => [
+    'enabled'      => true,
+    'service_name' => env('APP_NAME', 'kode-app'),
+    'sample_ratio' => (float) env('OBS_TRACING_SAMPLE_RATIO', 1.0),
+    'exporter'     => env('OBS_TRACING_EXPORTER', 'otlp_http'),   // otlp_http | file | 自定义类名
+    'otlp'        => ['endpoint' => 'http://localhost:4318/v1/traces', 'timeout' => 2],
+    'file'        => ['path' => sys_get_temp_dir().'/kode-traces.ndjson'],
+],
+```
+
+验证：`tests/TracingTest.php`（no-op/采样/active 栈嵌套/缓冲/flush/异常事件/SpansFlushed/文件导出/OTLP 映射）、
+`tests/TracingIntegrationTest.php`（`#[RunInSeparateProcess]` 真实引导：HTTP 请求穿过 TraceMiddleware 自动产生 SERVER span 并 flush）、
+`tests/TracingDisabledTest.php`（关闭态助手返回 null、禁用 Tracer 不产生 span）。全量 **260 tests / 25699 assertions OK**（1 skipped）。
+
+> 设计立场：框架只做「span 录制 + 标准 OTLP 导出契约」，不内置 OpenTelemetry SDK；真实 exporter
+> （gRPC / protobuf / 第三方 APM）实现 `SpanExporter` 注入即零改动接入。采样、导出时机、端点交给配置。
+> 这与配置中心、服务发现、Feature Flags 一脉相承：框架给「契约 + 钩子」，不给「绑定实现」。
+
+
+---
+
+## 18. 多租户存储隔离脚手架（Tenant Storage Isolation）
+
+框架原本已有「租户上下文原语」（`TenantContext` + `TenantResolver` + `TenantMiddleware`，按请求解析租户），
+但明确「不做任何存储隔离」。本節补齐**按租户切换 DB 连接**的薄壳层——生产级 SaaS 的关键一环。
+
+### 组件与边界
+
+- `Tenant/Storage/TenantConnectionResolver`：**契约**。`resolve(tenantId): ?array` 返回 kode/database 连接配置；
+  返回 null 表示「不隔离 / 仍用默认连接」。真实后端（中心租户表、配置中心）实现本接口注入即零改动复用。
+- `Tenant/Storage/StaticTenantStorageResolver`：**内置静态后端**，支持四种策略：
+  - `shared`：不隔离（默认），租户仅作上下文标签；
+  - `database`：每租户独立库，`database = prefix + sanitize(租户标识)`（基于 `template` 连接克隆派生）；
+  - `schema`：语义同 database（thin-shell 落到 database 命名，应用可叠加 schema/search_path 策略）；
+  - `map`：`tenant id => 已注册连接名(string)` 或 `连接配置覆盖(array)` 的显式映射。
+  - 自定义 `<FQCN>` 实现 `TenantConnectionResolver` 也可直接作为 `strategy` 注入（动态从中心库查凭证）。
+- `Tenant/Storage/TenantStorageManager`：**核心**。
+  - `boot(tenantId)`：解析→懒注册 `Db::addConnection`→`Db::setDefaultConnection(租户连接)`，
+    返回「切换前的默认连接名」，并派发 `TenantStorageSwitched` 事件；
+  - `restore(切换前连接名)`：在中间件 `finally` 中把默认连接还原，**绝不跨请求串扰**；
+  - `currentConnection()`：当前请求级激活的租户连接名（null = 未隔离 / 已恢复）。
+- `Tenant/Storage/TenantStorageMiddleware`（PSR-15，**运行于 TenantMiddleware 内层**）：
+  读取 `TenantContext::id()`，非零时切换连接、响应后恢复；`on_missing=abort` 且租户无映射时
+  抛 `TenantStorageUnresolved` → 转为标准 **404**（`KodeException::notFound`，由 ExceptionMiddleware 渲染）。
+- `tenant:storage:list` 命令：dry-run 诊断 storage 策略与租户连接映射（不真正连库、不切换）。
+- `tenant_storage()` / `tenant_connection()` 助手（null 安全）。
+
+### 并发模型（重要）
+
+`kode/process` 下单 worker 一次处理一个请求，`boot/restore` 在中间件 `try/finally` 中成对出现，
+连接切换严格限定在单个请求 scope 内。对需要**逐查询**严格隔离的 `kode/fibers` active runtime，
+业务侧可用 `tenant_storage()->connectionName($id)` 取连接名后显式 `Db::connection($name)->table(...)`，
+本管理器同样暴露连接名供此用途。
+
+### 用法
+
+```php
+// config/tenant.php
+'tenant' => [
+    'enabled' => true,
+    'resolver' => 'header',          // 从 X-Tenant-Id 解析租户
+    'storage' => [
+        'enabled' => true,
+        'strategy' => env('TENANT_STORAGE_STRATEGY', 'database'), // shared|database|schema|map|<FQCN>
+        'template' => 'mysql',
+        'prefix' => 'tnt_',
+        'on_missing' => 'fallback',   // fallback(用默认) | abort(404 拒绝)
+    ],
+],
+
+// 业务内（无需手写切库，中间件已按请求自动切换）：
+$rows = Db::table('orders')->where('tenant_id', tenant())->get(); // 自动落在 tenant_acme 库
+```
+
+验证：`tests/TenantStorageTest.php`（shared/database/schema/map 策略、sanitize、boot/restore、
+currentConnection、on_missing=abort 转 404、中间件零开销放行）、`tests/TenantStorageIntegrationTest.php`
+（`#[RunInSeparateProcess]` 真实引导：带 X-Tenant-Id 的请求切换并恢复连接、不带则放行）、
+`tests/TenantStorageDisabledTest.php`（关闭态助手返回 null、shared 不切换）。全量 **275 tests / 25737 assertions OK**（1 skipped）。
+
+> 设计立场：框架只做「解析 → 切换 → 恢复 → 事件」与「内置静态策略」，不内置任何租户元数据存储；
+> 真实后端实现 `TenantConnectionResolver` 注入即零改动复用——与配置中心、服务发现、Feature Flags、OTLP 追踪
+> 同一哲学：框架给「契约 + 钩子」，不给「绑定实现」。
+
+---
+
+## 19. 健康检查：就绪探针 + 能力感知（v0.8.14）
+
+生产级部署需要「编排系统（k8s / LB）能判断进程存活与依赖就绪」的能力，且就绪判定要覆盖
+框架已接线的**全部企业级依赖**（v0.8.10–0.8.13 的配置中心 / 服务发现 / 追踪 / 租户存储），
+而不只是裸 db/cache/queue。本節把健康子系统从「仅 db/cache/queue」增强为**能力感知**的薄壳层。
+
+### 四类探测合一
+
+`HealthChecker`（`src/Health/HealthChecker.php`）聚合三类探针 + liveness：
+
+1. **配置驱动探针**（`config/health.php` 的 `checks`）：`db` / `cache` / `queue` 布尔开关 + 任意自定义闭包
+   （签名 `fn(ContainerInterface $c) => 'ok' | 'error: ...'`）；
+2. **能力感知探针（自动）**：对已接线的企业级子系统做**只读**可达性检查——
+   `config_center` / `service_discovery` / `tracing` / `tenant_storage`；子系统未启用（助手返回 null）
+   即 `not_configured`，**不计入失败**；
+3. **app 自身**：永远 `ok`；
+4. **/health/live**：liveness（仅存活判定，不含任何外部依赖探测，永远 200）。
+
+探针返回值语义：`ok` / `error: <原因>` / `not_configured`。任一 `error` 即整体 `degraded`
+（/health/ready 返回 **503**，使流量在依赖未就绪时被摘除）；`not_configured` 不影响健康。
+
+### 端点（始终存在，不依赖用户路由）
+
+由 `HttpServiceProvider::registerHealthEndpoints()` 注册，便于编排系统直接探活：
+
+| 端点 | 语义 | 状态码 |
+| --- | --- | --- |
+| `/health/live` | liveness（重启判定，k8s `livenessProbe`） | 永远 200 |
+| `/health/ready` | readiness（依赖就绪，k8s `readinessProbe`） | 健康 200 / 降级 503 |
+| `/health` | 聚合视图：version / PHP / env / time + components 明细 | 200 |
+| `/ping` | 极简 `pong` | 200 |
+
+> 修复：`/health` 聚合端点此前用 `new HealthChecker($config, null)` 构造（容器为 null），导致
+> `cache` / `queue` 探针永远 `not_configured`（无法解析连接器）。现统一走 `HealthServiceProvider`
+> 绑定的**单例**（已注入容器 + 事件派发闭包），四个端点共用同一份探测结果。
+
+### 命令（k8s exec 探针 / CI 门禁）
+
+```bash
+bin/kode console health:check            # 聚合巡检，打印各组件状态，degraded 以非零码退出
+bin/kode console health:check --ready    # 仅就绪语义（与 /health/ready 一致）
+bin/kode console health:check --json     # JSON 输出（便于监控 / 编排系统解析）
+```
+
+退出码：健康 = `0`，degraded（任一 `error`）= `1`，直接对接 k8s exec / CI 失败感知。
+
+### 事件（依赖未就绪即告警）
+
+每次探测（HTTP 就绪探针 / CLI 命令）后派发 `HealthChecked`（`src/Health/HealthChecked.php`），
+携带 `healthy` / `checks` / `mode`。监听即可做指标采集 / 告警 / 日志：
+
+```php
+event()->listen(\Kode\Framework\Health\HealthChecked::class, function ($e) {
+    if (!$e->healthy) {
+        // 上报「依赖未就绪」指标 / 告警
+    }
+});
+```
+
+事件派发经 `HealthServiceProvider` 注入的闭包解耦（`event()` 在运行时才调用），不依赖事件系统
+启动顺序——与配置中心、服务发现的 `?Closure` 注入范式一致。
+
+### 助手（业务内即时探测）
+
+```php
+$r = health()?->check();                 // ['healthy' => bool, 'checks' => [...]]，未引导返回 null
+$r = health()?->check('ready');          // 就绪语义
+```
+
+### 并发与隔离
+
+`HealthChecker` 为无状态聚合器（每次 `check()` 新建结果数组，不写任何全局/静态），多进程
+（kode/process master-worker）下每请求/每命令各自独立探测，天然无跨请求串扰。能力感知探针
+**只读**（不 mutate 配置 / 不 flush 追踪 / 不真正切库），对就绪检查零副作用。
+
+### 用法与覆盖
+
+```php
+// config/health.php —— 关闭某个已接线能力对就绪判定的计入（如追踪降级不应摘流）：
+'checks' => [
+    'db'    => env('HEALTH_CHECK_DB', true),
+    'cache' => env('HEALTH_CHECK_CACHE', false),
+    'queue' => env('HEALTH_CHECK_QUEUE', false),
+    'tracing' => false,          // 同名键 false 可关闭自动能力探针
+],
+
+// 自定义探针（如 Redis 连通性）：
+'checks' => [
+    'redis' => function ($c) {
+        $r = $c->get(\Kode\Cache\CacheManager::class)->connection('redis');
+        return $r->ping() ? 'ok' : 'error: no pong';
+    },
+],
+```
+
+验证：`tests/HealthCheckerTest.php`（默认健康 / 自定义 ok·error·异常降级 / 未知内置名 not_configured /
+能力探针未接线 not_configured / 同名 false 可关闭 / 事件派发 / 空 dispatcher 安全）、
+`tests/HealthEndpointTest.php`（`#[RunInSeparateProcess]` 真实引导：/health/live 200、/health/ready 200+结构、
+/health 含 version、tenant_storage 能力探针随启用出现）。全量 **288 tests / 25775 assertions OK**（1 skipped=MySQL）。
+
+> 设计立场：健康子系统是「已接线能力的只读可达性聚合器」，不重新实现任何依赖的连通性协议；
+> 能力感知探针随对应子系统自动纳入，未启用即 `not_configured`——与配置中心、服务发现、OTLP 追踪、
+> 多租户存储同一哲学：框架给「契约 + 钩子 + 聚合」，不给「绑定实现」。
+

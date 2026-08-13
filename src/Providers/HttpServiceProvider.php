@@ -159,6 +159,14 @@ final class HttpServiceProvider extends ServiceProvider
             $app->use($tenantMiddleware);
         }
 
+        // 多租户存储隔离脚手架（运行于 TenantMiddleware 内层）：解析到租户后，在请求级把默认
+        // DB 连接切换到该租户连接，响应后恢复。未启用 storage 或租户为空时零开销放行。
+        if (!empty($this->config('tenant.storage.enabled', false))) {
+            /** @var \Kode\Framework\Tenant\Storage\TenantStorageMiddleware $storageMiddleware */
+            $storageMiddleware = $this->container->get(\Kode\Framework\Tenant\Storage\TenantStorageMiddleware::class);
+            $app->use($storageMiddleware);
+        }
+
         // 功能开关（Feature Flags）：路由级 gating（#[Feature] 声明），关闭返回 fallback。
         // 总开关见 config/feature.enabled；分桶键 X-User-Id → X-Tenant-Id → 客户端 IP。
         if (!empty($this->config('feature.enabled', true))) {
@@ -551,7 +559,7 @@ final class HttpServiceProvider extends ServiceProvider
         });
 
         $app->get('/health', static function () {
-            $result = (new HealthChecker((array) Application::getInstance()?->config()->get('health', []), null))->check();
+            $result = (new HealthChecker((array) Application::getInstance()?->config()->get('health', []), app()->container))->check();
 
             return Resp::json([
                 'status'      => 'ok',
@@ -568,10 +576,10 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 构建探针聚合器（注入容器以便解析 db/cache/queue 连接器）。
+     * 取健康探针聚合器单例（由 HealthServiceProvider 绑定，已注入容器 + 事件派发闭包）。
      */
     private function healthChecker(): HealthChecker
     {
-        return new HealthChecker((array) $this->config('health', []), $this->container);
+        return resolve(HealthChecker::class);
     }
 }

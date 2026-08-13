@@ -9,6 +9,11 @@
 
 use Kode\Core\App;
 use Kode\Framework\Feature\FeatureManager;
+use Kode\Framework\Health\HealthChecker;
+use Kode\Framework\Observability\Trace\Tracer;
+use Kode\Framework\ServiceDiscovery\ServiceDiscovery;
+use Kode\Framework\ServiceDiscovery\ServiceInstance;
+use Kode\Framework\Tenant\Storage\TenantStorageManager;
 use Psr\Log\LoggerInterface;
 
 /*
@@ -455,6 +460,54 @@ if (!function_exists('config_center')) {
     }
 }
 
+if (!function_exists('service')) {
+    /**
+     * 服务发现：解析上游服务实例 / 取管理器。
+     *
+     *   service('payment')            → ?ServiceInstance（健康实例，按默认策略负载均衡）
+     *   service('payment')?->url()    → string（如 http://10.0.0.1:8080）
+     *   service()                     → ServiceDiscovery（注册/心跳/统计/事件）
+     *   service('search', 'random')   → ?ServiceInstance（随机策略）
+     *
+     * 薄壳立场：框架只内置「静态注册表（config/services.php）」，真实分布式发现
+     * （Consul/Nacos/ZooKeeper/Etcd）实现为 ServiceRegistry 注入即可，框架零改动。
+     *
+     * @return \Kode\Framework\ServiceDiscovery\ServiceDiscovery|\Kode\Framework\ServiceDiscovery\ServiceInstance|null
+     */
+    function service(string $name = null, ?string $strategy = null): ServiceDiscovery|ServiceInstance|null
+    {
+        if (app() === null || !app()->container->bound(\Kode\Framework\ServiceDiscovery\ServiceDiscovery::class)) {
+            return null;
+        }
+
+        /** @var \Kode\Framework\ServiceDiscovery\ServiceDiscovery $mgr */
+        $mgr = resolve(\Kode\Framework\ServiceDiscovery\ServiceDiscovery::class);
+
+        if ($name === null) {
+            return $mgr;
+        }
+
+        return $mgr->resolve($name, $strategy);
+    }
+}
+
+if (!function_exists('service_url')) {
+    /**
+     * 直接取某服务的完整 URL（scheme://host:port），无健康实例时返回 null。
+     *
+     *   service_url('payment');        // → http://10.0.0.1:8080（默认策略）
+     *   service_url('search', 'random'); // → 随机健康实例地址
+     */
+    function service_url(string $name, ?string $strategy = null): ?string
+    {
+        if (app() === null || !app()->container->bound(\Kode\Framework\ServiceDiscovery\ServiceDiscovery::class)) {
+            return null;
+        }
+
+        return resolve(\Kode\Framework\ServiceDiscovery\ServiceDiscovery::class)->url($name, $strategy);
+    }
+}
+
 if (!function_exists('trace')) {
     /**
      * 获取链路上下文类名（trace_id / span_id，分布式追踪）。
@@ -466,6 +519,79 @@ if (!function_exists('trace')) {
     function trace(): string
     {
         return \Kode\Framework\Observability\Trace\TraceContext::class;
+    }
+}
+
+if (!function_exists('tracer')) {
+    /**
+     * 获取分布式追踪管理器（OTLP 导出）。
+     *
+     * 未启用（config/observability.php 的 tracing.enabled = false 或未接线）时返回 null。
+     *
+     * 用法：
+     *   $span = tracer()->start('订单创建', ['order.id' => 123], \Kode\Framework\Observability\Trace\SpanKind::INTERNAL);
+     *   try { ... } finally { tracer()->end($span); }
+     *   tracer()->flush();  // 手动落盘/导出
+     */
+    function tracer(): ?Tracer
+    {
+        if (app() === null || !app()->container->bound(Tracer::class)) {
+            return null;
+        }
+
+        return resolve(Tracer::class);
+    }
+}
+
+if (!function_exists('tenant_storage')) {
+    /**
+     * 获取多租户存储隔离管理器（请求级按租户切库）。
+     *
+     * 未启用（config/tenant.storage.enabled = false 或未接线）时返回 null。
+     *
+     * 用法：
+     *   $name = tenant_storage()?->connectionName('acme');   // 取某租户连接名（dry-run，不切换）
+     *   $cur  = tenant_storage()?->currentConnection();       // 当前请求级激活的租户连接名
+     */
+    function tenant_storage(): ?TenantStorageManager
+    {
+        if (app() === null || !app()->container->bound(TenantStorageManager::class)) {
+            return null;
+        }
+
+        return resolve(TenantStorageManager::class);
+    }
+}
+
+if (!function_exists('tenant_connection')) {
+    /**
+     * 当前请求级激活的租户连接名（null = 未隔离 / 已恢复）。
+     *
+     * 与 tenant_storage()?->currentConnection() 等价，便于一行读取当前「落在哪个库」。
+     */
+    function tenant_connection(): ?string
+    {
+        return tenant_storage()?->currentConnection() ?? null;
+    }
+}
+
+if (!function_exists('health')) {
+    /**
+     * 获取健康检查聚合器（就绪探针）。
+     *
+     * 未引导或 HealthServiceProvider 未接线时返回 null。
+     *
+     * 用法：
+     *   $r = health()?->check();          // ['healthy' => bool, 'checks' => [...]]
+     *   $r = health()?->check('ready');   // 就绪语义（与 /health/ready 一致）
+     */
+    function health(): ?HealthChecker
+    {
+        if (app() === null || !app()->container->bound(HealthChecker::class)) {
+            return null;
+        }
+
+        return resolve(HealthChecker::class);
     }
 }
 

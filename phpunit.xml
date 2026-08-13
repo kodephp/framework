@@ -20,5 +20,17 @@
         <!-- 测试用 /metrics 令牌（protect=token）。config 为进程级单例，只能于首次 boot 前注入。 -->
         <env name="OBS_METRICS_PROTECT" value="token"/>
         <env name="OBS_METRICS_TOKEN" value="test-token"/>
+
+        <!-- 多租户存储隔离集成测试固定配置（首次 boot 前注入；未带 X-Tenant-Id 的请求零开销放行）。 -->
+        <env name="TENANT_ENABLED" value="true"/>
+        <env name="TENANT_RESOLVER" value="header"/>
+        <env name="TENANT_STORAGE_ENABLED" value="true"/>
+        <env name="TENANT_STORAGE_STRATEGY" value="database"/>
+        <env name="TENANT_STORAGE_TEMPLATE" value="mysql"/>
+        <env name="TENANT_DB_PREFIX" value="tnt_"/>
+        <env name="TENANT_STORAGE_ON_MISSING" value="fallback"/>
+
+        <!-- 健康检查集成测试：测试环境通常无可达 MySQL，关闭 db 探针避免就绪检查误报 503。 -->
+        <env name="HEALTH_CHECK_DB" value="false"/>
     </php>
 </phpunit>

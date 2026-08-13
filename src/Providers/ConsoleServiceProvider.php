@@ -25,6 +25,10 @@ use Kode\Framework\Console\Commands\RouteListCommand;
 use Kode\Framework\Console\Commands\ScheduleListCommand;
 use Kode\Framework\Console\Commands\ScheduleRunCommand;
 use Kode\Framework\Console\Commands\ScheduleWorkCommand;
+use Kode\Framework\Console\Commands\ServiceListCommand;
+use Kode\Framework\Console\Commands\HealthCheckCommand;
+use Kode\Framework\Console\Commands\TenantStorageCommand;
+use Kode\Framework\Console\Commands\TracingFlushCommand;
 use Kode\Framework\Providers\ServiceProvider;
 
 /**
@@ -86,5 +90,17 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(ScheduleRunCommand::class);
         $kernel->add(ScheduleWorkCommand::class);
         $kernel->add(ScheduleListCommand::class);
+
+        // 服务发现（薄壳层）：列出已注册上游服务及其实例
+        $kernel->add(ServiceListCommand::class);
+
+        // 分布式追踪（薄壳层）：强制 flush 缓冲 span + 打印状态
+        $kernel->add(TracingFlushCommand::class);
+
+        // 多租户存储隔离（薄壳层）：诊断 storage 策略与租户连接映射
+        $kernel->add(TenantStorageCommand::class);
+
+        // 健康检查（薄壳层）：运行探针并打印状态，degraded 以非零码退出（k8s exec / CI）
+        $kernel->add(HealthCheckCommand::class);
     }
 }

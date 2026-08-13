@@ -124,14 +124,22 @@ final class TenantProviderTest extends TestCase
         self::assertSame('shop', $seenAttr);
     }
 
-    public function testProviderBindsMiddlewareAndNullResolverByDefault(): void
+    public function testProviderBindsMiddlewareAndResolverFollowsConfig(): void
     {
         /** @var TenantMiddleware $mw */
         $mw = app()->container->get(TenantMiddleware::class);
         self::assertInstanceOf(TenantMiddleware::class, $mw);
 
-        // 默认 config('tenant.resolver') 为 null → 绑定 null 解析器（仅用 default 回退）
-        self::assertNull(app()->container->get(TenantResolver::class));
+        // 解析器绑定跟随 config('tenant.resolver')：未配置时为 null（仅用 default 回退），
+        // 配置后（如 header / subdomain / 自定义类）为对应解析器实例。
+        $resolver = app()->container->get(TenantResolver::class);
+        $configured = config('tenant.resolver');
+
+        if ($configured === null || $configured === '') {
+            self::assertNull($resolver);
+        } else {
+            self::assertNotNull($resolver);
+        }
     }
 
     public function testHelperReturnsNullOutsideRequest(): void

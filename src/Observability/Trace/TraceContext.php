@@ -166,4 +166,20 @@ final class TraceContext
     {
         return bin2hex(random_bytes(8));
     }
+
+    /**
+     * 公开生成器（供 Tracer 在无入向链路时兜底生成）。
+     */
+    public static function newTraceId(): string
+    {
+        return self::generateTraceId();
+    }
+
+    /**
+     * 公开生成器（供 Tracer 在无入向链路时兜底生成）。
+     */
+    public static function newSpanId(): string
+    {
+        return self::generateSpanId();
+    }
 }

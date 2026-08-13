@@ -38,9 +38,46 @@ return [
     ],
 
     // ------------------------------------------------------------------
-    // 链路追踪
+    // 链路追踪（分布式追踪 / OTLP 导出）
     // ------------------------------------------------------------------
+    // 框架已内置 W3C traceparent 传播（TraceContext + TraceMiddleware）与跨服务
+    // 串联（outgoingHeaders）。本段补齐「span 录制 + OTLP 导出」——把进程内链路
+    // 真正送到 APM（Jaeger / Tempo / OpenTelemetry Collector），实现端到端可观测。
+    //
+    // 设计立场：框架只给「Span 抽象 + 导出契约 + 内置 OTLP/HTTP(JSON) 与文件导出器」，
+    // 不内置 OpenTelemetry SDK；真实 exporter（OTLP/gRPC、protobuf、第三方 APM）实现
+    // SpanExporter 注入即可零改动接入。采样、导出时机、端点交给配置。
     'tracing' => [
+        // 是否启用 span 录制（关闭后 tracer() 返回 no-op，不产生任何 span）
         'enabled' => (bool) env('OBS_TRACING_ENABLED', true),
+
+        // 写入 OTLP resource.service.name 的服务标识
+        'service_name' => env('APP_NAME', 'kode-app'),
+
+        // 采样比例 0..1（1 = 全采；高流量生产可调低，如 0.1）
+        'sample_ratio' => (float) env('OBS_TRACING_SAMPLE_RATIO', 1.0),
+
+        // 请求（根 span）结束时自动 flush 缓冲 span（HTTP 场景推荐开启）
+        'flush_on_request_end' => (bool) env('OBS_TRACING_FLUSH_ON_END', true),
+
+        // 单执行单元缓冲上限（超出丢弃最旧），防内存膨胀
+        'max_batch' => (int) env('OBS_TRACING_MAX_BATCH', 512),
+
+        // 导出器：'otlp_http' | 'file' | 自定义(实现 SpanExporter 的类名)
+        'exporter' => env('OBS_TRACING_EXPORTER', 'otlp_http'),
+
+        // OTLP/HTTP JSON 导出器（OTel Collector / Jaeger / Tempo 均支持 /v1/traces）
+        'otlp' => [
+            'endpoint' => env('OTLP_TRACES_ENDPOINT', 'http://localhost:4318/v1/traces'),
+            'headers'  => [
+                'Authorization' => env('OTLP_TRACES_AUTH', ''),
+            ],
+            'timeout' => (int) env('OTLP_TRACES_TIMEOUT', 2),
+        ],
+
+        // 文件导出器（开发调试用 NDJSON，无需 collector）
+        'file' => [
+            'path' => (string) (env('OBS_TRACING_FILE') ?? (sys_get_temp_dir() . '/kode-traces.ndjson')),
+        ],
     ],
 ];
