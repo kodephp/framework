@@ -126,13 +126,18 @@ $id = transaction(function () {        // 助手，委托 db()->transaction()
 - **跳过路径**：`transaction_skip_paths` 中的探针不开启事务；
 - **异常透传**：回滚后仍将异常抛出，交由最外层 `ExceptionMiddleware` 产出统一结构化错误响应
   （含 `trace_id`），错误形态与无事务时完全一致；
-- **嵌套事务**：控制器内再调 `transaction()` 由 PDO savepoint 自然处理，不破坏外层边界；
+- **真正原子（kode/database 1.15.5+）**：该版本起 `Db::getConnection()` 缓存同一连接名的 PDO
+  连接，begin / insert / commit / rollback 落在同一连接上，事务原子性成立；事务进行中读操作
+  强制走主库（写连接），避免读到未提交数据被读写分离路由到从库；
+- **嵌套事务**：由 `kode/database` 的 `transactionDepth` 跟踪 + PDO savepoint 自然处理，不破坏
+  外层边界；
 - 也可用 `transaction()` 助手在任意位置显式开事务（见 `src/Support/helpers.php`）。
 
-> **包级依赖提示**：事务原子性依赖 `kode/database` 的连接复用。当前该包 `Db::getConnection()`
-> 每次调用都新建 PDO 连接，**跨调用的事务尚未真正生效**（begin / insert / commit 在不同连接上）。
-> 这是 kode/database 的能力缺口，框架侧不做绕过；待该包修复连接缓存后，本中间件即自动获得
-> 完整原子性。中间件编排契约（begin→commit / begin→rollback+rethrow）已由测试覆盖。
+> **历史缺口已修复**：早期 `kode/database` 的 `Db::getConnection()` 每次调用都新建 PDO 连接，
+> 跨调用的事务不生效（begin / insert / commit 在不同连接上）。该缺口已在 **1.15.5** 通过
+> `Db::$connectionCache` 连接池修复。框架侧无需任何绕过代码——升级依赖后即自动获得完整原子性。
+> 真实原子性（回滚丢弃写入 / 提交持久化 / 事务内读己写）由 `tests/ConnectionLifecycleTest.php`
+> 基于临时 sqlite 覆盖。
 
 ---
 
@@ -160,6 +165,40 @@ $id = transaction(function () {        // 助手，委托 db()->transaction()
 - **默认关闭**，需 `http.json_strict = true` 才生效（避免影响以表单 / 纯文本为 body 的既有接口）；
 - 仅对显式声明 JSON 的 `Content-Type` 生效；表单、纯文本、空 body 一律放行，不干扰其它合法用法；
 - GET / HEAD / OPTIONS 等无 body 语义的方法天然放行。
+
+---
+
+## 9. 连接生命周期收口（ConnectionCleanupMiddleware）
+
+`kode/database` 1.15.5+ 缓存连接池后，连接属于进程级静态态，常驻进程（Swoole / Workerman /
+多进程 prefork worker）请求间复用同一连接以获得性能。但这要求框架在**请求结束**时做连接级收口，
+否则出现两类健壮性风险：
+
+1. **事务泄漏**：控制器手动 `Db::beginTransaction()` 后抛异常却未回滚，残留事务绑在缓存连接上
+   跨请求延续——下一个请求可能读到未提交数据、或被持久锁阻塞；
+2. **跨请求连接污染**：单测 / CLI 之间若不释放缓存连接，会互相串数据。
+
+框架新增 `ConnectionCleanupMiddleware`，注册在全局链**最外层**，无论请求成功还是异常（`finally`
+保证）都在响应产出后收口：
+
+```php
+// config/database.php
+'leak_rollback'        => env('DB_LEAK_ROLLBACK', true),         // 残留事务强制回滚（默认开）
+'release_per_request'  => env('DB_RELEASE_PER_REQUEST', false),  // 响应后释放缓存连接（默认关）
+```
+
+收口逻辑：
+- 若 `Db::inTransaction()` 仍为真（检测到泄漏事务）→ 强制 `Db::rollback()` + 记告警，杜绝跨请求续命；
+- 若 `release_per_request = true` → 调用 `Db::disconnect()` 释放全部缓存连接
+  （适合单测 / CLI / 连接易失效场景；常驻 API 服务默认关，保留连接池复用性能）。
+
+要点：
+- **零配置默认安全**：`leak_rollback` 默认开（事务绝不跨请求），`release_per_request` 默认关
+  （保留连接池性能，由 `kode/database` 的缓存承担复用）；
+- **只做防御网**：正常路径下 `TransactionMiddleware` 已 commit / rollback，`Db::inTransaction()`
+  为假，本中间件不触碰任何事务；仅捕获「绕过框架事务的手动 begin 残留」；
+- **绝不改变响应**：收口失败（连接已断开等）被静默吞掉，原始响应 / 异常照常向外传递；
+- 编排契约（何时回滚 / 何时释放）由 `tests/ConnectionLifecycleTest.php` 的 spy 覆盖。
 
 ---
 

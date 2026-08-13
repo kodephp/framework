@@ -52,8 +52,11 @@ class Schema extends BaseSchema
 
     /**
      * 创建表并执行（返回生成的 DDL）。
+     *
+     * @param string|null $driver 目标驱动（kode/database 1.15.5+ 签名兼容位；框架始终在
+     *                            默认连接上执行 DDL，故此处仅占位接收、不另行路由）。
      */
-    public static function create(string $table, callable $callback): string
+    public static function create(string $table, callable $callback, string $driver = null): string
     {
         self::assertIdentifier($table, '表名');
         $schema = new self($table);
@@ -66,8 +69,10 @@ class Schema extends BaseSchema
 
     /**
      * 修改表并执行（返回生成的 DDL）。
+     *
+     * @param string|null $driver 目标驱动（同 {@see self::create} 签名兼容位）。
      */
-    public static function table(string $table, callable $callback): string
+    public static function table(string $table, callable $callback, string $driver = null): string
     {
         self::assertIdentifier($table, '表名');
         $schema = new self($table);

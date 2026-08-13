@@ -21,6 +21,7 @@ use Kode\Framework\Http\Middleware\RateLimitMiddleware;
 use Kode\Framework\Http\Middleware\ExceptionMiddleware;
 use Kode\Framework\Http\Middleware\TransactionMiddleware;
 use Kode\Framework\Http\Middleware\JsonBodyMiddleware;
+use Kode\Framework\Http\Middleware\ConnectionCleanupMiddleware;
 use Kode\Database\Db\Db;
 use Kode\Http\App;
 use Kode\Http\Middleware\CorsMiddleware;
@@ -56,6 +57,18 @@ final class HttpServiceProvider extends ServiceProvider
         // 用框架异常中间件包裹 kode/http 默认管线：
         // 错误响应 100% 交给 kode/exception（结构化 JSON，含 file/line/chain，无 HTML 调试页）。
         $this->pipeExceptionHandling($app);
+
+        // 连接生命周期收口：挂在最外层（prepend 于 ExceptionMiddleware 之外），保证响应产出后
+        // 一定会回收泄漏事务 / 按需释放缓存连接，无论请求成功还是异常（仅靠 finally 保证）。
+        // 默认开启、零开销：正常路径无泄漏事务则不触碰连接；release_per_request 默认关以保留
+        // 常驻进程的连接池性能。
+        $app->getDispatcher()->prepend(new ConnectionCleanupMiddleware(
+            releasePerRequest: (bool) $this->config('database.release_per_request', false),
+            leakRollback: (bool) $this->config('database.leak_rollback', true),
+            logger: $this->container->has(LoggerInterface::class)
+                ? $this->container->get(LoggerInterface::class)
+                : null,
+        ));
 
         // 404 / 405：API 框架统一返回标准 JSON（不含堆栈，异常由 ExceptionMiddleware 处理）。
         $app->notFound(fn(): \Kode\Http\Response => Resp::error('Not Found', 404));

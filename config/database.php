@@ -44,4 +44,16 @@ return [
      */
     'auto_transaction' => (bool) env('DB_AUTO_TRANSACTION', false),
     'transaction_skip_paths' => ['/health', '/metrics', '/ping'],
+
+    /*
+     * 连接生命周期收口（ConnectionCleanupMiddleware）。
+     * kode/database 1.15.5+ 缓存连接池后，常驻进程需在请求结束后做连接级收口，避免：
+     *  - 泄漏事务跨请求延续（手动 begin 后抛异常未回滚）；
+     *  - 单测 / CLI 之间连接互相污染。
+     * leak_rollback：检测到请求结束时仍有未提交事务则强制回滚（默认开，绝不跨请求）。
+     * release_per_request：响应后调用 Db::disconnect() 释放缓存连接（默认关，保留连接池
+     *   性能；单测 / CLI / 连接易失效场景可设为 true）。
+     */
+    'leak_rollback' => (bool) env('DB_LEAK_ROLLBACK', true),
+    'release_per_request' => (bool) env('DB_RELEASE_PER_REQUEST', false),
 ];

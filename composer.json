@@ -35,7 +35,7 @@
         "kode/console": "*",
         "kode/context": "*",
         "kode/core": "*",
-        "kode/database": "^1.14",
+        "kode/database": "^1.15.5",
         "kode/di": "*",
         "kode/event": "*",
         "kode/exception": "*",

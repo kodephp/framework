@@ -26,8 +26,11 @@ use Psr\Http\Server\RequestHandlerInterface;
  *    这些探针本就不写库。
  *  - **异常透传**：回滚后仍将异常重新抛出，交由最外层 ExceptionMiddleware 产出
  *    统一的结构化错误响应（含 trace_id），错误形态与无事务时完全一致。
- *  - 嵌套事务由 PDO savepoint 机制自然处理（控制器内再调 db()->transaction() 不会
- *    破坏外层事务的边界）。
+ *  - **真正原子**：kode/database 1.15.5+ 缓存同一连接名的 PDO 连接，begin/insert/commit
+ *    落在同一连接上，事务原子性成立；事务进行中读操作强制走主库（写连接），避免读到
+ *    未提交数据被读写分离路由到从库。
+ *  - 嵌套事务由 kode/database 的 transactionDepth 跟踪 + PDO savepoint 自然处理
+ *    （控制器内再调 db()->transaction() 不会破坏外层事务边界）。
  */
 class TransactionMiddleware implements MiddlewareInterface
 {
