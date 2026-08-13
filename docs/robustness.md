@@ -289,3 +289,38 @@ v0.8.6 补齐了对应的 ServiceProvider，使框架对**已安装的全部 kod
   框架只在 HTTP 中间件与 CLI 入口做「边界级」防御，避免与运行时冲突（详见
   `ExceptionServiceProvider` 注释）。
 - **错误响应形态 100% 由 kode/exception 决定**：框架只负责「兜底不裸奔」，不重新发明错误渲染。
+
+---
+
+## 13. 优雅停机 drain：在途请求排空 + 退出前收尾（v0.8.8）
+
+常驻多进程服务（kode/process master-worker）在收到 SIGTERM/SIGINT 时必须「先排空在途请求、
+再退出」，否则 k8s/LB 摘流瞬间正在处理的请求会 502。本框架按**薄壳边界**补齐业务层两件事，
+信号/进程编排仍完全委托 kode/process：
+
+- kode/process 已负责底层 drain：收到信号 → 停收新连接（移除监听套接字）→ HTTP/2 发 GOAWAY →
+  用 `gracefulShutdownTimeout` 计时器等待在途连接自然关闭，超时强制退出 → 触发 `workerStop` 事件。
+  框架**不重写**这部分（避免与运行时冲突，也符合薄壳原则）。
+
+框架薄壳层新增（`src/Server/GracefulShutdown.php` + `GracefulShutdownServiceProvider`）：
+
+- **在途请求计数**：`HttpServer` 在每个请求处理外包 `GracefulShutdown::track()`，进出各 ±1。
+  多进程下每个 worker 是独立进程、Application 各自重建，实例天然隔离，不会跨进程串扰。
+  计数可用于观测排空进度（`graceful()->inFlight()` / `stats()` / 探针 / metrics）。
+- **可配置宽限**：`config/server.php` 的 `graceful_shutdown_timeout`（默认 30s，env
+  `SERVER_GRACE_PERIOD`）传给 `Kode::serve` 的 `gracefulShutdownTimeout` 选项。建议
+  `P99 长事务耗时 < 此值 << k8s terminationGracePeriodSeconds`，给 LB 摘流 + 进程退出余量。
+- **退出前收尾注册表**：`WorkerStopping` 事件触发 `GracefulShutdown::shutdown()`，按注册顺序执行清理回调
+  （默认：flush 队列连接 `queue()->close()`、断开 DB 连接 `db()->disconnect()`；均按「能力是否就绪」
+  门控 + `method_exists` 守卫，未安装/未绑定则静默跳过）。清理回调**异常逐个吞掉**，绝不因收尾动作
+  反向拖垮停机；`shutdown()` 幂等（重复触发不重复执行）。
+- **业务可扩展**：自行 `graceful()->registerCleanup(fn () => ...)` 追加收尾（注册中心下线、指标落盘、
+  文件锁释放等），或在 `config/event.php` 的 `listeners` 里追加 `WorkerStopping` 监听器。
+
+验证（e2e 冒烟，grace=3s、worker=1）：
+- `GET /` → 200；`kill -TERM` 后进程在 ≈3.3s 干净退出（与宽限一致）。
+- 中途发起 1.5s 慢请求再 `SIGTERM`：请求仍返回 200（`{"slow":"done","inflight":1}`），证明在途请求
+  被正常排空而非被切断，且 `inflight` 计数实时正确。
+
+> 设计立场：优雅停机的「信号/连接 draining」交给 kode/process；框架只负责「业务层在途计数 +
+> 退出前清理」这一薄薄一层，二者职责边界清晰，互不重写。

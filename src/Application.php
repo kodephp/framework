@@ -30,6 +30,7 @@ use Kode\Framework\Providers\AopServiceProvider;
 use Kode\Framework\Providers\ParallelServiceProvider;
 use Kode\Framework\Providers\TenantServiceProvider;
 use Kode\Framework\Providers\TranslationServiceProvider;
+use Kode\Framework\Providers\GracefulShutdownServiceProvider;
 use Kode\Framework\Providers\HttpClientServiceProvider;
 use Kode\Framework\Providers\QueueServiceProvider;
 use Kode\Framework\Providers\SnowflakeServiceProvider;
@@ -49,7 +50,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.7';
+    public const VERSION = '0.8.8';
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。
@@ -214,6 +215,7 @@ final class Application
             AopServiceProvider::class,
             ParallelServiceProvider::class,
             TenantServiceProvider::class,
+            GracefulShutdownServiceProvider::class,
             ConsoleServiceProvider::class,
         ];
 

@@ -70,16 +70,22 @@ final class HttpServer
         $maxRequest = max(0, (int) ($this->config['max_request'] ?? 0));
         $reusePort  = (bool) ($this->config['reuse_port'] ?? false);
         $name    = (string) ($this->config['name'] ?? 'kode-http');
+        $gracefulTimeout = max(0, (int) ($this->config['graceful_shutdown_timeout'] ?? 30));
 
         echo "正在启动 Kode 多进程服务：http://{$host}:{$port}（worker={$workers}）\n";
         echo "项目根目录：{$root}\n";
 
         // 2) 按 worker 隔离的 HTTP 内核（fork 后每份独立重建）。
         $http = null;
+        $app  = null;
+        $graceful = null;
 
-        $bootWorker = function () use ($root, &$http): void {
+        $bootWorker = function () use ($root, &$http, &$app, &$graceful): void {
             if ($http === null) {
-                $http = Application::make($root)->http();
+                $app = Application::make($root);
+                $http = $app->http();
+                // 优雅停机管理器：每 worker 一个实例，请求路径上用于计入/计出在途请求。
+                $graceful = $app->core()->container->get(GracefulShutdown::class);
             }
         };
 
@@ -88,6 +94,9 @@ final class HttpServer
             'maxRequest'  => $maxRequest,
             'reusePort'   => $reusePort,
             'name'        => $name,
+            // 优雅停机宽限：kode/process 收到 SIGTERM 后停收新连接，并等待在途连接
+            // 在此时间内自然关闭，超时则强制退出（应小于 k8s terminationGracePeriodSeconds）。
+            'gracefulShutdownTimeout' => $gracefulTimeout,
         ])
         ->on('workerStart', static function (int $workerId) use ($bootWorker): void {
             $bootWorker();
@@ -106,7 +115,7 @@ final class HttpServer
                 // 忽略。
             }
         })
-        ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, $bootWorker): void {
+        ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, &$graceful, $bootWorker): void {
             if (!$message instanceof ProcessRequest) {
                 return;
             }
@@ -120,7 +129,8 @@ final class HttpServer
             try {
                 $psr = HttpBridge::toPsr7($message);
                 /** @var HttpApp $http */
-                $response = $http->handle($psr);
+                $handler = static fn () => $http->handle($psr);
+                $response = $graceful instanceof GracefulShutdown ? $graceful->track($handler) : $handler();
                 $conn->send(HttpBridge::toRaw($response, self::normalizeProtocol($message->protocol())), true);
             } catch (\Throwable $e) {
                 $debug = (bool) (Application::getInstance()?->config()->get('app.debug', false) ?? false);

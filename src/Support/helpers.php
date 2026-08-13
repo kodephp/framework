@@ -357,6 +357,30 @@ if (!function_exists('process')) {
     }
 }
 
+if (!function_exists('graceful')) {
+    /**
+     * 获取优雅停机管理器（每个 worker 进程一个实例）。
+     *
+     * 用途：
+     *  - graceful()->inFlight()        当前在途请求数（观测排空进度）
+     *  - graceful()->isShuttingDown()  是否已进入停机（可用于 readiness 探针置否）
+     *  - graceful()->stats()           观测快照（写入 metrics / 日志）
+     *  - graceful()->registerCleanup(fn () => ...)  注册停机清理（flush 队列/关连接/下线等）
+     *
+     * 框架已在请求路径上自动包 track()、在 WorkerStopping 时自动清理；业务一般只需读取状态或追加清理。
+     *
+     * @return \Kode\Framework\Server\GracefulShutdown|null
+     */
+    function graceful(): ?object
+    {
+        if (app() === null || !app()->container->bound(\Kode\Framework\Server\GracefulShutdown::class)) {
+            return null;
+        }
+
+        return app()->container->get(\Kode\Framework\Server\GracefulShutdown::class);
+    }
+}
+
 if (!function_exists('metrics')) {
     /**
      * 获取指标注册表（Prometheus 指标，可观测性）。

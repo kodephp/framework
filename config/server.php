@@ -17,6 +17,17 @@ return [
     'reuse_port'  => (bool) env('SERVER_REUSE_PORT', false),
     'name'        => env('SERVER_NAME', 'kode-http'),
 
+    /*
+     * 优雅停机宽限（秒）。
+     *
+     * kode/process 收到 SIGTERM/SIGINT 后：停止接收新连接 → 让在途连接自然关闭（或超时强制退出）。
+     * 此值即「在途请求排空」的最长等待时间，应小于 k8s 的 terminationGracePeriodSeconds
+     * （默认 30s），给 LB 摘流 + 进程最终退出的余量。设为 0 则退回到 kode/process 内置默认（3s）。
+     *
+     * 生产建议：长事务/大文件上传的 P99 耗时 < 此值 << terminationGracePeriodSeconds。
+     */
+    'graceful_shutdown_timeout' => (int) env('SERVER_GRACE_PERIOD', 30),
+
     // 开发期热重载（serve --watch）：监听以下目录的 .php 变化，自动重启 serve 子进程。
     // dirs 用相对项目根的路径；不填则默认监听 app/config/src/public/bin（存在的才收）。
     'watch' => [
