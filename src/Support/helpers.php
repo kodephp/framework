@@ -190,6 +190,52 @@ if (!function_exists('queue')) {
     }
 }
 
+if (!function_exists('session')) {
+    /**
+     * 获取当前请求的会话（kode/session）。
+     *
+     * 需在 SessionMiddleware 之后调用（即 HTTP 请求处理过程中）。CLI / 未启用会话时返回 null。
+     * 写入：session()->set('key', $v)；读取：session()->get('key')。
+     */
+    function session(): ?object
+    {
+        /** @var \Kode\Session\SessionManager $manager */
+        $manager = resolve(\Kode\Session\SessionManager::class);
+
+        return $manager->getSession();
+    }
+}
+
+if (!function_exists('aop')) {
+    /**
+     * 获取 AOP 内核（kode/aop），用于诊断 / 取已注册切面信息。
+     *
+     *   aop()->diagnostics();   // 返回内核诊断信息（已注册切面 / 代理缓存等）
+     */
+    function aop(): object
+    {
+        return resolve(\Kode\Aop\Contract\AspectKernelInterface::class);
+    }
+}
+
+if (!function_exists('parallel')) {
+    /**
+     * 提交并行任务（kode/parallel），返回 FutureInterface。
+     *
+     * 自动带上 bootstrap（线程内加载业务类自动加载器）；非 ZTS 环境自动回退 sync 引擎
+     * （顺序执行、API 一致、不报错）。
+     *
+     *   $future = parallel(fn(array $args) => heavy($args['x']), ['x' => 1]);
+     *   $result = \Kode\Parallel\Parallel::await($future);
+     */
+    function parallel(callable $task, array $args = []): object
+    {
+        $bootstrap = (string) (config('parallel.bootstrap') ?: app()->basePath('vendor/autoload.php'));
+
+        return \Kode\Parallel\Parallel::run($task, $args, $bootstrap);
+    }
+}
+
 if (!function_exists('http')) {
     /**
      * 获取 HTTP 客户端（kode/http-client，PSR-18）。

@@ -25,6 +25,9 @@ use Kode\Framework\Providers\MessagingServiceProvider;
 use Kode\Framework\Providers\PluginServiceProvider;
 use Kode\Framework\Providers\ResilienceServiceProvider;
 use Kode\Framework\Providers\SchedulingServiceProvider;
+use Kode\Framework\Providers\SessionServiceProvider;
+use Kode\Framework\Providers\AopServiceProvider;
+use Kode\Framework\Providers\ParallelServiceProvider;
 use Kode\Framework\Providers\TranslationServiceProvider;
 use Kode\Framework\Providers\HttpClientServiceProvider;
 use Kode\Framework\Providers\QueueServiceProvider;
@@ -45,14 +48,13 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.5';
+    public const VERSION = '0.8.6';
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。
      *
      * 若某个 kode/* 包已安装，却没把对应 Provider 接入 providers 列表（硬编码 $defaults
      * 或 config/app.php），启动自检会明确告警，避免「装了包却静默失接、能力不可用」的哑火。
-     * 其中 session / aop / parallel 框架尚未提供 Provider，映射仅用于提示待补齐项。
      *
      * @var array<string, class-string|string>
      */
@@ -62,9 +64,9 @@ final class Application
         'kode/queue'      => QueueServiceProvider::class,
         'kode/messaging'  => MessagingServiceProvider::class,
         'kode/scheduling' => SchedulingServiceProvider::class,
-        'kode/session'    => 'Kode\\Framework\\Providers\\SessionServiceProvider',
-        'kode/aop'        => 'Kode\\Framework\\Providers\\AopServiceProvider',
-        'kode/parallel'   => 'Kode\\Framework\\Providers\\ParallelServiceProvider',
+        'kode/session'    => SessionServiceProvider::class,
+        'kode/aop'        => AopServiceProvider::class,
+        'kode/parallel'   => ParallelServiceProvider::class,
     ];
 
     private static ?Application $instance = null;
@@ -207,6 +209,9 @@ final class Application
             SnowflakeServiceProvider::class,
             ProcessServiceProvider::class,
             SchedulingServiceProvider::class,
+            SessionServiceProvider::class,
+            AopServiceProvider::class,
+            ParallelServiceProvider::class,
             ConsoleServiceProvider::class,
         ];
 

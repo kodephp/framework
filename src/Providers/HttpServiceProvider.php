@@ -136,6 +136,17 @@ final class HttpServiceProvider extends ServiceProvider
             ));
         }
 
+        // 会话：kode/session 接进生命周期（此前装了却没接，能力静默失接）。
+        // auto_start 自动从请求恢复会话、响应时落盘并写 Set-Cookie，按概率触发 GC。
+        if (!empty($this->config('session.enabled', true))) {
+            /** @var \Kode\Session\SessionManager $manager */
+            $manager = $this->container->get(\Kode\Session\SessionManager::class);
+            $app->use(new \Kode\Session\Middleware\SessionMiddleware(
+                $manager,
+                (array) $this->config('session', []),
+            ));
+        }
+
         // ---- 框架内置探针（适配 k8s / 负载均衡健康检查）----
         $this->registerHealthEndpoints($app);
 

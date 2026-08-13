@@ -216,12 +216,11 @@ $id = transaction(function () {        // 助手，委托 db()->transaction()
 ```
 
 - 对照 `CAPABILITY_PROVIDERS`（kode/cache、kode/database、kode/queue、kode/messaging、
-  kode/scheduling 等）→ 期望 Provider 映射；
+  kode/scheduling、kode/session、kode/aop、kode/parallel）→ 期望 Provider 映射；
 - 仅对已安装（`vendor/<package>` 存在）的包检查；未安装的跳过（不误报）；
 - 若该包装了、但 `providers()` 列表里没有对应 Provider → `logger()->warning(...)` 明确点名
   缺失的包与期望的 Provider，提示去 `config/app.php` 登记或实现对应 Provider；
-- 框架尚未提供 Provider 的能力（session / aop / parallel）也会列出，作为「待补齐」提示，
-  不会因缺失而异常。
+- v0.8.6 起 session / aop / parallel 均已补齐对应 Provider（见 §11），自检不再对此三类告警。
 
 要点：
 - **只告警不阻断**：自检失败不影响启动（WARNING 写入日志，部署/排障第一时间可见）；
@@ -233,6 +232,29 @@ $id = transaction(function () {        // 助手，委托 db()->transaction()
 > 的 `HandlerResolver` 单例，P0-1）、调度器生命周期接线（`SchedulingServiceProvider` 把
 > `ScheduleDispatcher` 接进 `providers` 并按 `config/schedule.php` 的 `paths` 自动发现
 > `#[Cron]` 任务，P0-2）。三者共同消除「写了异步任务/定时任务却永不运行」的最大坑。
+
+---
+
+## 11. 已装能力全部接线（v0.8.6：session / aop / parallel）
+
+v0.8.5 的启动自检暴露出三类「装了包却没接」的哑火：kode/session、kode/aop、kode/parallel。
+v0.8.6 补齐了对应的 ServiceProvider，使框架对**已安装的全部 kode/* 能力**都完成接线，
+自检不再对这三类误报告警。
+
+- **kode/session** → `SessionServiceProvider` + `HttpServiceProvider` 注册 `SessionMiddleware`
+  （auto_start + 响应时落盘 + 概率 GC）。`session()` 助手读写当前请求会话。
+  - 配置陷阱已规避：`config/session.php` 在配置加载期 `app()` 尚未就绪，`storage_path()` 会退化成
+    相对路径，导致 `FileDriver` 锁目录解析失败（500）。故 file 存储路径改为**在 Provider 注册期**
+    解析为绝对路径并 `mkdir`；且**不写顶层 `path` 键**（Cookie 路径默认 `/`），避免 `kode/session`
+    把整个 session 配置透传给驱动工厂时顶层 `path` 覆盖 `drivers.file.path`。
+- **kode/aop** → `AopServiceProvider` 启动 AOP 内核，并按 `config/aop.php` 的 `paths` 自动发现
+  `#[Aspect]`（镜像 `TaskScanner` 的 kode/attributes 扫描范式）。`aop()` 助手返回内核 /
+  `diagnostics()`。`app/bootstrap.php` 中旧的手动 `Aop::register` 已移除（改由自动发现统一接管，避免重复注册）。
+- **kode/parallel** → `ParallelServiceProvider` 探测运行时可用性（ZTS + 扩展），把 `parallel.available`
+  / `parallel.bootstrap` 存入容器作为单一事实源；非 ZTS 环境优雅报 `available=false`、`parallel()`
+  助手自动回退 sync 引擎（API 一致、不报错）。
+
+三个能力的接线均遵循既有 Provider 范式，未改动任何 kode/* 包源码（纯薄壳委托）。
 
 ---
 

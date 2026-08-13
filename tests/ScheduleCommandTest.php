@@ -36,9 +36,8 @@ final class ScheduleCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        if (!self::$booted) {
+        if (app() === null) {
             Application::make(dirname(__DIR__));
-            self::$booted = true;
         }
         $this->fixturesDir = __DIR__ . '/Fixtures/Tasks';
         foreach (glob($this->fixturesDir . '/*.php') ?: [] as $file) {
