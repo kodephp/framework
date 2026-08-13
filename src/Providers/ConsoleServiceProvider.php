@@ -12,13 +12,18 @@ use Kode\Framework\Console\Commands\MakeControllerCommand;
 use Kode\Framework\Console\Commands\MakeMiddlewareCommand;
 use Kode\Framework\Console\Commands\MakeMigrationCommand;
 use Kode\Framework\Console\Commands\MakeModelCommand;
+use Kode\Framework\Console\Commands\MessagingConsumeCommand;
 use Kode\Framework\Console\Commands\MigrateCommand;
 use Kode\Framework\Console\Commands\MigrateResetCommand;
 use Kode\Framework\Console\Commands\MigrateRollbackCommand;
 use Kode\Framework\Console\Commands\ProcessCheckCommand;
 use Kode\Framework\Console\Commands\ProcessListCommand;
 use Kode\Framework\Console\Commands\ProcessStartCommand;
+use Kode\Framework\Console\Commands\QueueWorkCommand;
 use Kode\Framework\Console\Commands\RouteListCommand;
+use Kode\Framework\Console\Commands\ScheduleListCommand;
+use Kode\Framework\Console\Commands\ScheduleRunCommand;
+use Kode\Framework\Console\Commands\ScheduleWorkCommand;
 use Kode\Framework\Providers\ServiceProvider;
 
 /**
@@ -70,5 +75,14 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(MakeCommandCommand::class);
         $kernel->add(DbSeedCommand::class);
         $kernel->add(ApiDocGenerateCommand::class);
+
+        // 消费端命令（修复「框架最大坑」：此前只有生产者被绑定，没有任何运行消费进程的手段）
+        $kernel->add(QueueWorkCommand::class);
+        $kernel->add(MessagingConsumeCommand::class);
+
+        // 调度命令（修复「调度不运行」：此前 ScheduleDispatcher 从未被实例化 / 接线）
+        $kernel->add(ScheduleRunCommand::class);
+        $kernel->add(ScheduleWorkCommand::class);
+        $kernel->add(ScheduleListCommand::class);
     }
 }

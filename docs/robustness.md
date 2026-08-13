@@ -202,6 +202,40 @@ $id = transaction(function () {        // 助手，委托 db()->transaction()
 
 ---
 
+## 10. 启动自检：已装包却未接线 Provider 必告警（Provider Coverage）
+
+薄壳框架的一个隐蔽哑火点是——**包装了某个 kode/* 能力，但对应的 ServiceProvider 没接进
+`providers` 列表**（硬编码 `$defaults` 或 `config/app.php`）。其结果不是报错，而是能力「静默失接」：
+装了包、配置写了，运行时却找不到服务，排障时极难定位。
+
+`Application::bootstrap()` 在用户引导之后新增 `checkProviderCoverage()`，把这种哑火变成**显式 WARNING**：
+
+```php
+// config/app.php
+'provider_self_check' => env('APP_PROVIDER_SELF_CHECK', true),  // 默认开，可整体关闭
+```
+
+- 对照 `CAPABILITY_PROVIDERS`（kode/cache、kode/database、kode/queue、kode/messaging、
+  kode/scheduling 等）→ 期望 Provider 映射；
+- 仅对已安装（`vendor/<package>` 存在）的包检查；未安装的跳过（不误报）；
+- 若该包装了、但 `providers()` 列表里没有对应 Provider → `logger()->warning(...)` 明确点名
+  缺失的包与期望的 Provider，提示去 `config/app.php` 登记或实现对应 Provider；
+- 框架尚未提供 Provider 的能力（session / aop / parallel）也会列出，作为「待补齐」提示，
+  不会因缺失而异常。
+
+要点：
+- **只告警不阻断**：自检失败不影响启动（WARNING 写入日志，部署/排障第一时间可见）；
+- **可被 `app.provider_self_check = false` 关闭**：确有意的精简场景可跳过；
+- **新增能力即登记**：后续薄壳接入新 kode/* 包时，在 `CAPABILITY_PROVIDERS` 追加一行即可
+  纳入自检，避免再次陷入「装了却没接」的哑火。
+
+> 配合本次修复的另外两处「薄壳失接」：队列消费进程（`queue:work` + `QueueServiceProvider`
+> 的 `HandlerResolver` 单例，P0-1）、调度器生命周期接线（`SchedulingServiceProvider` 把
+> `ScheduleDispatcher` 接进 `providers` 并按 `config/schedule.php` 的 `paths` 自动发现
+> `#[Cron]` 任务，P0-2）。三者共同消除「写了异步任务/定时任务却永不运行」的最大坑。
+
+---
+
 ## 设计取舍
 
 - **不安装全局 `set_exception_handler`**：kode/process、kode/core 运行时自身接管进程级异常，

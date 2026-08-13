@@ -24,6 +24,7 @@ use Kode\Framework\Providers\LogServiceProvider;
 use Kode\Framework\Providers\MessagingServiceProvider;
 use Kode\Framework\Providers\PluginServiceProvider;
 use Kode\Framework\Providers\ResilienceServiceProvider;
+use Kode\Framework\Providers\SchedulingServiceProvider;
 use Kode\Framework\Providers\TranslationServiceProvider;
 use Kode\Framework\Providers\HttpClientServiceProvider;
 use Kode\Framework\Providers\QueueServiceProvider;
@@ -44,7 +45,27 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.4';
+    public const VERSION = '0.8.5';
+
+    /**
+     * 能力 → 期望 ServiceProvider 映射（用于启动自检）。
+     *
+     * 若某个 kode/* 包已安装，却没把对应 Provider 接入 providers 列表（硬编码 $defaults
+     * 或 config/app.php），启动自检会明确告警，避免「装了包却静默失接、能力不可用」的哑火。
+     * 其中 session / aop / parallel 框架尚未提供 Provider，映射仅用于提示待补齐项。
+     *
+     * @var array<string, class-string|string>
+     */
+    private const CAPABILITY_PROVIDERS = [
+        'kode/cache'      => CacheServiceProvider::class,
+        'kode/database'   => DatabaseServiceProvider::class,
+        'kode/queue'      => QueueServiceProvider::class,
+        'kode/messaging'  => MessagingServiceProvider::class,
+        'kode/scheduling' => SchedulingServiceProvider::class,
+        'kode/session'    => 'Kode\\Framework\\Providers\\SessionServiceProvider',
+        'kode/aop'        => 'Kode\\Framework\\Providers\\AopServiceProvider',
+        'kode/parallel'   => 'Kode\\Framework\\Providers\\ParallelServiceProvider',
+    ];
 
     private static ?Application $instance = null;
 
@@ -102,6 +123,9 @@ final class Application
 
         // 用户引导：AOP 切面、事件监听等（此时 App 已就绪，门面/助手均可用）。
         $this->loadUserBootstrap();
+
+        // 启动自检：已安装包但未接线对应 Provider 时明确告警（不再静默失接）。
+        $this->checkProviderCoverage();
 
         $this->booted = true;
 
@@ -182,6 +206,7 @@ final class Application
             PluginServiceProvider::class,
             SnowflakeServiceProvider::class,
             ProcessServiceProvider::class,
+            SchedulingServiceProvider::class,
             ConsoleServiceProvider::class,
         ];
 
@@ -189,6 +214,50 @@ final class Application
         $user = is_array($user) ? $user : [];
 
         return array_values(array_unique([...$defaults, ...$user]));
+    }
+
+    /**
+     * 启动自检：已安装 kode/* 包但缺少对应 ServiceProvider 接线时，明确告警。
+     *
+     * 薄壳框架的隐患是——包装了、但 Provider 没登记，能力就「静默失接」。这里把这种
+     * 哑火变成显式 WARNING（写入日志），便于部署/排障时第一时间发现能力缺口。
+     * 可用 config('app.provider_self_check') = false 关闭（如确有意的精简场景）。
+     */
+    private function checkProviderCoverage(): void
+    {
+        if (!($this->app->config->get('app.provider_self_check', true))) {
+            return;
+        }
+
+        $active = $this->providers();
+        $root = $this->basePath;
+
+        foreach (self::CAPABILITY_PROVIDERS as $package => $providerClass) {
+            if (!is_dir($root . '/vendor/' . $package)) {
+                continue; // 包未安装，跳过
+            }
+
+            $covered = false;
+            foreach ($active as $p) {
+                $class = is_object($p) ? $p::class : $p;
+                if (is_string($class)
+                    && ($class === $providerClass
+                        || (class_exists($class) && is_subclass_of($class, $providerClass)))
+                ) {
+                    $covered = true;
+                    break;
+                }
+            }
+
+            if (!$covered) {
+                logger()->warning(sprintf(
+                    '启动自检：已安装 %s 但缺少对应 ServiceProvider 接线（期望 %s），该能力将不可用。'
+                        . '请在 config/app.php 的 providers 中登记，或实现对应 Provider。',
+                    $package,
+                    $providerClass,
+                ));
+            }
+        }
     }
 
     /**

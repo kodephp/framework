@@ -32,4 +32,24 @@ return [
     'websocket' => ['host' => '0.0.0.0', 'port' => 8080],
     'sse' => ['host' => '0.0.0.0', 'port' => 8081],
     'mqtt' => ['host' => '127.0.0.1', 'port' => 1883],
+
+    // 发布订阅总线驱动配置（messaging:consume 通过 pubsub($driver, $config) 读取）。
+    'pubsub' => [
+        'default' => env('MESSAGING_DEFAULT', 'memory'),
+        'memory' => ['enabled' => true],
+        // 'redis' => [
+        //     'host' => env('REDIS_HOST', '127.0.0.1'),
+        //     'port' => (int) env('REDIS_PORT', 6379),
+        //     'password' => env('REDIS_PASSWORD'),
+        //     'database' => (int) env('REDIS_DB', 0),
+        // ],
+    ],
+
+    // ------------------------------------------------------------------
+    // 消费端（messaging:consume 命令使用）
+    // ------------------------------------------------------------------
+    // 频道 => 处理器类（处理器提供 handle(array $payload) / __invoke / run / execute 之一）。
+    'consumers' => [
+        // 'orders:created' => \App\Listeners\OrderCreatedListener::class,
+    ],
 ];
