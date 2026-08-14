@@ -99,7 +99,7 @@ kode 是 **batteries-included**——默认在每个请求上跑一整套企业�
   时）才 clone。洋葱模型是**顺序执行、无并发**，逐请求克隆毫无必要。
 - **预期**：消除每中间件 O(N) 消息拷贝，base 从 ~164k 提升到接近 Slim(282k)/webman(189k) 量级。
 
-### 方案 B：把递归 `PipelineRunner` 展平为预编译循环
+### 方案 B：把递归 `PipelineRunner` 展平为预编译循环（✅ 已落地 kode/http 3.4.0）
 
 - **现状**：`PipelineRunner::handle()` 每次 `$next = new self($middlewares, $finalHandler, $index+1)`，
   每中间件一次对象分配 + 一次递归调用。
@@ -107,6 +107,11 @@ kode 是 **batteries-included**——默认在每个请求上跑一整套企业�
   `for ($i=0; $i<$n; $i++) $response = $middlewares[$i]->process($request, $next);` 的索引化循环
   + 一个预编译的 `next` 闭包，去掉每中间件 `new self` 分配。
 - **预期**：减少每请求中间件游标分配（次要，但零风险）。
+- **✅ 已落地（kode/http 3.4.0）**：`MiddlewarePipeline::handle()` 现首次调用即 `compile()` 把中间件栈
+  预编译为闭包链并复用，之后每请求直接走预编译链，去除每中间件 `new self` 分配。框架侧**零改动**，
+  仅需 `composer update kode/http` 即自动受益（实测见第四节）。同一版本还把 `Response::send()` 改为
+  返回 `$this` 的**空操作（向后兼容）**——即「无需再调用 `->send()`」，本框架早已采用
+  `return Response::json(...)` 现代写法，故无遗留 `->send()` 调用需清理。
 
 ### 方案 C：静态路由 handler 直缓存
 
@@ -135,7 +140,10 @@ A > B > C。A 是架构级、收益最大；B 是零风险的小改；C 收益�
    `JsonBodyMiddleware` / `TransactionMiddleware` 的 `skipPaths` 先例，可推广为全局短路），
    是提升探针吞吐最直接的杠杆。
 2. **中间件 no-op 路径避免 `with*` 克隆**：先判断是否需要改响应，再克隆，减少无谓消息拷贝。
-3. **kode/http 方案 A/B**（第三节）在对应包落地后，框架侧自动受益。
+3. **kode/http 方案 A（内部可变消息对象）仍为对应包待办**：收益最大（base 164k→接近 Slim 282k/
+   webman 189k 量级），框架侧经 `composer update` 自动受益。**方案 B 已于 kode/http 3.4.0 落地**
+   （见第三节），本轮实测全栈 /ping 占裸 PHP 比例 16.4%→18.5%（约 +12% 相对增益），验证了
+   中间件栈预编译闭包链的实际效果。
 
 ---
 
