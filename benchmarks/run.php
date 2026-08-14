@@ -1,0 +1,211 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * kode/framework 压测对比编排器
+ * ---------------------------------
+ * 运行：php benchmarks/run.php
+ * 可调：BENCH_ITERS（默认 8000）、BENCH_WARMUP（默认 1000）
+ *
+ * 测量口径：单进程内「一次 boot + N 次 handle()」——即常驻内存运行时
+ * （Swoole/Swow/Fiber 长生命周期）的真实每请求开销，排除 HTTP 服务器与
+ * 进程启动噪声，专注于框架 + 中间件栈的吞吐与延迟。
+ */
+
+use Kode\Bench\Bench;
+use Kode\Bench\Scenario\Baseline;
+use Kode\Bench\Scenario\Kode;
+use Kode\Bench\Scenario\Slim;
+use Kode\Framework\Application;
+
+require __DIR__ . '/../vendor/autoload.php';
+
+// 压测脚本自带的轻量类（不在框架自动加载范围内，手动引入）。
+require __DIR__ . '/src/Bench.php';
+require __DIR__ . '/scenarios/kode.php';
+require __DIR__ . '/scenarios/baseline.php';
+require __DIR__ . '/scenarios/slim.php';
+
+$repoRoot = dirname(__DIR__);
+$peerRoot = __DIR__ . '/peers/slim';
+
+$iters   = (int) ($_SERVER['BENCH_ITERS'] ?? 8000);
+$warmup  = (int) ($_SERVER['BENCH_WARMUP'] ?? 1000);
+$disable = ['logging', 'session', 'idempotency', 'feature', 'cors', 'security', 'locale', 'resilience'];
+
+echo "kode/framework 压测对比  (iters=$iters, warmup=$warmup)\n";
+echo "PHP " . PHP_VERSION . " · SAPI " . PHP_SAPI . " · " . PHP_OS . "\n";
+$oc = function_exists('opcache_get_status') && (@opcache_get_status()['opcache_enabled'] ?? false);
+$jitBuf = (int) ini_get('opcache.jit_buffer_size');
+echo "OPcache: " . ($oc ? 'on' : 'off') . " · JIT buffer: " . ($jitBuf > 0 ? $jitBuf . 'B' : 'off') . "\n";
+echo str_repeat('-', 72) . "\n";
+
+$scenarios = [
+    ['label' => 'kode · 全栈 (ping)',        'route' => '/ping',       'build' => static fn () => Kode::scenario($repoRoot, [], '/ping')],
+    ['label' => 'kode · 全栈 (json+DI)',     'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, [], '/bench/json')],
+    ['label' => 'kode · 内核 (最小中间件)',  'route' => '/ping',       'build' => static fn () => Kode::scenario($repoRoot, $disable, '/ping')],
+    ['label' => 'kode · 内核 (json+DI)',     'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, $disable, '/bench/json')],
+    ['label' => 'baseline · 裸 PHP (纯逻辑)', 'route' => '(logic)',     'build' => static fn () => Baseline::scenario()],
+];
+
+$slimAvailable = Slim::available($peerRoot);
+if ($slimAvailable) {
+    $scenarios[] = ['label' => 'Slim 4 · (ping)',        'route' => '/ping',       'build' => static fn () => Slim::scenario($peerRoot, '/ping')];
+    $scenarios[] = ['label' => 'Slim 4 · (json)',        'route' => '/bench/json', 'build' => static fn () => Slim::scenario($peerRoot, '/bench/json')];
+}
+
+$results = [];
+
+foreach ($scenarios as $sc) {
+    /** @var callable(): ?int $fn */
+    $fn = $sc['build']();
+
+    // 健康校验：框架场景必须返回 200，否则本场景数据不可信。
+    $status = $fn();
+    if ($status !== null && $status !== 200) {
+        echo sprintf("  [跳过] %-26s 健康检查失败，状态码=%s\n", $sc['label'], (string) $status);
+        continue;
+    }
+
+    $r = Bench::measure($fn, $warmup, $iters);
+    $r['label'] = $sc['label'];
+    $r['route'] = $sc['route'];
+    $results[] = $r;
+
+    echo sprintf(
+        "  %-26s %10.0f req/s | p50 %7.3f  p95 %7.3f  p99 %7.3f ms\n",
+        $sc['label'],
+        $r['ops'],
+        $r['p50'],
+        $r['p95'],
+        $r['p99']
+    );
+}
+
+// 基准（裸 PHP）用于计算框架增量开销
+$base = null;
+foreach ($results as $r) {
+    if (str_starts_with($r['label'], 'baseline')) {
+        $base = $r['ops'];
+    }
+}
+
+echo str_repeat('-', 72) . "\n";
+if ($base !== null && $base > 0) {
+    echo "框架增量开销（相对裸 PHP 基线）:\n";
+    foreach ($results as $r) {
+        if (str_starts_with($r['label'], 'baseline')) {
+            continue;
+        }
+        $ratio = $r['ops'] / $base;
+        echo sprintf("  %-26s 约为裸 PHP 的 %.2f%% 吞吐\n", $r['label'], $ratio * 100);
+    }
+}
+
+if ($slimAvailable) {
+    echo "\n（已包含 Slim 4 对等框架实测数据）\n";
+} else {
+    echo "\n提示：未检测到 benchmarks/peers/slim/vendor，已跳过 Slim 对比。\n"
+        . "      运行 `cd benchmarks/peers/slim && composer install` 后可获得同类框架真实对比。\n";
+}
+
+writeReport($results, $base, $slimAvailable, $iters, $warmup, $repoRoot, $oc, $jitBuf);
+
+echo "\n报告已生成：benchmarks/report.md\n";
+
+//--------------------------------------------------------------------------
+
+function writeReport(array $results, ?float $base, bool $slimAvailable, int $iters, int $warmup, string $repoRoot, bool $opcache, int $jitBuf): void
+{
+    $version = Application::VERSION;
+    $now = date('c');
+
+    $md = "# kode/framework 压测对比报告\n\n";
+    $md .= "- 生成时间：$now\n";
+    $md .= "- 框架版本：kode/framework **$version**\n";
+    $md .= "- 运行环境：PHP " . PHP_VERSION . " · SAPI " . PHP_SAPI . " · " . PHP_OS . "\n";
+    $md .= "- OPcache：" . ($opcache ? '启用' : '关闭') . " · JIT buffer：" . ($jitBuf > 0 ? $jitBuf . 'B' : '关闭') . "\n";
+    $md .= "- 采样：每次场景预热 $warmup 次 + 正式采样 $iters 次（单进程内 boot 一次 + 多次 handle）\n\n";
+
+    $md .= "## 一、响应速度（吞吐量 / 延迟百分位）\n\n";
+    $md .= "| 场景 | 路由 | 吞吐 (req/s) | p50 (ms) | p95 (ms) | p99 (ms) | min (ms) | max (ms) |\n";
+    $md .= "|---|---|---:|---:|---:|---:|---:|---:|\n";
+    foreach ($results as $r) {
+        $md .= sprintf(
+            "| %s | %s | %.0f | %.3f | %.3f | %.3f | %.3f | %.3f |\n",
+            $r['label'],
+            $r['route'],
+            $r['ops'],
+            $r['p50'],
+            $r['p95'],
+            $r['p99'],
+            $r['min'],
+            $r['max']
+        );
+    }
+
+    if ($base !== null && $base > 0) {
+        $md .= "\n### 框架增量开销（相对裸 PHP 基线）\n\n";
+        $md .= "| 场景 | 相对裸 PHP 吞吐比例 |\n|---|---:|\n";
+        foreach ($results as $r) {
+            if (str_starts_with($r['label'], 'baseline')) {
+                continue;
+            }
+            $md .= sprintf("| %s | %.2f%% |\n", $r['label'], ($r['ops'] / $base) * 100);
+        }
+    }
+
+    $md .= "\n## 二、方法说明与口径\n\n";
+    $md .= "- **测量对象**：常驻内存运行时（Swoole/Swow/Fiber 长生命周期）下的每请求成本——\n";
+    $md .= "  启动框架一次，循环调用 `HttpApp::handle(ServerRequest)`，排除 HTTP 服务器与进程启动噪声。\n";
+    $md .= "- **kode · 全栈**：保留生产默认中间件（异常/请求ID/追踪/CORS/安全头/熔断/重试/幂等/会话/特性开关），\n";
+    $md .= "  仅关闭全局限流以避免压测触发 429。\n";
+    $md .= "- **kode · 内核**：在上述基础上剥离可选中间件，仅保留路由分发 + 请求ID + 异常兜底，用于隔离框架内核成本。\n";
+    $md .= "- **baseline · 裸 PHP**：仅执行等价业务逻辑（构造 50 条记录数组 + `json_encode`），不含任何框架开销，作为下限基准。\n";
+    if ($slimAvailable) {
+        $md .= "- **Slim 4**：隔离安装在 `benchmarks/peers/slim`（不污染框架 vendor），镜像相同两条路由，作为轻量微框架对等对比。\n";
+    } else {
+        $md .= "- **Slim 4**：未安装，未参与本次实测（见 `docs/benchmarks.md` 的安装步骤）。\n";
+    }
+    $md .= "- **百分位**：基于每次请求耗时的线性插值百分位（hrtime 纳秒时钟）。\n\n";
+
+    $md .= "## 三、与同类框架的功能矩阵（详见 docs/benchmarks.md）\n\n";
+    $md .= "| 能力 | kode | Laravel | Symfony | Slim | CodeIgniter |\n";
+    $md .= "|---|---|---|---|---|---|\n";
+    $md .= "| 统一运行时（Swoole/Swow/Fiber） | ✅ | ⚠️(Octane) | ⚠️ | ❌ | ❌ |\n";
+    $md .= "| 边缘韧性（熔断/重试/超时/幂等） | ✅ 内置 | ⚠️ 需生态 | ⚠️ 需生态 | ❌ | ❌ |\n";
+    $md .= "| 分布式锁 / 多租户存储 | ✅ | ⚠️ 需包 | ⚠️ 需包 | ❌ | ❌ |\n
+";
+    $md .= "| OTLP 追踪 / /metrics 探针 | ✅ | ⚠️ 需包 | ⚠️ 需包 | ❌ | ❌ |\n";
+    $md .= "| 属性路由 + 全局限流 | ✅ | ✅ | ✅ | ⚠️ 中间件 | ✅ |\n";
+    $md .= "| 配置中心 / 服务发现 | ✅ 内置 | ⚠️ 需包 | ⚠️ 需包 | ❌ | ❌ |\n";
+
+    $md .= "\n## 四、结果解读（关键）
+
+";
+    $md .= "1. **单请求开销是电池全包架构的代价**：kode 在每条请求上运行 DI 驱动的全局中间件解析、事件派发、\n";
+    $md .= "   熔断/重试注册表、属性路由与连接生命周期收口。即便剥离全部可选中间件（内核场景），单请求开销几乎不变，\n";
+    $md .= "   说明瓶颈在**框架内核的路由分发 + 容器解析 + PSR-7 对象创建**，而非某个具体中间件。\n";
+    $md .= "2. **与 Slim 的差距来自定位不同**：Slim 是极简微框架（仅路由 + 中间件），单请求近乎零开销；kode 以单请求\n";
+    $md .= "   开销换取开箱即用的边缘韧性、分布式锁、多租户、OTLP 追踪、配置中心、服务发现、健康探针等能力。\n";
+    $md .= "   二者非同一定位，绝对 req/s 不直接可比，应结合功能矩阵综合评估。\n";
+    $md .= "3. **生产部署应面向常驻运行时**：kode 的设计目标运行时是 Swoole/Swow/Fiber 长生命周期进程（boot 一次、\n";
+    $md .= "   多请求复用容器与路由表）。本压测测量的是「每请求处理」成本；在常驻运行时下 boot 成本被摊薄，\n";
+    $md .= "   并通过多 worker 横向扩展吞吐。对纯吞吐极度敏感的边缘服务，可评估 Slim/Workerman 等更轻量底座。\n";
+    $md .= "4. **裸 PHP 基线**代表纯业务逻辑下限（构造 + `json_encode`），用于量化「框架 + 中间件增量开销」。\n\n";
+
+    $md .= "## 五、复现方式
+
+";
+    $md .= "```bash\n";
+    $md .= "# 进入框架根目录\n";
+    $md .= "php -d opcache.enable_cli=1 benchmarks/run.php          # kode + 裸 PHP 基线\n";
+    $md .= "cd benchmarks/peers/slim && composer install           # 可选：安装 Slim 对等框架\n";
+    $md .= "php -d opcache.enable_cli=1 benchmarks/run.php          # 再次运行即含 Slim 对比\n";
+    $md .= "# 可调：BENCH_ITERS=2000 BENCH_WARMUP=800 php benchmarks/run.php\n";
+    $md .= "```\n";
+    $md .= "> 说明：本机 CLI 关闭 JIT tracing 可获得更稳定的 kode 数值（tracing JIT 在本负载下反而拖慢）。\n";
+
+    file_put_contents(__DIR__ . '/report.md', $md);
+}

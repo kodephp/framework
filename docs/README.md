@@ -69,6 +69,7 @@
 | [配置与环境变量](config.md) | config() 读取、.env、多环境 |
 | [部署到生产](deployment.md) | 进程管理器拉起、生产 .env、健康检查 |
 | [测试](testing.md) | PHPUnit、安全/功能用例、离线隔离约定 |
+| [压测对比与同类框架功能矩阵](benchmarks.md) | 响应速度基准（kode / 裸 PHP / Slim）、功能矩阵与客观解读 |
 
 ## 一句话定位
 

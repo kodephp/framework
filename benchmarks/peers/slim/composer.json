@@ -1,0 +1,11 @@
+{
+    "name": "kode/bench-peer-slim",
+    "description": "Isolated Slim 4 peer for kode/framework benchmark (not part of framework vendor)",
+    "require": {
+        "slim/slim": "^4.12",
+        "nyholm/psr7": "^1.8"
+    },
+    "config": {
+        "vendor-dir": "vendor"
+    }
+}

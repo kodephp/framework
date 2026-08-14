@@ -900,6 +900,219 @@ IdempotencyHit 经框架事件系统派发）。全量 **315 tests / 25846 asser
 > 框架给「契约 + 钩子 + 默认值」，不给「绑定实现」。
 
 
+## 23. 重试原语（Retry + Backoff）（v0.8.18）
+
+与熔断（§ 韧性层 `Breaker`）互补：**熔断保护下游不因故障级联雪崩（下游挂了就别再打）；重试在下游「抖了一下」时自动再试，把瞬态错误对调用方屏蔽**。二者构成完整的瞬态故障恢复故事。
+
+框架只做「重试编排」——尝试次数、退避策略、可重试判定、总预算、事件派发；退避算法由 `BackoffStrategy` 契约（内置三种零依赖实现）提供，事件由可注入的派发闭包（默认接 `event()`）发出。无外部依赖、运行时无关。
+
+### 抽象与边界
+
+- `Retry`（`src/Resilience/Retry.php`）：重试编排器。`run($operation, $options)` 遇可重试异常按策略重试；全部失败抛 `RetryExhausted`（携带实际尝试次数 + 历次失败），**绝不静默吞错**。
+- `BackoffStrategy`（`src/Resilience/Backoff/`）：退避契约 + 三种内置实现：
+  - `FixedBackoff`：恒定等待（本地重试等快速恢复场景）；
+  - `ExponentialBackoff`：指数退避 + 可选对称抖动（最常用，抗惊群）；
+  - `DecorrelatedJitterBackoff`：AWS 去相关抖动（延迟不与 `cap` 钉死、相邻重试天然错峰）。
+- 事件（经框架事件系统派发）：`RetryAttempting`（即将第 N 次重试，含等待秒数）/ `RetrySucceeded`（重试后恢复）/ `RetryExhausted`（最终失败）。
+
+### 助手与用法
+
+```php
+// 1) 最简：默认退避来自 config/resilience.php 的 retry 段（指数退避，3 次）
+retry(fn () => $client->call(), attempts: 3);
+
+// 2) 仅对特定异常重试，并设总预算（避免长尾）
+retry($op, [
+    'attempts' => 5,
+    'retryOn'  => [ConnectionException::class, TimeoutException::class],
+    'timeout'  => 30,
+]);
+
+// 3) 自定义退避策略（覆盖默认）
+retry($op, ['backoff' => new \Kode\Framework\Resilience\Backoff\DecorrelatedJitterBackoff]);
+
+// 4) retryOn 用 callable 精细控制（如只重试带特定 code 的错误）
+retry($op, ['retryOn' => fn (\Throwable $e) => $e->getCode() === 1]);
+```
+
+关键选项：
+
+| 选项 | 默认 | 说明 |
+| --- | --- | --- |
+| `attempts` | `3` | 最大尝试次数（含首次） |
+| `backoff` | 配置 `retry.backoff` | `BackoffStrategy`；为 `null` 即不等待；`retry()` 未传时取容器默认退避 |
+| `retryOn` | `null` | `null`=任何异常都重试；`callable(Throwable):bool`=自定义；`list<class-string>`=仅列出的类型重试 |
+| `timeout` | `null` | 总预算秒数；单次退避会使总耗时超预算则停止重试 |
+| `label` | `anonymous` | 日志 / 事件标识 |
+
+### 关键约定
+
+- **与熔断互补而非替代**：`breaker()->run(...)` 在下游「明确不健康」时快速失败（走 fallback）；`retry()` 在下游「偶发抖动」时自动恢复。组合用法：先 `breaker()` 兜住雪崩，业务内部对瞬态调用 `retry()`。
+- **绝不静默吞错**：重试耗尽必抛 `RetryExhausted`（带 `attempts` + `failures` 列表），异常链完整；调用方必须决定降级或上报。
+- **退避防惊群**：生产推荐 `exponential`（开启 jitter）或 `decorrelated`；纯 `fixed` 仅用于本地 / 确定性场景。
+- **跨运行时通用**：`Retry` 与 `BackoffStrategy` 不依赖 Fiber / 协程 / 事件循环，可在 HTTP handler、queue consumer、process worker、CLI 中任意使用。
+- **未引导降级**：非框架上下文（纯脚本）调用 `retry()` 也能重试（无默认退避、不派发事件），保证原语随处可用。
+
+验证：`tests/RetryTest.php`（Fixed/Exponential/Decorrelated 退避数学 / 首次成功不派发 / 重试恢复派发 RetrySucceeded / 耗尽抛 RetryExhausted 且事件完整 / retryOn 类与 callable 过滤 / timeout 预算内停止）、`tests/RetryIntegrationTest.php`
+（`#[RunInSeparateProcess]` 真实引导：retry() 走容器 Retry 单例、重试编排生效、RetrySucceeded / RetryExhausted 经框架事件系统派发）。
+
+> 设计立场：重试是「瞬态故障恢复原语」，框架只做契约 + 内置零依赖退避策略（固定 / 指数 / 去相关抖动）+ 事件钩子，
+> 把「退避算法个性化」（如接上游 Retry-After、接共享限流）交给实现 `BackoffStrategy` 的自定义类——与 §19~§22 同一哲学：
+> 框架给「契约 + 钩子 + 默认值」，不给「绑定实现」。
+
+
+## 24. HTTP 重试中间件（RetryMiddleware）（v0.8.19）
+
+把 §23 的 `Retry` 原语接到 HTTP 流量边缘：**对安全方法（默认 `GET/HEAD/PUT/DELETE/OPTIONS`）的下游瞬态故障（默认 502/503/504 或指定异常）按退避自动重试，把上游抖动对调用方屏蔽**。与熔断（§ 韧性层 `Breaker` 保护下游雪崩）互补、与幂等中间件（§22 防重复提交）配合，构成「边缘韧性三件套」。
+
+> 定位：这是 §23 `Retry` 原语的 **HTTP 适配层**，不新增重试编排逻辑——退避、重试判定、事件、预算全部复用 `Retry` 单例（来自 `ResilienceServiceProvider`，退避取 `config/resilience.php` 的 `retry` 段）。中间件只负责「把 HTTP 响应状态码 / 异常桥接进 `Retry` 模型」。
+
+### 抽象与边界
+
+- `RetryMiddleware`（`src/Resilience/RetryMiddleware.php`）：PSR-15 中间件。决策要点：
+  - **方法门禁**：仅对配置内的「安全方法」重试（默认不含 `POST`），避免非幂等副作用被重复触发；
+  - **响应维度**：命中 `retry_on_status`（默认 `[502, 503, 504]`）即重试（把响应包装为内部哨兵异常 `RetryableHttpStatusException` 喂给 `Retry`）；
+  - **异常维度**：命中 `retry_on_exception`（应用层注入的异常类）即重试；
+  - **非重试集内异常**（如 `4xx` / 校验失败）原本就不应重试 → **还原原始异常**透传给 `ExceptionMiddleware`，不伪造成功；
+  - **全部重试耗尽且最终是上游 5xx** → **原样返回最后一次响应（best-effort）**，不静默吞错、也不伪造 200；
+  - 关闭（`enabled=false`）或缺头场景下，本中间件**零开销透传**。
+- `RetryableHttpStatusException`（`src/Resilience/RetryableHttpStatusException.php`）：内部哨兵，承载被重试的 PSR-7 响应，仅用于状态码→异常模型桥接；耗尽时取回原响应。
+
+### 配置（config/resilience.php 的 `retry.http` 段）
+
+```php
+'retry.http' => [
+    'enabled'            => env('RETRY_HTTP_ENABLED', true),   // 总开关
+    'methods'            => ['GET','HEAD','PUT','DELETE','OPTIONS'], // 允许重试的方法
+    'attempts'           => env('RETRY_HTTP_ATTEMPTS', 3),      // 最大尝试次数（含首次）
+    'timeout'            => null,                              // 总预算秒数（null=不限）
+    'retry_on_status'    => [502, 503, 504],                  // 命中即重试的上游状态码
+    'retry_on_exception' => [],                                // 应用层注入，如 [UpstreamUnavailableException::class]
+],
+```
+
+### 与 IdempotencyMiddleware 的协作
+
+幂等中间件注册在外层，重放请求不会进入本中间件（直接返回缓存响应），因此**仅「首次真实执行」会被重试包裹**，不会与重放逻辑打架。典型组合：`POST /charge` 带 `Idempotency-Key` 防重复提交 + 幂等重放；`GET /proxy/upstream` 走 `RetryMiddleware` 抗上游抖动。
+
+### 关键约定
+
+- **POST 默认不重试**：写接口副作用（下单 / 扣款）重试风险高；如需对带 `Idempotency-Key` 的写接口也加边缘重试，显式把 `POST` 加入 `methods` 并配合幂等键，确保重试安全。
+- **best-effort 不伪造成功**：上游持续 5xx 时返回最后一次 5xx 响应（调用方据此降级 / 告警），而非吞错返回 200。
+- **零新增依赖**：退避、事件、预算完全复用 §23，本中间件只做 HTTP 语义桥接，符合「薄壳层」哲学。
+
+验证：`tests/RetryMiddlewareTest.php`（非安全方法透传 / 503→200 重试两次并退避 / 持续 5xx 耗尽返回最后一次响应 / 非重试集内异常还原透传 / 配置异常重试 / 关闭透传 / 非列表状态码不重试 / attempts 上限）、`tests/RetryMiddlewareEndpointTest.php`
+（`#[RunInSeparateProcess]` 真实引导：GET 下游 503 在同一次请求内重试至 200、handler 执行两次；POST 默认不重试直接返回 503）。
+
+> 设计立场：HTTP 重试是「边缘瞬态故障恢复薄壳层」，框架只做「状态码/异常 → Retry 模型的桥接 + 安全方法门禁 + best-effort 回退」，
+> 把「退避算法 / 预算 / 事件」交给 §23 的 `Retry` 原语——与 §19~§23 同一哲学：框架给「契约 + 钩子 + 默认值」，不给「绑定实现」。
+
+## 25. 超时原语（Timeout）（v0.8.20）
+
+与熔断（§18）、重试（§23）、幂等（§21）共同构成「稳定性四件套」：
+
+- **熔断（Breaker）**：下游「挂了」就别再打（故障隔离）；
+- **重试（Retry）**：下游「抖一下」自动再试（瞬态恢复）；
+- **超时（Timeout）**：任何依赖都不能无限拖住我（执行预算）；
+- **幂等（Idempotency）**：重试 / 重放安全（副作用不重入）。
+
+`timeout()` 给任意「操作」一个执行预算，超时即按 `fallback` / `throw` 处置，**绝不静默吞错**。
+
+### 抽象与边界
+
+- `Timeout`（编排）：只做「调度后端选择 + 降级 + 事件」，不含计时逻辑；
+- `TimeoutScheduler`（契约）：真正的「计时 / 抢占」能力由三种零依赖后端提供：
+  - `FiberTimeoutScheduler`：委托 `kode/fibers` 协程调度器，对「会挂起（I/O、`Fibers::sleep`）」的协作式任务做**真实抢占**——框架 active runtime 的默认路径；
+  - `PcntlTimeoutScheduler`：CLI 下 `pcntl_alarm` 硬中断，对 CPU 密集型阻塞任务生效（opt-in，避免与事件循环信号冲突）；
+  - `SyncTimeoutScheduler`：退化实现，运行后比对耗时，仅做越界检测、不做抢占（无 fiber / pcntl 环境的保底）。
+- `TimeoutExceeded`（异常）/ `Events\TimeoutExceeded`（事件）：把 `kode/fibers` 的 `TimeoutException` 收敛为框架自有契约类型，调用方有稳定、与运行时无关的可捕获面。
+
+### 助手与用法
+
+```php
+use Kode\Framework\Resilience\TimeoutExceeded;
+
+// 默认 5s（config/resilience.php 的 timeout 段），fiber 后端真实抢占
+timeout(fn () => $client->call(), seconds: 2.0);
+
+// 超时降级：回退到缓存 / 兜底数据
+$val = timeout($op, [
+    'seconds'  => 1.5,
+    'label'    => 'user-profile',
+    'fallback' => static fn (TimeoutExceeded $e) => $cachedProfile,
+]);
+
+// 无 fiber 环境的保底（仅越界检测，不抢占）
+timeout($op, ['scheduler' => 'sync', 'seconds' => 0.5]);
+
+// 捕获
+try {
+    timeout($slow, seconds: 3.0);
+} catch (TimeoutExceeded $e) {
+    report($e); // 记录慢调用 / 触发降级 / 上报 APM
+}
+```
+
+### 关键约定
+
+- **fiber 抢占仅对协作式挂起生效**：对「纯同步阻塞、永不挂起」的 CPU 密集任务，需 `pcntl`（CLI）才能硬中断；`sync` 后端只做越界检测——这是 PHP 单进程的本质限制，非框架缺陷。
+- **不伪造成功**：默认 `throw=true`，超时抛 `TimeoutExceeded`；只有显式 `fallback` 才返回降级值，`throw=false` 且无 fallback 才返回 `null`。
+
+## 26. HTTP 熔断中间件（CircuitBreakerMiddleware）（v0.8.21）
+
+与 `RetryMiddleware`（瞬态抖动恢复）、`IdempotencyMiddleware`（防重复提交）同属**边缘韧性三件套**，
+把「故障隔离」接进 HTTP 流量，在边缘保护下游依赖，避免故障级联雪崩。
+
+> 与 §18 的 `Breaker` 注册表共用同一套状态：边缘失败会让 `breaker()->run()` 对该下游的熔断也生效，
+> 反之亦然——程序化熔断与 HTTP 边缘熔断共享每个服务名的熔断器实例，行为完全一致。
+
+### 抽象与边界
+
+- `CircuitBreakerMiddleware`（PSR-15 薄壳层）：决策与降级，不含状态机（状态机由 `Breaker` 委托 `kode/fibers`）；
+- **只把「下游真实故障」计入熔断**：
+  - 响应状态码 `>= status_threshold`（默认 500，即仅 5xx）→ 记一次失败；
+  - handler 抛出**传输层异常**（连接失败 / 超时 / 解析错误）→ 记一次失败；
+  - 4xx（客户端错误，下游本身健康）默认**不计失败**（`record_4xx_as_success=true`），避免被「上游用户传错参数」误熔断；
+- **熔断 OPEN 时直接短路**返回 `open_status`（默认 503）降级响应，**连重试都不发起**
+  （本中间件注册在 `RetryMiddleware` 外层），把「已知不可用」对调用方快速失败；
+- **可观测性**：响应带 `X-Circuit-Breaker`（closed/open/half_open）与 `X-Circuit-Breaker-Name`（服务名）头；
+- **事件**：短路时派发 `Events\CircuitOpened`（携带服务名 / 状态 / 路径 / 状态码），便于接入告警；
+- **排除路径**：`/health`、`/metrics`、`/favicon.ico` 等经 `exclude` 跳过，不被熔断包裹。
+
+### 与 RetryMiddleware 的协作
+
+熔断在外、重试在内。下游持续 5xx 时，重试耗尽后的最终 5xx 才被本中间件记为一次失败；
+重试能救回的瞬态故障不会累积熔断——二者不打架。
+
+### 配置（config/resilience.php 的 `breaker.http` 段）
+
+```php
+'breaker.http' => [
+    'enabled'              => env('BREAKER_HTTP_ENABLED', true),
+    'service_name'         => env('BREAKER_HTTP_SERVICE'),          // derive_from=fixed 时生效
+    'derive_from'          => env('BREAKER_HTTP_DERIVE', 'path'),   // path（按路径隔离）| host | fixed
+    'status_threshold'     => env('BREAKER_HTTP_STATUS_THRESHOLD', 500),
+    'open_status'          => env('BREAKER_HTTP_OPEN_STATUS', 503),
+    'record_4xx_as_success'=> env('BREAKER_HTTP_4XX_SUCCESS', true),
+    'exclude'              => explode(',', env('BREAKER_HTTP_EXCLUDE', '/health,/health/ready,/metrics,/favicon.ico')),
+],
+```
+
+### 关键约定
+
+- **熔断是「保护下游」，不是「保护自身」**：限流（429）与熔断（503）职责分离，本中间件注册在限流之后、幂等/重试之前。
+- **短路不伪造成功**：OPEN 时仅返回约定的 503 JSON 降级体，绝不放行到 handler；handler 的副作用因此被彻底隔离。
+- **路径级隔离**：`derive_from=path`（默认）下，不同路由各自独立熔断——某个下游挂了不会连累其它路由。
+- **事件可观测**：超时经框架事件系统派发 `Events\TimeoutExceeded`（label / seconds / cause），供告警 / APM 订阅。
+- **零新增依赖**：计时能力委托 active runtime（kode/fibers），契约 + 退化后端全内置于框架。
+
+验证：`tests/TimeoutTest.php`（未超时透传 / 超时抛异常并派发事件 / fallback 返回 / throw=false 返回 null / sync 预算内返回 / sync 越界检测 / 显式 sync 检测越界 / 显式 fiber 抢占挂起任务）、`tests/TimeoutIntegrationTest.php`（`#[RunInSeparateProcess]` 真实引导：timeout() 走容器单例、fiber 对协程内 `Fibers::sleep(0.5)` 在 0.05s 预算下真实抢占并抛 `TimeoutExceeded`、框架事件系统收到 `Events\TimeoutExceeded`）。
+
+> 设计立场：超时是「执行预算契约」，框架只做「调度后端契约 + 降级 + 事件 + 助手」，
+> 把「计时 / 抢占算法」交给 active runtime（kode/fibers）或 opt-in 的 pcntl——与 §18~§24 同一哲学：
+> 框架给「契约 + 钩子 + 默认值」，不给「绑定实现」。
+
+
 
 
 

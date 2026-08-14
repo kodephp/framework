@@ -18,6 +18,10 @@ use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
 use Kode\Framework\Health\HealthChecker;
 use Kode\Framework\Http\Middleware\RateLimitMiddleware;
+use Kode\Framework\Resilience\Retry;
+use Kode\Framework\Resilience\RetryMiddleware;
+use Kode\Framework\Resilience\Breaker;
+use Kode\Framework\Resilience\CircuitBreakerMiddleware;
 use Kode\Framework\Http\Middleware\ExceptionMiddleware;
 use Kode\Framework\Http\Middleware\TransactionMiddleware;
 use Kode\Framework\Http\Middleware\JsonBodyMiddleware;
@@ -123,6 +127,21 @@ final class HttpServiceProvider extends ServiceProvider
             ));
         }
 
+        // HTTP 熔断中间件（薄壳层）：复用框架 Breaker 注册表（与 breaker()->run() 共享状态），
+        // 在边缘保护下游依赖，避免故障级联雪崩。仅 5xx / 传输层异常计入熔断，4xx 默认不计，
+        // 熔断打开时短路返回 503（连重试都不发起，故注册在重试外层）。与 RetryMiddleware（抖动恢复）、
+        // IdempotencyMiddleware（防重复提交）同属边缘韧性三件套。开关见 config/resilience.php 的 breaker.http。
+        if (!empty($this->config('resilience.breaker.http.enabled', true))) {
+            /** @var Breaker $breaker */
+            $breaker = $this->container->get(Breaker::class);
+
+            $app->use(new CircuitBreakerMiddleware(
+                $breaker,
+                (array) $this->config('resilience.breaker.http', []),
+                static fn (object $event): object => event($event),
+            ));
+        }
+
         // HTTP 幂等中间件（薄壳层）：自动处理 Idempotency-Key 头，重放返回首次缓存响应。
         // 仅对携带该头的请求生效（缺头默认放行，零开销）；开关见 config/idempotency.http.enabled。
         // 注册在限流之后、业务之前——尽早占位，避免重复执行业务。
@@ -133,6 +152,19 @@ final class HttpServiceProvider extends ServiceProvider
             $app->use(new \Kode\Framework\Idempotency\IdempotencyMiddleware(
                 $idemManager,
                 (array) $this->config('idempotency.http', [])
+            ));
+        }
+
+        // HTTP 重试中间件（薄壳层）：复用 Retry 原语（config/resilience.php 的 retry 段退避），
+        // 对安全方法（默认 GET/HEAD/PUT/DELETE/OPTIONS）的 502/503/504 或指定异常自动重试，
+        // 把上游瞬态抖动对调用方屏蔽。注册在幂等之后（更内层、贴近 handler），仅包裹真实执行。
+        if (!empty($this->config('resilience.retry.http.enabled', true))) {
+            /** @var Retry $retry */
+            $retry = $this->container->get(Retry::class);
+
+            $app->use(new RetryMiddleware(
+                $retry,
+                (array) $this->config('resilience.retry.http', [])
             ));
         }
 

@@ -12,6 +12,8 @@ use Kode\Framework\Feature\FeatureManager;
 use Kode\Framework\Health\HealthChecker;
 use Kode\Framework\Idempotency\IdempotencyManager;
 use Kode\Framework\Lock\LockManager;
+use Kode\Framework\Resilience\Retry;
+use Kode\Framework\Resilience\Timeout;
 use Kode\Framework\Observability\Trace\Tracer;
 use Kode\Framework\ServiceDiscovery\ServiceDiscovery;
 use Kode\Framework\ServiceDiscovery\ServiceInstance;
@@ -638,6 +640,75 @@ if (!function_exists('idempotency')) {
         }
 
         return resolve(IdempotencyManager::class);
+    }
+}
+
+if (!function_exists('retry')) {
+    /**
+     * 重试原语（瞬态故障恢复，与熔断器互补）。
+     *
+     * 框架引导后：默认退避策略来自 config/resilience.php 的 retry 段，事件经框架事件系统派发
+     * （RetryAttempting / RetrySucceeded / RetryExhausted）。
+     * 未引导（如纯脚本）：使用无退避的默认 Retry（仍会重试，但无等待、不派发事件）。
+     *
+     * @param array<string, mixed> $options
+     *   attempts : 最大尝试次数（含首次），默认 3
+     *   backoff  : BackoffStrategy|null（覆盖默认退避；如 new ExponentialBackoff）
+     *   retryOn  : callable(\Throwable):bool | list<class-string<\Throwable>> | null（null=任何异常都重试）
+     *   timeout  : float|null 总预算秒数（超出停止重试，避免长尾）
+     *   label    : string 日志/事件标识
+     *
+     * 用法：
+     *   retry(fn () => $client->call(), attempts: 3);
+     *   retry($op, ['attempts' => 5, 'retryOn' => [ConnectionException::class], 'timeout' => 30]);
+     *   retry($op, ['backoff' => new \Kode\Framework\Resilience\Backoff\DecorrelatedJitterBackoff]);
+     *
+     * @return mixed 操作成功返回值
+     */
+    function retry(callable $operation, array $options = []): mixed
+    {
+        if (app() !== null && app()->container->bound(Retry::class)) {
+            return resolve(Retry::class)->run($operation, $options);
+        }
+
+        // 降级：未引导时也可用（无默认退避、无事件派发）。
+        return (new Retry())->run($operation, $options);
+    }
+}
+
+if (!function_exists('timeout')) {
+    /**
+     * 超时原语（操作级执行预算，与熔断 / 重试 / 幂等共构「稳定性四件套」）。
+     *
+     * 框架引导后：默认秒数来自 config/resilience.php 的 timeout 段，事件经框架事件系统派发
+     * （TimeoutExceeded）。底层抢占由 active runtime（kode/fibers）提供——对会挂起的任务真实生效。
+     *
+     * 未引导（如纯脚本）：使用默认 5s 的 Timeout（事件不派发）。
+     *
+     * @param array<string, mixed> $options
+     *   seconds   : float 允许的操作秒数，默认 5.0
+     *   label     : string 日志/事件标识
+     *   scheduler : 'fiber'|'pcntl'|'sync'|null（null=自动：有 fiber 走 fiber，否则 sync）
+     *   fallback  : callable(TimeoutExceeded): mixed 超时降级回调
+     *   (throw 由 config 控制，默认 true：超时抛 TimeoutExceeded)
+     *
+     * 用法：
+     *   timeout(fn () => $client->call(), seconds: 2.0);
+     *   timeout($op, ['seconds' => 1.5, 'fallback' => fn () => $cached]);
+     *   timeout($op, ['scheduler' => 'sync']);   // 无 fiber 环境的保底（仅越界检测）
+     *
+     * @return mixed 操作成功返回值、fallback 返回值、或 null（不抛且未配 fallback）
+     *
+     * @throws \Kode\Framework\Resilience\TimeoutExceeded 超时且未提供 fallback
+     */
+    function timeout(callable $operation, array $options = []): mixed
+    {
+        if (app() !== null && app()->container->bound(Timeout::class)) {
+            return resolve(Timeout::class)->run($operation, $options);
+        }
+
+        // 降级：未引导时也可用（默认 5s、无事件派发）。
+        return (new Timeout())->run($operation, $options);
     }
 }
 

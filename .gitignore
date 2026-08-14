@@ -7,6 +7,9 @@
 /vendor/
 composer.lock
 
+# ── 压测对等框架（benchmarks/peers/* 隔离安装的 vendor，非框架依赖） ──
+/benchmarks/peers/*/vendor/
+
 # ── 环境变量与密钥（本地开发，禁止提交） ──
 .env
 .env.*

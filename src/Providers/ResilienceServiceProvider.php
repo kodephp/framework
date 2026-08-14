@@ -5,9 +5,15 @@ declare(strict_types=1);
 namespace Kode\Framework\Providers;
 
 use Kode\Framework\Providers\ServiceProvider;
+use Kode\Framework\Resilience\Backoff\BackoffStrategy;
+use Kode\Framework\Resilience\Backoff\DecorrelatedJitterBackoff;
+use Kode\Framework\Resilience\Backoff\ExponentialBackoff;
+use Kode\Framework\Resilience\Backoff\FixedBackoff;
 use Kode\Framework\Resilience\Breaker;
 use Kode\Framework\Resilience\CircuitBreaker;
 use Kode\Framework\Resilience\FiberBreaker;
+use Kode\Framework\Resilience\Retry;
+use Kode\Framework\Resilience\Timeout;
 use Kode\Fibers\Core\CircuitBreaker as FiberCircuitBreaker;
 
 /**
@@ -50,5 +56,57 @@ final class ResilienceServiceProvider extends ServiceProvider
 
         $this->container->alias('breaker', Breaker::class);
         $this->container->alias('resilience', Breaker::class);
+
+        // 重试原语（瞬态故障恢复）：默认退避来自 config/resilience.php 的 retry 段，
+        // 事件经框架事件系统派发。构造零依赖、运行时无关。
+        $this->container->singleton(Retry::class, function (): Retry {
+            $config = (array) $this->config('resilience', []);
+            $retryCfg = (array) ($config['retry'] ?? []);
+            $dispatcher = static fn (object $event): object => event($event);
+
+            return new Retry($this->makeBackoff($retryCfg), $dispatcher);
+        });
+        $this->container->alias('retry', Retry::class);
+
+        // 超时原语（操作级执行预算，稳定性四件套之一）：默认秒数来自 config/resilience.php 的
+        // timeout 段，事件经框架事件系统派发（TimeoutExceeded）。底层抢占由 active runtime
+        // （kode/fibers）提供——对协作式挂起任务真实生效；无 fiber 时自动退化 sync。
+        $this->container->singleton(Timeout::class, function (): Timeout {
+            $config = (array) $this->config('resilience', []);
+            $timeoutCfg = (array) ($config['timeout'] ?? []);
+            $dispatcher = static fn (object $event): object => event($event);
+
+            return new Timeout(
+                scheduler: null,
+                defaultSeconds: (float) ($timeoutCfg['seconds'] ?? 5.0),
+                throw: (bool) ($timeoutCfg['throw'] ?? true),
+                dispatcher: $dispatcher,
+            );
+        });
+        $this->container->alias('timeout', Timeout::class);
+    }
+
+    /**
+     * 据配置构造默认退避策略（fixed | exponential | decorrelated）。
+     *
+     * @param array<string, mixed> $cfg
+     */
+    private function makeBackoff(array $cfg): ?BackoffStrategy
+    {
+        $type = (string) ($cfg['backoff'] ?? 'exponential');
+
+        return match ($type) {
+            'fixed' => new FixedBackoff((float) ($cfg['base'] ?? 0.1)),
+            'exponential' => new ExponentialBackoff(
+                base: (float) ($cfg['base'] ?? 0.1),
+                cap: (float) ($cfg['cap'] ?? 10.0),
+                jitter: (bool) ($cfg['jitter'] ?? true),
+            ),
+            'decorrelated' => new DecorrelatedJitterBackoff(
+                base: (float) ($cfg['base'] ?? 0.1),
+                cap: (float) ($cfg['cap'] ?? 10.0),
+            ),
+            default => null,
+        };
     }
 }

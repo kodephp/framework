@@ -81,6 +81,10 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 | 鉴权 / JWT | `jwt()->issue()`、`AuthMiddleware` | kode/jwt |
 | 限流 | `#[RateLimit]` 声明式 + 全局默认，分布式用 Redis | kode/limiting |
 | 熔断 | `breaker()->run($name, $task, $fallback)` | kode/fibers (CircuitBreaker) |
+| HTTP 熔断中间件 | `CircuitBreakerMiddleware`（边缘保护下游，5xx/传输异常计入，OPEN 短路 503） | 框架内置（PSR-15 薄壳层，复用 `Breaker` 注册表） |
+| 重试 | `retry($op, attempts: 3)` + `BackoffStrategy` | 框架内置（固定/指数/去相关抖动，零依赖） |
+| 超时 | `timeout($op, seconds: 2.0)` + `fallback` | 框架内置（fiber 真实抢占 / pcntl / sync 退化，零依赖） |
+| HTTP 重试中间件 | `RetryMiddleware`（安全方法 502/503/504 自动重试，复用 retry 段退避） | 框架内置（PSR-15 薄壳层，复用 `Retry`） |
 | 定时任务 | `#[Cron]` + `bin/kode cron` | kode/process 定时器 |
 | 多进程服务 | `bin/kode serve`（--watch 热重载） | kode/process |
 | 缓存 / 队列 / 数据库 / 事件 / HTTP 客户端 / 消息 | `cache()/queue()/db()/event()/http()/messaging()` | kode/cache · queue · database · event · http-client · messaging |
@@ -107,7 +111,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 
 ## 版本
 
-- 当前版本：**[v0.8.17](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.8.21](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
