@@ -32,6 +32,7 @@ use Kode\Framework\Console\Commands\TracingFlushCommand;
 use Kode\Framework\Console\Commands\LockListCommand;
 use Kode\Framework\Console\Commands\IdempotencyListCommand;
 use Kode\Framework\Console\Commands\IdempotencyForgetCommand;
+use Kode\Framework\Console\Commands\AuditRecentCommand;
 use Kode\Framework\Providers\ServiceProvider;
 
 /**
@@ -112,5 +113,8 @@ final class ConsoleServiceProvider extends ServiceProvider
         // 幂等（薄壳层）：列出 / 删除记录的幂等键（运维排查 / 去重巡检 / 重试放行）
         $kernel->add(IdempotencyListCommand::class);
         $kernel->add(IdempotencyForgetCommand::class);
+
+        // 审计（薄壳层）：开发期查看最近审计记录，验证脱敏 / 事件是否生效
+        $kernel->add(AuditRecentCommand::class);
     }
 }

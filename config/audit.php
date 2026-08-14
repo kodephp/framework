@@ -25,4 +25,22 @@ return [
 
     // 审计日志级别（info / warning / debug）
     'log_level' => env('AUDIT_LOG_LEVEL', 'info'),
+
+    // 业务 / 安全事件（audit()->event()）的日志级别（默认 info）
+    'event_log_level' => env('AUDIT_EVENT_LOG_LEVEL', 'info'),
+
+    // 敏感字段脱敏：命中下述键的查询参数 / 事件明细值将被替换为 '***'，
+    // 防止令牌、密码等凭据落进审计日志造成二次泄漏。设为 [] 即关闭脱敏。
+    'mask_params' => [
+        'password', 'passwd', 'pwd', 'token', 'secret', 'secrets',
+        'authorization', 'api_key', 'apikey', 'access_token', 'refresh_token',
+        'private_key', 'cookie', 'set-cookie', 'x-api-key', 'csrf_token', 'otp', 'pin',
+    ],
+
+    // 是否对请求体（仅当已解析为数组，如 form / json）做脱敏记录。
+    // 默认关：避免读取 / 改写请求体流，绝大多数接口无需记录请求体；敏感接口可开启。
+    'mask_body' => (bool) env('AUDIT_MASK_BODY', false),
+
+    // 取证元数据：记录 User-Agent / Referer，协助安全溯源（默认开）。
+    'forensic' => (bool) env('AUDIT_FORENSIC', true),
 ];

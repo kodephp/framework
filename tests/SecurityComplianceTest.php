@@ -7,6 +7,7 @@ namespace Kode\Framework\Tests;
 use Kode\Context\Context;
 use Kode\Framework\Http\Middleware\VersioningMiddleware;
 use Kode\Framework\Security\Audit\AuditService;
+use Kode\Framework\Security\Audit\AuditSink;
 use Kode\Framework\Testing\TestCase;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
@@ -61,6 +62,119 @@ final class SecurityComplianceTest extends TestCase
         self::assertSame('u-42', $ctx['user_id']);
         // 读取后清除，避免跨请求泄漏。
         self::assertNull(Context::get('auth_user_id'));
+    }
+
+    public function testAuditMasksSensitiveQueryParam(): void
+    {
+        $log = [];
+        $svc = new AuditService($this->makeLogger($log), ['ignore_paths' => []]);
+        $svc->record(
+            new ServerRequest('GET', '/login?user=alice&password=secret123'),
+            new Response(200),
+            microtime(true)
+        );
+        self::assertCount(1, $log);
+        $query = $log[0]['context']['query'];
+        // 敏感参数被脱敏，但键名与正常参数保留。
+        self::assertStringContainsString('password=', $query);
+        self::assertStringContainsString('***', $query);
+        self::assertStringNotContainsString('secret123', $query);
+    }
+
+    public function testAuditMasksNestedQueryParam(): void
+    {
+        $log = [];
+        $svc = new AuditService($this->makeLogger($log), ['ignore_paths' => []]);
+        $svc->record(
+            new ServerRequest('POST', '/s?filter[password]=x&q=ok'),
+            new Response(200),
+            microtime(true)
+        );
+        $query = $log[0]['context']['query'];
+        self::assertStringContainsString('***', $query);
+        self::assertStringContainsString('q=ok', $query);
+    }
+
+    public function testAuditIncludesForensicHeaders(): void
+    {
+        $log = [];
+        $req = (new ServerRequest('GET', '/x'))
+            ->withHeader('User-Agent', 'curl/8')
+            ->withHeader('Referer', 'https://example.com');
+        $svc = new AuditService($this->makeLogger($log), ['ignore_paths' => []]);
+        $svc->record($req, new Response(200), microtime(true));
+        $ctx = $log[0]['context'];
+        self::assertSame('curl/8', $ctx['user_agent']);
+        self::assertSame('https://example.com', $ctx['referer']);
+    }
+
+    public function testAuditForensicCanBeDisabled(): void
+    {
+        $log = [];
+        $req = (new ServerRequest('GET', '/x'))->withHeader('User-Agent', 'x');
+        $svc = new AuditService($this->makeLogger($log), ['ignore_paths' => [], 'forensic' => false]);
+        $svc->record($req, new Response(200), microtime(true));
+        self::assertArrayNotHasKey('user_agent', $log[0]['context']);
+    }
+
+    public function testAuditDoesNotRecordBodyByDefault(): void
+    {
+        $log = [];
+        $req = (new ServerRequest('POST', '/x'))->withParsedBody(['password' => 'p']);
+        $svc = new AuditService($this->makeLogger($log), ['ignore_paths' => []]);
+        $svc->record($req, new Response(200), microtime(true));
+        self::assertArrayNotHasKey('body', $log[0]['context']);
+    }
+
+    public function testAuditEventEmittedToSinkAsync(): void
+    {
+        AuditSink::reset(); // 隔离进程级静态队列，避免被其它测试的异步 emit 污染
+        $log = [];
+        $sink = new AuditSink();
+        $svc = new AuditService(
+            $this->makeLogger($log),
+            ['ignore_paths' => [], 'capture_user' => false],
+            $sink,
+            true
+        );
+        self::assertSame(0, $sink->pending());
+        $svc->recordEvent('user.login', ['uid' => 7, 'ip' => '1.2.3.4']);
+        // 热路径仅内存入队，不写日志。
+        self::assertSame(1, $sink->pending());
+        self::assertSame(1, $sink->flush($this->makeLogger($log)));
+        $ctx = $log[0]['context'];
+        self::assertSame('user.login', $ctx['event']);
+        self::assertSame(7, $ctx['detail']['uid']);
+    }
+
+    public function testAuditEventMasksSensitiveDetail(): void
+    {
+        AuditSink::reset(); // 隔离进程级静态队列
+        $log = [];
+        $sink = new AuditSink();
+        $svc = new AuditService($this->makeLogger($log), ['ignore_paths' => []], $sink, true);
+        $svc->recordEvent('auth.login', ['token' => 'abc', 'user' => 'bob']);
+        $sink->flush($this->makeLogger($log));
+        $detail = $log[0]['context']['detail'];
+        self::assertSame('***', $detail['token']);
+        self::assertSame('bob', $detail['user']);
+    }
+
+    public function testAuditEventWithoutRequestHasNoClientMeta(): void
+    {
+        $log = [];
+        $sink = new AuditSink();
+        $svc = new AuditService(
+            $this->makeLogger($log),
+            ['ignore_paths' => [], 'capture_user' => false],
+            $sink,
+            true
+        );
+        $svc->recordEvent('config.changed', ['key' => 'x']);
+        $sink->flush($this->makeLogger($log));
+        $ctx = $log[0]['context'];
+        self::assertArrayNotHasKey('client_ip', $ctx);
+        self::assertSame('config.changed', $ctx['event']);
     }
 
     // ------------------------------------------------------------------
