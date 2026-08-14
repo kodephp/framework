@@ -31,8 +31,19 @@ final class Kode
         return static function () use ($http, $route): ?int {
             // 用 Context::run 包裹每次请求，模拟常驻运行时（Swoole/协程）的「每请求独立上下文」隔离，
             // 避免单进程 CLI 循环下全局上下文累积导致的测量伪影，测得真实每请求成本。
+            // 每请求结束显式 drain 追踪 outbox——贴合 FPM 的 register_shutdown_function（响应发出后
+            // 离请求路径导出）行为；否则进程级静态 outbox 在单进程循环里无限累积，使 enqueueFlush 的
+            // array_merge 逐迭代变慢、吞吐被系统性低估。
             return Context::run(
-                static fn (): int => $http->handle(new ServerRequest('GET', $route))->getStatusCode()
+                static function () use ($http, $route): int {
+                    $code = $http->handle(new ServerRequest('GET', $route))->getStatusCode();
+                    // 每请求清空进程级导出队列（仅清静态 outbox，不触发网络导出）：模拟「离请求路径的
+                    // drain 已在响应发出后发生」——既消除单进程循环里 outbox 无限累积导致的测量伪影，
+                    // 又不把真实导出成本计入每请求在路径开销（导出本就是 v0.8.23 异步离路径设计）。
+                    \Kode\Framework\Observability\Trace\Tracer::resetOutbox();
+
+                    return $code;
+                }
             );
         };
     }
@@ -101,9 +112,13 @@ final class Kode
             'idempotency' => "<?php return ['http' => ['enabled' => false]];\n",
             'feature'     => "<?php return ['enabled' => false];\n",
             'cors'        => "<?php return ['enabled' => false];\n",
-            'security'    => "<?php return ['enabled' => false];\n",
+            'security'    => "<?php return ['enabled' => false, 'audit' => ['enabled' => false]];\n",
             'locale'      => "<?php return ['enabled' => false];\n",
             'resilience'  => "<?php return ['breaker' => ['http' => ['enabled' => false]], 'retry' => ['http' => ['enabled' => false]]];\n",
+            'observability' => "<?php return ['metrics' => ['enabled' => false], 'tracing' => ['enabled' => false]];\n",
+            'metrics'     => "<?php return ['metrics' => ['enabled' => false]];\n",
+            'audit'       => "<?php return ['audit' => ['enabled' => false]];\n",
+            'tracing'     => "<?php return ['tracing' => ['enabled' => false]];\n",
             default       => "<?php return ['enabled' => false];\n",
         };
     }

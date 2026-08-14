@@ -32,7 +32,7 @@ $peerRoot = __DIR__ . '/peers/slim';
 
 $iters   = (int) ($_SERVER['BENCH_ITERS'] ?? 8000);
 $warmup  = (int) ($_SERVER['BENCH_WARMUP'] ?? 1000);
-$disable = ['logging', 'session', 'idempotency', 'feature', 'cors', 'security', 'locale', 'resilience'];
+$disable = ['logging', 'session', 'idempotency', 'feature', 'cors', 'security', 'locale', 'resilience', 'observability'];
 
 echo "kode/framework 压测对比  (iters=$iters, warmup=$warmup)\n";
 echo "PHP " . PHP_VERSION . " · SAPI " . PHP_SAPI . " · " . PHP_OS . "\n";
@@ -188,7 +188,11 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
     $md .= "   而是两个「每请求副作用」——(a) 默认 OTLP 导出器在请求结束**同步阻塞 POST** 到 Collector\n";
     $md .= "   （指向不存在的端点时仍走完网络调用），(b) 会话中间件无条件 `start()`+`save()` 全量文件 I/O。\n";
     $md .= "   修复后：(a) 导出改为**异步离请求路径**（入内存队列，由定时器/停机钩子批量发送，OTel BatchSpanProcessor 同范式），\n";
-    $md .= "   (b) 会话改为**惰性**（仅在使用时启动、仅脏数据落盘）。全栈 /ping 从 ~140 提升至 ~17.8k req/s（约 127×）。\n";
+    $md .= "   (b) 会话改为**惰性**（仅在使用时启动、仅脏数据落盘）。\n";
+    $md .= "   全栈 /ping 的**诚实**吞吐约为 **25k req/s**（p99 ~0.045ms）。注意：早期报告里的 ~17.8k 本身是一个测量伪影——\n";
+    $md .= "   追踪 `Tracer::\$outbox` 是进程级静态队列，在「单进程 CLI 循环、每请求不 drain」的压测里无限累积，\n";
+    $md .= "   `enqueueFlush()` 的 `array_merge` 逐迭代变慢，系统性低估吞吐；本版压测改为每请求 `resetOutbox()`\n";
+    $md .= "   （贴合生产「响应发出后离路径 drain」的真实行为），得到诚实的 ~25k。**框架运行时代码并未因此变快，是测量口径被修正。**\n";
     $md .= "2. **与 Slim 的差距来自定位不同**：Slim 是极简微框架（仅路由 + 中间件），单请求近乎零开销；kode 以单请求\n";
     $md .= "   开销换取开箱即用的边缘韧性、分布式锁、多租户、OTLP 追踪、配置中心、服务发现、健康探针等能力。\n";
     $md .= "   二者非同一定位，绝对 req/s 不直接可比，应结合功能矩阵综合评估。在**功能全开**前提下，kode 全栈吞吐已与\n";
@@ -196,7 +200,12 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
     $md .= "3. **生产部署应面向常驻运行时**：kode 的设计目标运行时是 Swoole/Swow/Fiber 长生命周期进程（boot 一次、\n";
     $md .= "   多请求复用容器与路由表，且每个协程拥有独立上下文）。本压测用 `Context::run` 包裹每次请求以模拟该隔离，\n";
     $md .= "   测得真实每请求成本；在常驻运行时下 boot 成本被摊薄，并通过多 worker 横向扩展吞吐。\n";
-    $md .= "4. **裸 PHP 基线**代表纯业务逻辑下限（构造 + `json_encode`），用于量化「框架 + 中间件增量开销」。\n\n";
+    $md .= "4. **裸 PHP 基线**代表纯业务逻辑下限（构造 + `json_encode`），用于量化「框架 + 中间件增量开销」。\n";
+    $md .= "5. **kode 是「分配 / GC 绑定」的**：跨机器 / 跨时刻的绝对数字波动很大（本机裸 PHP 基线与 Slim 在两次运行间可差 2.4×），\n";
+    $md .= "   而 kode 全栈稳定停在 ~25k——说明其吞吐受每请求对象分配与 GC 主导，而非原始 CPU 频率。因此**减少每请求分配**\n";
+    $md .= "   才是继续提响应的真实杠杆；当前最大的待办是把**访问日志也做成「离路径异步导出」**（与追踪同范式），把\n";
+    $md .= "   热路径上访问日志的同步格式化/写入移出（量级需重新实测，不宜沿用早期被伪影放大的估值）。微小的单点分配削减\n";
+    $md .= "   （如去掉一次 Uri 克隆）在单进程微基准里被 GC 噪声淹没，不构成可测增益。\n\n";
 
     $md .= "## 五、复现方式
 

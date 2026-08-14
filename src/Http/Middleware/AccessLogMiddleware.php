@@ -36,7 +36,8 @@ final class AccessLogMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
-        $start = microtime(true);
+        // 用单调时钟 hrtime 测延迟，避免 wall-clock 被 NTP/系统时间回拨影响精度。
+        $start = hrtime(true) / 1e6;
         $requestId = $request->getHeaderLine('X-Request-Id');
 
         try {
@@ -63,12 +64,19 @@ final class AccessLogMiddleware implements MiddlewareInterface
         ?\Throwable $error,
     ): void {
         $status = $response?->getStatusCode() ?? 500;
-        $latency = round((microtime(true) - $start) * 1000, 2);
+        $latency = round((hrtime(true) / 1e6 - $start) * 1000, 2);
+
+        // 热路径优化：uri 直接取 path(+query) 拼装，避免 getUri()->withQuery('') 每次请求克隆
+        // 一个 Uri 对象（原实现每请求多一次对象分配 + GC 压力）；client_ip 仅在无代理头时回退到
+        // server params，正常反代场景只做两次廉价头查找。
+        $uri = $request->getUri();
+        $path = $uri->getPath();
+        $query = $uri->getQuery();
 
         $context = [
             'method'      => $request->getMethod(),
-            'uri'         => (string) $request->getUri()->withQuery(''),
-            'query'       => $request->getUri()->getQuery(),
+            'uri'         => $query === '' ? $path : $path . '?' . $query,
+            'query'       => $query,
             'status'      => $status,
             'latency_ms'  => $latency,
             'request_id'  => $requestId !== '' ? $requestId : null,
@@ -93,12 +101,14 @@ final class AccessLogMiddleware implements MiddlewareInterface
 
     /**
      * 取客户端真实 IP（尊重 X-Forwarded-For / X-Real-IP，优先前者首段）。
+     *
+     * 用 strstr(..., ',', true) 取首段，避免 strtok 的全局解析状态副作用。
      */
     private function clientIp(ServerRequestInterface $request): string
     {
         $fwd = $request->getHeaderLine('X-Forwarded-For');
         if ($fwd !== '') {
-            return strtok($fwd, ',');
+            return strstr($fwd, ',', true) ?: $fwd;
         }
         $real = $request->getHeaderLine('X-Real-IP');
         if ($real !== '') {
