@@ -26,6 +26,7 @@ final class TracingTest extends TestCase
     protected function setUp(): void
     {
         Context::clear();
+        Tracer::resetOutbox();
     }
 
     /**
@@ -175,11 +176,28 @@ final class TracingTest extends TestCase
     public function testFlushOnRequestEndAuto(): void
     {
         $sink = [];
-        $t = new Tracer(true, ['flush_on_request_end' => true], null, $this->exporterResolver($sink));
+        // 同步模式：请求结束自动 flush 直接落到导出器（验证原 SimpleSpanProcessor 语义）。
+        $t = new Tracer(true, ['flush_on_request_end' => true, 'async' => false], null, $this->exporterResolver($sink));
 
         $root = $t->start('root');
         $t->end($root); // 栈空 → 自动 flush
 
+        self::assertCount(1, $sink);
+    }
+
+    public function testAsyncEnqueueOffPath(): void
+    {
+        $sink = [];
+        // 异步模式（默认）：请求结束仅入队 outbox，真实导出由 drain() 离请求路径执行。
+        $t = new Tracer(true, ['flush_on_request_end' => true, 'async' => true], null, $this->exporterResolver($sink));
+
+        $root = $t->start('root');
+        $t->end($root); // 栈空 → 入队，不直接导出
+
+        self::assertCount(0, $sink, '异步模式请求结束不应同步阻塞导出');
+
+        $n = $t->drain(); // 离请求路径导出
+        self::assertSame(1, $n);
         self::assertCount(1, $sink);
     }
 

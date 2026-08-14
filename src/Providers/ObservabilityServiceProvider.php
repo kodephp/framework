@@ -7,6 +7,7 @@ namespace Kode\Framework\Providers;
 use Kode\Framework\Observability\Metrics\MetricRegistry;
 use Kode\Framework\Observability\Middleware\MetricsMiddleware;
 use Kode\Framework\Observability\Middleware\TraceMiddleware;
+use Kode\Framework\Observability\Trace\Tracer;
 use Kode\Http\App;
 use Kode\Http\Response;
 
@@ -35,7 +36,12 @@ final class ObservabilityServiceProvider extends ServiceProvider
 
         // ---- 链路追踪：最外层，保证每个响应都带链路头 ----
         if (!empty($this->config('observability.tracing.enabled', true))) {
-            $app->getDispatcher()->prepend(new TraceMiddleware());
+            // 启动期注入 Tracer 单例（TracerServiceProvider 已 register），避免每请求 container resolve。
+            // tracer() 关闭（enabled=false）时 TraceMiddleware 内部 isEnabled() 为 false，跳过 span 录制。
+            $tracer = $this->container->bound(Tracer::class)
+                ? $this->container->get(Tracer::class)
+                : null;
+            $app->getDispatcher()->prepend(new TraceMiddleware($tracer));
         }
 
         // ---- 自动请求指标 ----

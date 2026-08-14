@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Providers;
 
 use Kode\Framework\Lock\LockManager;
+use Kode\Framework\Lock\LockWatchdog;
 use Kode\Framework\Lock\StaticLockManager;
 
 /**
@@ -18,6 +19,8 @@ use Kode\Framework\Lock\StaticLockManager;
  *    file 模式落盘到 storage_path('framework/locks')（app() 就绪时）或系统临时目录；
  *    注入事件派发闭包，使每次 acquire / release 派发 {@see \Kode\Framework\Lock\LockAcquired} /
  *    {@see \Kode\Framework\Lock\LockReleased}（可用于指标 / 审计）。
+ *  - LockWatchdog：装饰 LockManager，提供 `protect()` 自动续期（看门狗），按 config/lock.php 的
+ *    `watchdog`（enabled / driver / renew_ratio）配置；无独立开关时随 LockManager 一并接线。
  *
  * 跨主机分布式锁（Redis / etcd / DB）不在此实现：在应用层实现 {@see LockManager} 并经
  * `config/app.php` 的 providers 绑定即可零改动替换，API 完全一致（薄壳哲学：契约 + 钩子）。
@@ -36,6 +39,20 @@ final class LockServiceProvider extends ServiceProvider
             return new StaticLockManager($config, $dir, $dispatcher);
         });
         $this->container->alias('lock', LockManager::class);
+
+        $this->container->singleton(LockWatchdog::class, function (): LockWatchdog {
+            $config = (array) $this->config('lock', []);
+            $wd = (array) ($config['watchdog'] ?? []);
+            $dispatcher = static fn (object $event): object => event($event);
+
+            return new LockWatchdog(
+                manager: $this->container->make(LockManager::class),
+                renewRatio: (float) ($wd['renew_ratio'] ?? 0.34),
+                driver: (string) ($wd['driver'] ?? 'auto'),
+                dispatcher: $dispatcher,
+            );
+        });
+        $this->container->alias('watchdog', LockWatchdog::class);
     }
 
     private function lockDir(): ?string

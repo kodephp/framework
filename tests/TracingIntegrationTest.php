@@ -28,6 +28,7 @@ final class TracingIntegrationTest extends TestCase
     {
         parent::setUp();
         $this->bootApp();
+        \Kode\Framework\Observability\Trace\Tracer::resetOutbox();
     }
 
     /**
@@ -74,6 +75,9 @@ final class TracingIntegrationTest extends TestCase
         $root = $t->start('manual', [], SpanKind::INTERNAL);
         $t->end($root);
 
+        // 默认异步导出：请求路径仅入队，离请求路径 drain() 才真正落盘。
+        $t->drain();
+
         self::assertCount(1, $sink);
         self::assertSame('manual', $sink[0]->name);
     }
@@ -86,6 +90,9 @@ final class TracingIntegrationTest extends TestCase
 
         // 404 仍穿过全局 TraceMiddleware，产生 SERVER 根 span（flush_on_request_end 默认开）
         $this->get('/');
+
+        // 默认异步导出：离请求路径 drain() 才真正落盘。
+        tracer()->drain();
 
         $names = array_map(static fn (Span $s): string => $s->name, $sink);
         self::assertNotEmpty($names);

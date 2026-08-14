@@ -37,6 +37,8 @@ final class TracerServiceProvider extends ServiceProvider
                 fn (): ?SpanExporter => $this->container->bound(SpanExporter::class)
                     ? $this->container->get(SpanExporter::class)
                     : null,
+                // 默认异步导出：请求路径仅内存入队，不阻塞响应。
+                (bool) ($cfg['async'] ?? true),
             );
         });
         $this->container->alias('tracer', Tracer::class);
@@ -56,18 +58,47 @@ final class TracerServiceProvider extends ServiceProvider
             $this->container->alias('spanExporter', SpanExporter::class);
         }
 
-        // worker 优雅停机时 flush 待导出 span（避免链路在退出时丢失）
+        // 离请求路径导出：把进程级 outbox 批量发送，绝不阻塞客户端响应。
+        //  - Swoole / Workerman：注册周期性 tick 定时器（常驻进程最优，请求路径零网络开销）。
+        //  - FPM / CLI：注册 shutdown 钩子，响应发出后再 drain（客户端已收到响应）。
+        $this->registerOffPathDrain();
+
+        // worker 优雅停机时 drain 待导出 span（避免链路在退出时丢失）
         if ($this->container->bound(GracefulShutdown::class)) {
             /** @var GracefulShutdown $graceful */
             $graceful = $this->container->get(GracefulShutdown::class);
             $graceful->registerCleanup(static function (): void {
                 try {
-                    resolve(Tracer::class)->flush();
+                    resolve(Tracer::class)->drain();
                 } catch (\Throwable) {
-                    // flush 失败不影响停机
+                    // drain 失败不影响停机
                 }
             });
         }
+    }
+
+    /**
+     * 注册离请求路径的 span 导出时机。
+     *
+     * 请求路径上的 {@see Tracer::enqueueFlush()} 只做内存入队（µs 级），真实网络发送
+     * 必须离请求路径执行，否则会像 SimpleSpanProcessor 那样每请求同步阻塞 OTLP POST
+     * 拖垮吞吐。默认在响应发出后的 shutdown 阶段 drain（FPM / CLI / worker 退出均适用，
+     * 客户端已收到响应、不感知延迟）。
+     *
+     * 常驻进程（Swoole / Workerman）如需在进程存活期内持续导出、避免 outbox 堆积，
+     * 应在服务启动后调用 {@see Tracer::drain()} 注册周期性 tick 定时器——框架无法在
+     * provider boot 阶段可靠判断当前是否处于运行中的事件循环（Swoole 扩展在纯 CLI 下
+     * 亦加载，盲目注册定时器会在 shutdown 触发 Event::wait 永久挂起），故交由应用显式注册。
+     */
+    private function registerOffPathDrain(): void
+    {
+        register_shutdown_function(static function (): void {
+            try {
+                resolve(Tracer::class)->drain();
+            } catch (\Throwable) {
+                // drain 失败不影响主流程
+            }
+        });
     }
 
     /**

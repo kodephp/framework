@@ -28,6 +28,16 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class TraceMiddleware implements MiddlewareInterface
 {
+    /**
+     * 链路追踪管理器（启动期注入一次，避免每请求 resolve() + 全局 app() 访问）。
+     *
+     * 为 null 或 {@see Tracer::isEnabled()} 为 false 时跳过 span 录制，仅做最廉价的链路头附加。
+     */
+    public function __construct(
+        private readonly ?Tracer $tracer = null,
+    ) {
+    }
+
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
@@ -39,7 +49,7 @@ final class TraceMiddleware implements MiddlewareInterface
         }
 
         $root = null;
-        $tracer = $this->resolveTracer();
+        $tracer = $this->tracer;
         if ($tracer !== null && $tracer->isEnabled()) {
             $root = $tracer->start(
                 $request->getMethod() . ' ' . $request->getUri()->getPath(),
@@ -78,19 +88,6 @@ final class TraceMiddleware implements MiddlewareInterface
         }
 
         return $response;
-    }
-
-    private function resolveTracer(): ?Tracer
-    {
-        try {
-            if (app() === null || !app()->container->bound(Tracer::class)) {
-                return null;
-            }
-
-            return resolve(Tracer::class);
-        } catch (\Throwable) {
-            return null;
-        }
     }
 
     private function log(\Throwable $e): void

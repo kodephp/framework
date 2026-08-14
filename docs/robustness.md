@@ -783,6 +783,48 @@ lock()?->forceRelease('report:daily');
 - 事件：`Lock\LockAcquired` / `Lock\LockReleased`（含 `$forced`）在每次成功获取 / 释放后派发，
   便于接入指标（锁竞争 / 持有时长）/ 审计。
 
+#### 20.1 看门狗自动续期（LockWatchdog）
+
+分布式锁最大隐患之一：**持有锁的长任务执行时间超过 TTL，锁自动过期被其他副本抢占**，导致同一任务
+并发执行（重复出报表、重复发消息、重复跑迁移）。`LockManager::run()` 在 work 执行期间不续期，
+{@see \Kode\Framework\Lock\LockWatchdog} 正是为此补上「看门狗」：获取锁后启动一个续期循环，在 work 运行
+期间按 `ttl * renew_ratio` 周期性调用 `acquire()`（同 owner 重入刷新 TTL），work 结束后释放。
+
+续期调度双驱动（配置 `lock.watchdog.driver`）：
+
+- `tick`（默认 / `auto` 回退）：PHP `register_tick_function`，在 work 执行期间的语句边界周期触发续期，
+  **任何 SAPI 与环境均可用，但要求入口文件（public/index.php / bin/kode）声明 `declare(ticks=1)`**，
+  精度为「语句边界」，对秒级 TTL 足够。
+- `fiber`：kode/fibers 协程（`Fibers::go` + `Fibers::sleep`）与 work 并行续期，精度更高；要求调用方处于
+  fiber 调度器上下文（HTTP 请求 / 调度任务 / `queue:work` 默认均满足）。`auto` 会优先尝试 fiber，失败回退 tick。
+
+安全要点（与 LockManager 一致）：
+
+- **owner 隔离**：每次 `protect()` 生成唯一 owner；续期仅当 owner 匹配时生效，绝不会续期他人持有的锁；
+- **安全释放**：work 抛异常也经 `finally` 释放；看门狗在 stop 标记后置位即不再续期，避免「释放后被看门狗
+  重新 acquire」的竞态；
+- **事件**：`Lock\LockWatchdogStarted` / `Lock\LockWatchdogRenewed` / `Lock\LockWatchdogStopped`，
+  便于接入指标（续期次数 / 实际持有时长）/ 审计 / 告警（续期失败率）。
+
+用法：
+
+```php
+// 助手包裹（推荐）：长任务防锁过期
+withLock('report:daily', function () {
+    return buildReport();
+}, 120);
+
+// 或直接取看门狗实例
+watchdog()?->protect('report:daily', fn () => buildReport(), 120);
+
+// 也可手动驱动 LockManager（不带看门狗，仅短任务）
+lock()?->run('cache:rebuild', fn () => rebuild(), 30);
+```
+
+薄壳要素：`Lock\LockWatchdog`（契约 + 内置 tick/fiber 双驱动，零依赖）；`LockServiceProvider` 注册为单例
+（依赖 `LockManager` + `lock.watchdog` 配置）；`watchdog()` / `withLock()` 助手；配置见 `config/lock.php` 的
+`watchdog` 段（`enabled` / `driver` / `renew_ratio`）。
+
 ### 关键约定
 
 - **TTL 必须保守且业务幂等**：锁只防并发，不防进程崩溃；持有者崩溃且 TTL 内未释放，锁会「假性持有」

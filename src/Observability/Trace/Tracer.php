@@ -29,7 +29,23 @@ final class Tracer
 
     private const string CTX_BUFFER = 'kode.tracing.buffer';
 
+    /**
+     * 进程级待导出队列（离请求路径批量发送）。
+     *
+     * 按进程隔离（Swoole / Workerman 每个 worker 独立），请求结束仅做内存入队，
+     * 真实网络发送由 {@see drain()} 在定时器 / 停机钩子中执行，绝不阻塞客户端响应。
+     *
+     * @var array<int, Span>
+     */
+    private static array $outbox = [];
+
     private ?SpanExporter $exporter = null;
+
+    /**
+     * 是否异步导出：true = 请求路径仅内存入队，export 离请求路径执行。
+     * @var bool
+     */
+    private readonly bool $async;
 
     /**
      * @param array<string, mixed> $config     observability.tracing 配置
@@ -41,7 +57,11 @@ final class Tracer
         private readonly array $config = [],
         private readonly ?\Closure $dispatcher = null,
         private readonly ?\Closure $exporterResolver = null,
+        ?bool $async = null,
     ) {
+        // async 默认开（请求路径仅内存入队，离请求路径导出）；构造显式传 false 或
+        // config['async']=false 时退化为请求结束同步导出（兼容测试与需即时落盘场景）。
+        $this->async = $async ?? (bool) ($this->config['async'] ?? true);
     }
 
     public function isEnabled(): bool
@@ -130,7 +150,8 @@ final class Tracer
         $this->appendBuffer($span);
 
         if ($this->stack() === [] && !empty($this->config['flush_on_request_end'])) {
-            $this->flush();
+            // 请求结束：优先离请求路径导出（异步入队），避免阻塞客户端响应。
+            $this->enqueueFlush();
         }
     }
 
@@ -153,11 +174,15 @@ final class Tracer
     }
 
     /**
-     * 导出当前执行单元缓冲的 span。
+     * 请求结束时的导出钩子：默认异步（仅把 span 放入进程级待导出队列，µs 级、不阻塞响应），
+     * 真实网络发送由定时器 / 优雅停机钩子 {@see drain()} 离请求路径执行——与 OTel
+     * BatchSpanProcessor 同范式，避免每请求一次同步阻塞的 OTLP POST 拖垮吞吐。
      *
-     * @return int 成功导出的 span 数（0 = 无数据或失败）
+     * 关闭 async 时退化为同步 flush（兼容测试与需「请求结束即落盘」的场景）。
+     *
+     * @return int 本次入队 / 导出的 span 数
      */
-    public function flush(): int
+    public function enqueueFlush(): int
     {
         if (!$this->enabled) {
             return 0;
@@ -168,23 +193,64 @@ final class Tracer
             return 0;
         }
 
-        $count = count($buffer);
+        if (!$this->async) {
+            return $this->flush();
+        }
+
+        // 异步：当前执行单元的 span 合并进进程级 outbox，清空本单元缓冲。
+        self::$outbox = array_merge(self::$outbox, $buffer);
+        $cap = $this->maxOutbox();
+        if (count(self::$outbox) > $cap) {
+            self::$outbox = array_slice(self::$outbox, count(self::$outbox) - $cap);
+        }
+        Context::set(self::CTX_BUFFER, []);
+
+        return count($buffer);
+    }
+
+    /**
+     * 离请求路径导出：把进程级 outbox（及当前缓冲）批量发送到导出器。
+     *
+     * 由以下时机调用（均不阻塞客户端响应）：
+     *  - Swoole / Workerman 的周期性 tick 定时器；
+     *  - FPM / CLI 的 register_shutdown_function（响应已发出之后）；
+     *  - worker 优雅停机钩子（GracefulShutdown）。
+     *
+     * @return int 成功导出的 span 数（0 = 无数据或失败）
+     */
+    public function drain(): int
+    {
+        if (!$this->enabled) {
+            return 0;
+        }
+
+        $pending = array_merge($this->buffer(), self::$outbox);
+        if ($pending === []) {
+            return 0;
+        }
+
         $exporter = $this->exporter();
         if ($exporter === null) {
+            self::$outbox = [];
+            Context::set(self::CTX_BUFFER, []);
+
             return 0;
         }
 
         $name = $exporter->name();
+        $count = count($pending);
         try {
-            $exporter->export($buffer);
+            $exporter->export($pending);
+            self::$outbox = [];
             Context::set(self::CTX_BUFFER, []);
             $this->dispatch(new SpansFlushed($count, $name, true));
 
             return $count;
         } catch (\Throwable $e) {
-            // 导出失败：保留缓冲以待下次 flush 重试；仅告警，不阻断业务。
+            // 导出失败：保留 outbox 以待下次 drain 重试；仅告警，不阻断业务。
+            Context::set(self::CTX_BUFFER, []);
             try {
-                logger()->warning('span 导出失败，已保留缓冲待重试', [
+                logger()->warning('span 导出失败，已保留待重试', [
                     'exporter' => $name,
                     'count' => $count,
                     'exception' => $e,
@@ -196,6 +262,17 @@ final class Tracer
 
             return 0;
         }
+    }
+
+    /**
+     * 同步导出（兼容测试、显式调用、以及关闭 async 时的请求结束路径）。
+     * 等价于 {@see drain()} 的同步版本，便于在单测中断言导出行为。
+     *
+     * @return int 成功导出的 span 数（0 = 无数据或失败）
+     */
+    public function flush(): int
+    {
+        return $this->drain();
     }
 
     /**
@@ -212,6 +289,14 @@ final class Tracer
     public function exporterName(): ?string
     {
         return $this->exporter()?->name();
+    }
+
+    /**
+     * 清空进程级待导出队列（主要用于测试隔离，避免异步 outbox 跨用例串扰）。
+     */
+    public static function resetOutbox(): void
+    {
+        self::$outbox = [];
     }
 
     // ------------------------------------------------------------------
@@ -279,6 +364,14 @@ final class Tracer
         }
 
         return mt_rand() / mt_getrandmax() <= $ratio;
+    }
+
+    /**
+     * outbox 容量上限（超出丢弃最旧），防内存膨胀 / collector 长期不可用时堆积。
+     */
+    private function maxOutbox(): int
+    {
+        return (int) ($this->config['max_outbox'] ?? 4096);
     }
 
     private function exporter(): ?SpanExporter

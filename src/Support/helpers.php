@@ -12,6 +12,7 @@ use Kode\Framework\Feature\FeatureManager;
 use Kode\Framework\Health\HealthChecker;
 use Kode\Framework\Idempotency\IdempotencyManager;
 use Kode\Framework\Lock\LockManager;
+use Kode\Framework\Lock\LockWatchdog;
 use Kode\Framework\Resilience\Retry;
 use Kode\Framework\Resilience\Timeout;
 use Kode\Framework\Observability\Trace\Tracer;
@@ -204,15 +205,28 @@ if (!function_exists('session')) {
     /**
      * 获取当前请求的会话（kode/session）。
      *
-     * 需在 SessionMiddleware 之后调用（即 HTTP 请求处理过程中）。CLI / 未启用会话时返回 null。
+     * 需在会话中间件之后调用（即 HTTP 请求处理过程中）。CLI / 未启用会话时返回 null。
      * 写入：session()->set('key', $v)；读取：session()->get('key')。
+     *
+     * 惰性启动：框架默认采用 LazySessionMiddleware（v0.8.23 起），会话对象在请求入口仅被创建、
+     * 并不立即读盘；此处首次访问时按需 start()（读负载 + 加锁），保证随后的 set 能被正确落盘。
+     * 对完全不碰会话的请求（如 /ping）零 I/O、零锁。
      */
     function session(): ?object
     {
         /** @var \Kode\Session\SessionManager $manager */
         $manager = resolve(\Kode\Session\SessionManager::class);
 
-        return $manager->getSession();
+        $session = $manager->getSession();
+        if ($session === null) {
+            return null;
+        }
+
+        if (!$session->isStarted()) {
+            $session->start();
+        }
+
+        return $session;
     }
 }
 
@@ -617,6 +631,41 @@ if (!function_exists('lock')) {
         }
 
         return resolve(LockManager::class);
+    }
+}
+
+if (!function_exists('watchdog')) {
+    /**
+     * 获取分布式锁看门狗（自动续期装饰器，薄壳层）。
+     *
+     * 未引导或 LockServiceProvider 未接线时返回 null。
+     *
+     * 用法：
+     *   watchdog()?->protect('report:daily', fn () => build(), 120);  // 持有锁期间自动续期
+     *   长任务执行时间可能超过 TTL 时务必使用，避免锁过期被其他副本抢占导致重复执行。
+     */
+    function watchdog(): ?LockWatchdog
+    {
+        if (app() === null || !app()->container->bound(LockWatchdog::class)) {
+            return null;
+        }
+
+        return resolve(LockWatchdog::class);
+    }
+}
+
+if (!function_exists('withLock')) {
+    /**
+     * 带看门狗自动续期的加锁执行（长任务防锁过期）。
+     *
+     * 未引导时返回 null（不执行 work）。等价于 watchdog()?->protect($key, $work, $ttl)。
+     *
+     * 用法：
+     *   withLock('report:daily', fn () => build(), 120);   // 获取 → 自动续期 → 执行 → 释放
+     */
+    function withLock(string $key, callable $work, int $ttl = 30): mixed
+    {
+        return watchdog()?->protect($key, $work, $ttl);
     }
 }
 

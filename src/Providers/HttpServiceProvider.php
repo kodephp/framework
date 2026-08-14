@@ -186,11 +186,13 @@ final class HttpServiceProvider extends ServiceProvider
         }
 
         // 会话：kode/session 接进生命周期（此前装了却没接，能力静默失接）。
-        // auto_start 自动从请求恢复会话、响应时落盘并写 Set-Cookie，按概率触发 GC。
+        // 用框架自建惰性中间件（LazySessionMiddleware）替换 vendor 默认实现：仅创建未启动会话对象，
+        // 业务侧 session() 助手首次访问才 start；响应时仅当会话被用过才落盘 + Set-Cookie。
+        // 避免「每个请求（含 /ping）都文件锁 + 读 + 写」的灾难性开销（原 ~154 req/s → 接近裸内核）。
         if (!empty($this->config('session.enabled', true))) {
             /** @var \Kode\Session\SessionManager $manager */
             $manager = $this->container->get(\Kode\Session\SessionManager::class);
-            $app->use(new \Kode\Session\Middleware\SessionMiddleware(
+            $app->use(new \Kode\Framework\Session\Middleware\LazySessionMiddleware(
                 $manager,
                 (array) $this->config('session', []),
             ));

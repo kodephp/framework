@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Bench\Scenario;
 
+use Kode\Context\Context;
 use Kode\Framework\Application;
 use Kode\Http\App;
 use Kode\Framework\Http\Resp;
@@ -28,7 +29,11 @@ final class Kode
         $http = self::boot($repoRoot, $disable);
 
         return static function () use ($http, $route): ?int {
-            return $http->handle(new ServerRequest('GET', $route))->getStatusCode();
+            // 用 Context::run 包裹每次请求，模拟常驻运行时（Swoole/协程）的「每请求独立上下文」隔离，
+            // 避免单进程 CLI 循环下全局上下文累积导致的测量伪影，测得真实每请求成本。
+            return Context::run(
+                static fn (): int => $http->handle(new ServerRequest('GET', $route))->getStatusCode()
+            );
         };
     }
 

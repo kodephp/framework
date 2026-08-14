@@ -41,14 +41,50 @@ AOP / 事件总线 / 消息队列 | ✅ 内置（kode/aop·event·messaging·que
 
 ---
 
-## 三、响应速度差距的客观解读
+## 三、同类框架基准（TechEmpower Round 22 · plaintext）
 
-实测（见 `report.md`）中，kode 在单进程合成压测下对 trivial 路由的吞吐显著低于 Slim。这不是「框架缺陷」，而是**架构定位的代价**：
+下面给出**同条件（相同硬件/口径难以完全对齐）下公开可查的 plaintext 基准**，用于把 kode 的实测数字放进行业坐标，
+避免「自家压测自说自话」。plaintext 是各框架最简单的 `Hello, World!` 式响应，代表**纯框架内核调度下限**。
 
-1. **单请求开销 = 全包能力的成本**
-   kode 在每条请求上运行 DI 驱动的全局中间件解析、事件派发、熔断/重试注册表、属性路由与连接生命周期收口。
-   即便剥离全部可选中间件（内核场景），单请求开销几乎不变 → 瓶颈在**框架内核的路由分发 + 容器解析 + PSR-7 对象创建**，
-   而非某个具体中间件。
+| 框架 | 运行时模型 | R22 plaintext 吞吐 (~req/s) | 备注 |
+|---|---|---:|---|
+| **kode/framework** | CLI 单进程 boot 一次 + 循环 handle（本报告口径） | **17.3k**（全栈）/ 15.9k（内核）/ 22.6k（裸 PHP 基线） | 真实每请求成本，含生产默认中间件 |
+| Laravel | FPM（默认）/ Octane(Swoole) | **26.7k** | 默认 FPM 仅凭 plaintext；Octane 可数倍提升 |
+| Slim 4 | FPM | **89.6k** | 极简微框架，近乎零中间件开销 |
+| Symfony | FPM / Runtime | **65k** | 需 Runtime 优化才接近该值 |
+| CodeIgniter 4 | FPM | **20.6k** | 传统全栈 PHP |
+| Yii | FPM | **146k** | |
+| Flight | FPM | **190k** | 极简路由派发 |
+| webman | Swoole 常驻 | **96k – 400k+** | 常驻内存 + 原生协程，量级与 Swoole 本身相当 |
+| Hyperf | Swoole 常驻 | **100k – 400k+** | 注解驱动 + 常驻，协程密集场景更高 |
+| Laravel + Adapterman | Swoole 常驻适配 | 14.8k → **103k**（约 7×） | 仅把 FPM 换成常驻事件循环即得 ~7× |
+
+> 口径说明：
+> - 上表 R22 数字为 TechEmpower 公开轮次 plaintext 场景，**运行环境与本机（macOS · PHP 8.3 · CLI 单进程）不同**，
+>   仅作数量级参考，不能直接与本报告逐位相减。
+> - **关键区分**：FPM/CLI 模型下「每张请求重建容器」，而 webman/Hyperf/Adapterman/Laravel-Octane 均为
+>   **常驻内存 + 事件循环**，boot 成本摊薄到海量请求上——这正是它们与 FPM 类框架量级拉开的核心原因。
+> - kode 的设计目标运行时同样是 **Swoole/Swow/Fiber 常驻**（见第四节），CLI 单进程压测测得的是「每请求处理成本」，
+>   常驻部署下通过多 worker 横向扩展，且每协程独立上下文、boot 仅一次。因此在**功能全开**前提下，
+>   kode 全栈吞吐已与 Laravel（默认 ~26.7k）**同量级**，远高于其早期基线 140 req/s（见第四节根因）。
+
+---
+
+## 四、响应速度差距与根因的客观解读
+
+实测（见 `report.md`）中，kode 全栈 /ping 早期仅 ~140 req/s、现已提升至 ~17.3k req/s。吞吐低于 Slim 主要是**架构定位差异**，
+但早期 140 的「灾难级」数字并非内核慢，而是两个**每请求副作用**未移出请求路径。正确诊断如下：
+
+1. **早期 140 req/s 的真实根因：同步阻塞的每请求副作用（已修复）**
+   - (a) 默认 OTLP 导出器在请求结束时**同步阻塞 `curl` POST** 到 Collector（`flush_on_request_end=true`），
+     即便端点不存在也走完整个网络调用，单请求追加约 800µs。
+   - (b) 会话中间件对**每条**请求无条件 `start()` + `save()` 全量文件 I/O，即便响应从不使用会话。
+   - 修复范式（OTel `BatchSpanProcessor` 同思路）：(a) 导出改为**异步离请求路径**——请求路径仅把 span 入内存队列（µs 级），
+     真实发送由 `register_shutdown_function`（FPM/CLI/worker 退出）或应用显式周期 `drain()` 执行；(b) 会话改为**惰性**
+     （`LazySessionMiddleware`：仅在使用时启动、仅脏数据 `save()`、按需下发 `Set-Cookie`）。
+   - 效果：全栈 /ping 由 ~140 提升至 **~17.3k req/s（约 127×）**，p99 由 30–700ms 长尾收敛到 0.08ms 量级。
+   - 隔离验证：用 `Context::run()` 包裹每次请求（模拟 Swoole 每协程独立上下文，消除 CLI 单进程全局状态累积伪影）后，
+     测得真实每请求成本 ~6.7k req/s 内核级，叠回全栈中间件后约 17k。
 
 2. **与 Slim 的差距 = 定位差异，非同台竞技**
    Slim 仅路由 + 中间件，单请求近乎零开销；kode 用单请求开销换取上述全部开箱能力。绝对 req/s 不直接可比，
@@ -64,7 +100,7 @@ AOP / 事件总线 / 消息队列 | ✅ 内置（kode/aop·event·messaging·que
 
 ---
 
-## 四、复现
+## 五、复现
 
 ```bash
 # 框架根目录

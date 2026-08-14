@@ -60,6 +60,17 @@ return [
         // 请求（根 span）结束时自动 flush 缓冲 span（HTTP 场景推荐开启）
         'flush_on_request_end' => (bool) env('OBS_TRACING_FLUSH_ON_END', true),
 
+        // 异步导出（默认开）：请求结束仅把 span 内存入队（µs 级），真实网络发送由
+        // 定时器 / shutdown / 优雅停机钩子离请求路径批量执行——避免每请求同步阻塞
+        // OTLP POST 拖垮吞吐（OTel BatchSpanProcessor 同范式）。关闭则退化为请求结束同步导出。
+        'async' => (bool) env('OBS_TRACING_ASYNC', true),
+
+        // 进程级 outbox 容量上限（超出丢弃最旧），防内存膨胀 / collector 长期不可用时堆积
+        'max_outbox' => (int) env('OBS_TRACING_MAX_OUTBOX', 4096),
+
+        // 常驻进程（Swoole / Workerman）周期性 drain 间隔（毫秒）
+        'flush_interval_ms' => (int) env('OBS_TRACING_FLUSH_INTERVAL_MS', 2000),
+
         // 单执行单元缓冲上限（超出丢弃最旧），防内存膨胀
         'max_batch' => (int) env('OBS_TRACING_MAX_BATCH', 512),
 
