@@ -72,6 +72,16 @@ final class StaticIdempotencyManager implements IdempotencyManager
         $this->store->forget($key);
     }
 
+    public function attach(string $key, ?string $payload): void
+    {
+        $this->store->attach($key, $payload);
+    }
+
+    public function replay(string $key): ?string
+    {
+        return $this->store->payload($key);
+    }
+
     public function store(): IdempotencyStore
     {
         return $this->store;

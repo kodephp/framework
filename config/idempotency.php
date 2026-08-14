@@ -27,4 +27,32 @@ return [
 
     // file 模式的自定义目录（留空则默认 storage_path('framework/idempotency')）
     'path' => env('IDEMPOTENCY_PATH', ''),
+
+    // ------------------------------------------------------------------
+    // HTTP 幂等中间件（可选，默认开启；仅对携带幂等键的请求生效，缺头零开销放行）
+    // ------------------------------------------------------------------
+    'http' => [
+        'enabled' => (bool) env('IDEMPOTENCY_HTTP_ENABLED', true),
+
+        // 客户端携带的幂等键请求头（Stripe 风格）
+        'header' => (string) env('IDEMPOTENCY_HEADER', 'Idempotency-Key'),
+
+        // 缺头时是否强制 400（写接口防重复提交建议开启；默认 false = 缺头直接放行）
+        'enforce' => (bool) env('IDEMPOTENCY_ENFORCE', false),
+
+        // 重放缓存的 TTL（秒），与底层存储一致；到期自动失效
+        'ttl' => (int) env('IDEMPOTENCY_TTL', 3600),
+
+        // 键作用域：global = 仅用键（键即身份，跨端点唯一）；route = 叠加 METHOD path 防跨端点碰撞
+        'scope' => (string) env('IDEMPOTENCY_SCOPE', 'global'),
+
+        // 键前缀（多应用共用存储时命名空间隔离）
+        'prefix' => (string) env('IDEMPOTENCY_PREFIX', ''),
+
+        // 重放响应头（标识本次为缓存重放）
+        'replay_header' => (string) env('IDEMPOTENCY_REPLAY_HEADER', 'Idempotency-Replay'),
+
+        // 首次记录响应头（标识本次已写入幂等记录）
+        'recorded_header' => (string) env('IDEMPOTENCY_RECORDED_HEADER', 'Idempotency-Recorded'),
+    ],
 ];

@@ -123,6 +123,19 @@ final class HttpServiceProvider extends ServiceProvider
             ));
         }
 
+        // HTTP 幂等中间件（薄壳层）：自动处理 Idempotency-Key 头，重放返回首次缓存响应。
+        // 仅对携带该头的请求生效（缺头默认放行，零开销）；开关见 config/idempotency.http.enabled。
+        // 注册在限流之后、业务之前——尽早占位，避免重复执行业务。
+        if (!empty($this->config('idempotency.http.enabled', true))) {
+            /** @var \Kode\Framework\Idempotency\IdempotencyManager $idemManager */
+            $idemManager = $this->container->get(\Kode\Framework\Idempotency\IdempotencyManager::class);
+
+            $app->use(new \Kode\Framework\Idempotency\IdempotencyMiddleware(
+                $idemManager,
+                (array) $this->config('idempotency.http', [])
+            ));
+        }
+
         // 请求体 JSON 健壮性：声明 application/json 但 body 非法时显式 400（默认关闭）。
         if (!empty($this->config('http.json_strict', false))) {
             $app->use(new JsonBodyMiddleware(

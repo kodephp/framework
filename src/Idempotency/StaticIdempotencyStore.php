@@ -20,7 +20,7 @@ use RuntimeException;
  */
 final class StaticIdempotencyStore implements IdempotencyStore
 {
-    /** @var array<string, array{expires: float}> */
+    /** @var array<string, array{expires: float, payload: ?string}> */
     private array $memory = [];
 
     /**
@@ -38,14 +38,34 @@ final class StaticIdempotencyStore implements IdempotencyStore
         return $this->read($key) !== null;
     }
 
-    public function put(string $key, int $ttl): bool
+    public function put(string $key, int $ttl, ?string $payload = null): bool
     {
         if ($this->has($key)) {
             return false;
         }
-        $this->write($key, ['expires' => microtime(true) + max(1, $ttl)]);
+        $this->write($key, ['expires' => microtime(true) + max(1, $ttl), 'payload' => $payload]);
 
         return true;
+    }
+
+    public function payload(string $key): ?string
+    {
+        $current = $this->read($key);
+        if ($current === null) {
+            return null;
+        }
+
+        return $current['payload'] ?? null;
+    }
+
+    public function attach(string $key, ?string $payload): void
+    {
+        $current = $this->read($key);
+        if ($current === null) {
+            return;
+        }
+        $current['payload'] = $payload;
+        $this->write($key, $current);
     }
 
     public function forget(string $key): void
@@ -95,7 +115,7 @@ final class StaticIdempotencyStore implements IdempotencyStore
     // ------------------------------------------------------------------
 
     /**
-     * @return array{expires: float}|null
+     * @return array{expires: float, payload: ?string}|null
      */
     private function read(string $key): ?array
     {
@@ -130,7 +150,7 @@ final class StaticIdempotencyStore implements IdempotencyStore
     }
 
     /**
-     * @param array{expires: float} $data
+     * @param array{expires: float, payload: ?string} $data
      */
     private function write(string $key, array $data): void
     {

@@ -36,6 +36,17 @@ interface IdempotencyManager
     public function forget(string $key): void;
 
     /**
+     * 首次响应产出后，把响应载荷（HTTP 中间件编码的状态/头/体）补挂到记录上，
+     * 供后续重放原样返回（key 不存在则静默忽略）。
+     */
+    public function attach(string $key, ?string $payload): void;
+
+    /**
+     * 读取已缓存的响应载荷（重放时重建响应）；未记录 / 未缓存时返回 null。
+     */
+    public function replay(string $key): ?string;
+
+    /**
      * 底层记录存储（供运维命令列出 / 清理记录；生产业务不应直接依赖）。
      */
     public function store(): IdempotencyStore;

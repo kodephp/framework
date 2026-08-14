@@ -845,6 +845,51 @@ idempotency()?->forget($key);   // 主动重试放行 / 运维清理
 - **不要依赖 memory 后端做跨进程去重**：跨进程 / 跨机请用实现 `IdempotencyStore` 的共享存储后端。
 - **与锁配合**：高并发「首次计算」可用锁保证单飞，幂等层负责「重放一致」，两者职责不重叠。
 
+## 22. HTTP 幂等中间件（Idempotency Middleware）（v0.8.17）
+
+把幂等薄壳层（§21）接入 HTTP 流量，让「同一幂等键的重复请求」在 TTL 内只真正执行业务一次，
+重放返回**首次的缓存响应**（状态 / Content-Type / 响应体完全一致），而非重复执行或仅回 409。
+即开即用的生产级防重复提交（Stripe 风格 `Idempotency-Key`）。
+
+### 抽象与边界
+
+- `Idempotency\IdempotencyMiddleware`（PSR-15，运行于全局中间件栈、限流之后、业务之前）：
+  - 默认仅对携带 `Idempotency-Key` 头的请求生效；**缺头默认放行、零开销**（不强制）；
+  - 原子占位 `seen()`：首次跑下游 → 把响应编码为 envelope 补挂 `attach()`，响应带 `Idempotency-Recorded: true`；
+  - 重放 → 取 `replay()` 缓存 envelope 原样重建响应，带 `Idempotency-Replay: true`；
+  - 极窄并发窗口（占位成功但响应尚未落盘）→ 降级 409，避免重复执行业务；
+  - `enforce=true` 时缺头回 400（写接口强制要求幂等键）。
+
+### 接线与配置（config/idempotency.php 的 `http` 段）
+
+`HttpServiceProvider` 在 `idempotency.http.enabled`（默认 `true`）时注册中间件（注入 `IdempotencyManager`
+单例 + `http` 配置）。关键选项：
+
+| 选项 | 默认 | 说明 |
+| --- | --- | --- |
+| `header` | `Idempotency-Key` | 客户端携带的幂等键请求头 |
+| `enforce` | `false` | 缺头是否强制 400（写接口建议开） |
+| `ttl` | `3600` | 重放缓存 TTL（秒），到期自动失效 |
+| `scope` | `global` | `global`=键即身份（跨端点唯一）；`route`=叠加 `METHOD path` 防跨端点碰撞 |
+| `prefix` | `''` | 键前缀（多应用共用存储时命名空间隔离） |
+| `replay_header` / `recorded_header` | `Idempotency-Replay` / `Idempotency-Recorded` | 响应标记头 |
+
+```php
+// 客户端：首次提交携带幂等键，重试（网络抖动 / 网关重试）用同一键 → 拿到首次结果，业务不重复跑
+$curl->setHeader('Idempotency-Key', $uuid);
+$resp = $client->post('/api/charge', $payload);
+// 首跑：Idempotency-Recorded: true；重试（同键）：Idempotency-Replay: true + 与首跑完全一致的响应体
+```
+
+### 关键约定
+
+- **响应缓存载体**：envelope 由中间件编码（状态 / Content-Type / base64 体）并落在 `IdempotencyStore`，
+  故 `driver=file` 时缓存也落盘（同主机多进程重放一致）；跨机重放需实现 `IdempotencyStore` 的共享后端。
+- **scope 选择**：开放 API 用 `global`（键即身份，安全）；同键可能复用在不同端点的内部系统用 `route` 防误判。
+- **GET 也幂等**：中间件不区分方法，任何携带键的请求都走首次/重放逻辑；纯查询接口无需带键（缺头放行）。
+- **与 §21 同一哲学**：框架只做「中间件 + 内置存储」，跨主机共享去重由实现 `IdempotencyStore` 的后端零改动替换。
+
+
 验证：`tests/IdempotencyTest.php`（once 首次执行 / 重放抛 DuplicateRequest / 失败回滚允许重试 / seen 语义 /
 forget 重试放行 / 惰性过期 / store keys 过滤 / file 后端落盘）、`tests/IdempotencyIntegrationTest.php`
 （`#[RunInSeparateProcess]` 真实引导：idempotency() 解析单例、once 重放抛异常、IdempotencyRecorded /
