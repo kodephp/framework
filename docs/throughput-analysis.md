@@ -32,6 +32,13 @@
 > hyperf（Swoole）本地安装仍在拉取组件；TechEmpower Round 22 plaintext 量级为 **~100k–400k+
 > req/s**（视配置），与 webman 同一数量级，印证「常驻内存 + 可变对象」才是高吞吐的关键。
 
+> ⚠️ **本表为 kode/http 3.4.0 之前（不可变消息时代）的实测**。kode/http **3.4.0 已落地两处关键优化**：
+> （1）**消息对象改为可变**（仿 webman/hyperf，`withHeader`/`withAttribute` 直接改自身返回 `$this`，
+> 不再克隆整条消息）——即下方「方案 A」；（2）**中间件管道预编译为闭包链复用**——即「方案 B」。
+> 二者共同作用后，「每请求 PSR-7 不可变克隆」这一历史主瓶颈已**消除**。in-process 同口径实测：
+> 全栈业务端点占裸 PHP 比例由 3.3.0 的 **9.0% → 3.4.0 的 13.4%（约 +48% 相对增益）**，且同等条件下
+> 全栈相对最小内核的「框架税」≈ 0%（审计税 ≈ 0%）。下方第二节瓶颈结论需按 3.4.0 重新解读。
+
 ### 最关键的结论（同引擎）
 
 **kode 全栈在同一 Workerman 引擎上只有 webman 的 ~25%（47k vs 189k），差 4×。**
@@ -44,10 +51,11 @@
 
 ### 2.1 kode/http 不是瓶颈
 
-kode/http 基础层 = 164k–173k req/s（in-process），仅比 Slim（282k）慢 **1.6×**，且 ≈ webman
-（189k，webman 还多了 HTTP 开销）。其开销来自 PSR-7 **不可变消息语义**：每次 `withAttribute` /
-`withHeader` / `withQuery` 都**克隆整条消息**；`PipelineRunner` 每中间件 `new self` 递归一次。
-这是 PSR-15/PSR-7 的标准实现，不是缺陷，但确实是次要开销（见第三节怎么改）。
+kode/http 基础层 = 164k–173k req/s（in-process，3.4.0 之前），仅比 Slim（282k）慢 **1.6×**，
+且 ≈ webman（189k，webman 还多了 HTTP 开销）。其（当时）开销来自 PSR-7 **不可变消息语义**：每次
+`withAttribute` / `withHeader` / `withQuery` 都**克隆整条消息**；`PipelineRunner` 每中间件 `new self`
+递归一次。**这两点均已在 kode/http 3.4.0 消除**（可变消息 + 管道预编译，见第三节方案 A/B），故该段
+描述的是历史基线，3.4.0 后 kode/http 基础层应显著更高。
 
 ### 2.2 真正的瓶颈：框架「默认全栈企业中间件」
 
@@ -65,18 +73,25 @@ kode 是 **batteries-included**——默认在每个请求上跑一整套企业�
 稳定可复现的部分：
 
 - **Context::run**（每请求隔离，~2.3µs）：仅在 Swoole/协程并发时需要；FPM/CLI 单请求下是纯开销。
-- **常驻中间件**（RequestId ~0.9µs、Exception/JsonErrorHandler/Audit/ConnectionCleanup 多数对
+- **常驻中间件**（RequestId / Exception / JsonErrorHandler / Audit / ConnectionCleanup 多数对
   /ping 早退）：合计约 1–2µs。
-- **PSR-7 不可变消息克隆**：每个 `with*` 克隆整条消息，随中间件数与 `with*` 调用数线性增长——
-  这是 kode/http 与 webman（可变对象）的根本架构差异，也是框架税的主要来源。
+- **PSR-7 消息克隆（⚠️ 3.4.0 已消除）**：3.4.0 之前，每个 `with*` 克隆整条消息，随中间件数与
+  `with*` 调用数线性增长——是 kode/http 与 webman（可变对象）的根本架构差异，也是当时框架税的主要来源。
+  **3.4.0 起消息对象可变，`with*` 不再克隆**，该项成本归零（见第三节方案 A/B 已落地）。
+- **kode/http 分发 / 路由 / DI 内核（3.4.0 后的新前沿）**：可变消息消除克隆后，in-process 下全栈与
+  最小内核在**同端点**几乎同速（框架税≈0%），但 kode 整体仍比 Slim（同口径）慢约一个数量级——说明
+  剩余每请求开销在 kode/http 的 `handle`→调度→路由→handler 通路与 `Context::run` 隔离，而非中间件栈。
+  这是「继续提升框架数据」在 3.4.0 之后的真实着力点。
 
 ### 2.4 一个必须讲清的诚实点：「内核 ≈ 全栈」
 
 压测里「内核（最小中间件）」与「全栈」都约 16.4% / 36k，几乎一样。原因：**optional 中间件
 （Cors/Security/Trace/…）对 `/ping` 早退（early-return）**，所以剥不剥它们 /ping 数字不变。
-但在**同引擎真实 HTTP** 下，全栈（47k）比最小（109k）慢 **2.3×**——说明 optional 中间件在
-真实 HTTP 路径上有真实成本（响应头克隆、序列化）。即：「内核=全栈」只适用于 /ping 这类被
-`ignore_paths`/`skipPaths` 命中的探针，**不能 extrapolation 成「中间件栈无成本」**。
+但在**同引擎真实 HTTP（3.4.0 之前、不可变消息时代）** 下，全栈（47k）比最小（109k）慢 **2.3×**——
+说明当时 optional 中间件在真实 HTTP 路径上有真实成本（响应头克隆、序列化）。**该 2.3× 是在可变消息
+落地前测得的**；3.4.0 消除克隆后，同引擎真实 HTTP 的差距应显著收窄，需用 4-worker 多 worker 真实 HTTP
+harness 重新测量（见第五节）。即：「内核=全栈」只适用于 /ping 这类被 `ignore_paths`/`skipPaths`
+命中的探针，**不能 extrapolation 成「中间件栈无成本」**——但 3.4.0 后其成本已从「克隆」转为「分发内核」。
 
 > 历史上「内核≈全栈」还曾因 `disableSnippet()` 的嵌套 gating 键写错（未命中
 > `security.audit.enabled` 等嵌套键）而**虚假成立**——已在 v0.8.24 修正。
@@ -85,19 +100,23 @@ kode 是 **batteries-included**——默认在每个请求上跑一整套企业�
 
 ## 三、如果是 kode/http 的问题——具体怎么改（用户明确问的）
 
-结论先行：**kode/http 基础层不是主瓶颈**（164k ≈ webman 189k），但它确有 **1.6× 于 Slim 的
-次要开销**，来自 PSR-7 不可变克隆 + 递归管道。要缩小区隔，按以下方案改（均在 `vendor/kode/http`，
-属独立包，需在该仓库提 PR，本框架侧只做薄胶水）：
+结论先行：**kode/http 基础层不是主瓶颈**（3.4.0 之前 164k ≈ webman 189k），但它确有 **1.6× 于
+Slim 的次要开销**，来自 PSR-7 不可变克隆 + 递归管道（均为 3.4.0 之前的状态）。**这两点已在
+kode/http 3.4.0 修复**（见下方方案 A/B「✅ 已落地」），框架侧经 `composer update` 自动受益，无需
+在框架仓库改动：
 
-### 方案 A（推荐，webman/hyperf 同款）：内部用可变请求/响应对象
+### 方案 A（推荐，webman/hyperf 同款）：内部用可变请求/响应对象 —— ✅ 已落地 kode/http 3.4.0
 
-- **现状**：`MiddlewarePipeline` / `PipelineRunner` 严格按 PSR-15 不可变语义，每中间件 `process()`
-  里 `return $next->handle($request->withX(...))` 都克隆整条 `ServerRequest`（含全部 headers /
-  attributes / query 数组拷贝）。
-- **改法**：kode/http 内部维护一个**可变消息载体**（像 webman 的 `support\Request`、hyperf 的
-  Swoole 请求），中间件直接改字段、不克隆；仅在真正需要不可变快照时（如并发、或对外暴露 PSR-7
-  时）才 clone。洋葱模型是**顺序执行、无并发**，逐请求克隆毫无必要。
-- **预期**：消除每中间件 O(N) 消息拷贝，base 从 ~164k 提升到接近 Slim(282k)/webman(189k) 量级。
+- **现状（3.4.0 之前）**：`MiddlewarePipeline` / `PipelineRunner` 严格按 PSR-15 不可变语义，每中间件
+  `process()` 里 `return $next->handle($request->withX(...))` 都克隆整条 `ServerRequest`（含全部
+  headers / attributes / query 数组拷贝）。
+- **✅ 已落地（kode/http 3.4.0）**：`Psr7\Message\Response::withHeader` / `ServerRequest::withAttribute`
+  等**全部改为原地修改自身并返回 `$this`，不再克隆**（注释明确「自 v3.4 起，消息对象为可变，仿
+  webman/hyperf」）。洋葱模型顺序执行、无并发，逐请求克隆确无必要——这正是当初判定「收益最大」的
+  架构级修复，现已合入用户最新发布的 3.4.0。框架侧**零改动**，经 `composer update kode/http` 自动受益。
+- **预期（已验证）**：消除每中间件 O(N) 消息拷贝。in-process 同口径实测全栈业务端点占裸 PHP 比例
+  **9.0% → 13.4%（约 +48% 相对增益）**；同等条件下全栈相对最小内核「框架税」≈ 0%、审计税 ≈ 0%。
+- **衍生**：可变消息后，单独的「批量 `withHeaders`」已无必要（不再有克隆可批），故该提案作废。
 
 ### 方案 B：把递归 `PipelineRunner` 展平为预编译循环（✅ 已落地 kode/http 3.4.0）
 
@@ -120,7 +139,8 @@ kode 是 **batteries-included**——默认在每个请求上跑一整套企业�
 
 ### 落地顺序
 
-A > B > C。A 是架构级、收益最大；B 是零风险的小改；C 收益最小。
+A > B > C。**A（可变消息）与 B（管道预编译）均已在 kode/http 3.4.0 落地**（用户最新发布），
+框架侧 `composer update` 即自动受益；C（handler 直缓存）为锦上添花。
 
 ---
 
@@ -136,19 +156,30 @@ A > B > C。A 是架构级、收益最大；B 是零风险的小改；C 收益�
 
 ### 框架侧下一步（建议，非本版）
 
-1. **热路径全局 skip_paths**：让 `/ping`、`/health`、`/metrics` 跳过非必要中间件栈（已有
-   `JsonBodyMiddleware` / `TransactionMiddleware` 的 `skipPaths` 先例，可推广为全局短路），
-   是提升探针吞吐最直接的杠杆。
-2. **中间件 no-op 路径避免 `with*` 克隆**：先判断是否需要改响应，再克隆，减少无谓消息拷贝。
-3. **kode/http 方案 A（内部可变消息对象）仍为对应包待办**：收益最大（base 164k→接近 Slim 282k/
-   webman 189k 量级），框架侧经 `composer update` 自动受益。**方案 B 已于 kode/http 3.4.0 落地**
-   （见第三节），本轮实测全栈 /ping 占裸 PHP 比例 16.4%→18.5%（约 +12% 相对增益），验证了
-   中间件栈预编译闭包链的实际效果。
+> 方案 A（可变消息）/ 方案 B（管道预编译）均已在 kode/http 3.4.0 落地，框架侧经 `composer update`
+> 自动受益，**无需在框架仓库改动**。3.4.0 后「每请求消息克隆」主瓶颈已消除，新前沿在下方 1–2。
+
+1. **kode/http 分发内核继续瘦身（对应包）**：可变消息消除克隆后，in-process 全栈与最小内核在
+   **同端点**已几乎同速（框架税≈0%），但 kode 整体仍比 Slim（同口径）慢约一个数量级——剩余每请求
+   开销在 kode/http 的 `handle`→调度→路由→handler 通路与 `Context::run` 隔离。下一步应 profile 该
+   内核（Router 分发、Attribute 读取、DI 解析路径），而非中间件栈。
+2. **热路径全局 skip_paths**（可选，生产探针优化）：让 `/ping`、`/health`、`/metrics` 跳过非必要
+   中间件栈（已有 `JsonBodyMiddleware` / `TransactionMiddleware` 的 `skipPaths` 先例）——仅影响探针
+   吞吐，对业务端点中性。
+3. **真实 HTTP 同引擎重测（验证 3.4.0 收益）**：本仓库 `benchmarks/peers/webman/` 已备 Workerman
+   同引擎 harness；kode 生产常驻走 kode/process 的 Workerman 多 worker 适配器（`App::run()` 经
+   `server_adapter` 委托），须以 **4 worker** 与 webman 189k 同条件 wrk（注意 `App::listen()` 是
+   单进程 dev server，不可用于压测）。3.4.0 前测得全栈 47k / 最小 109k，3.4.0 后应显著收窄，
+   需以多 worker 实测确认新数字。
 
 ---
 
 ## 五、一句话总结
 
-kode 全栈比 webman 慢 4×，**不是 kode/http 的锅**（其基础层与 webman 同量级），而是框架默认
-挂载的**全栈企业中间件**——这是「开箱即用」的设计代价。要提响应：热路径用 skip_paths 跳过
-非必要栈（框架侧可立即做），并把 kode/http 的不可变消息克隆改为内部可变对象（对应包提 PR）。
+历史结论「kode 全栈比 webman 慢 4×，瓶颈在默认全栈企业中间件」是 **kode/http 不可变消息时代** 的判定。
+**kode/http 3.4.0 已把消息改为可变（方案 A）+ 管道预编译（方案 B）**，消除每请求 `with*` 克隆主瓶颈：
+in-process 同口径全栈业务端点占裸 PHP 比例 **9.0% → 13.4%（+48% 相对增益）**，同等条件下全栈相对
+最小内核「框架税」≈ 0%、审计税 ≈ 0%。**框架侧零改动、`composer update` 即受益**。3.4.0 后的新前沿：
+kode/http 分发/路由/DI 内核（比 Slim 慢约一个数量级的内核开销），以及用 4-worker 真实 HTTP harness
+重新量化同引擎差距（dev server 为单进程、不可用于压测）。审计等「必要能力」在离路径异步导出后
+（v0.8.25 访问日志 / v0.8.27 审计）已是真实路径上的**近似零成本**。

@@ -47,12 +47,21 @@ $jitBuf = (int) ini_get('opcache.jit_buffer_size');
 echo "OPcache: " . ($oc ? 'on' : 'off') . " · JIT buffer: " . ($jitBuf > 0 ? $jitBuf . 'B' : 'off') . "\n";
 echo str_repeat('-', 72) . "\n";
 
+// 同等条件口径：
+//  - 「全栈」默认保留生产中间件（异常/请求ID/CORS/安全头/限流/熔断/重试/幂等/会话/特性/
+//    审计…）。其中 /ping 命中审计 ignore_paths 与事务/JSON 的 skipPaths，属于「探针短路」，
+//    并不计入审计与事务成本——故它只是探针吞吐，不是真实全栈成本。
+//  - 「全栈 · 业务端点 /bench/json」：/bench/json 不在审计 ignore_paths，审计**真实触发**，
+//    是对外展示的诚实全栈数字（含审计离路径写入成本）。
+//  - 「全栈 · 业务端点（审计关闭）」：同一业务端点但关闭审计，用于**隔离审计税**，使
+//    「必要的审计」在同等条件下被显式量化，而非被 /ping 探针短路掩盖。
 $scenarios = [
-    ['label' => 'kode · 全栈 (ping)',        'route' => '/ping',       'build' => static fn () => Kode::scenario($repoRoot, [], '/ping')],
-    ['label' => 'kode · 全栈 (json+DI)',     'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, [], '/bench/json')],
-    ['label' => 'kode · 内核 (最小中间件)',  'route' => '/ping',       'build' => static fn () => Kode::scenario($repoRoot, $disable, '/ping')],
-    ['label' => 'kode · 内核 (json+DI)',     'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, $disable, '/bench/json')],
-    ['label' => 'baseline · 裸 PHP (纯逻辑)', 'route' => '(logic)',     'build' => static fn () => Baseline::scenario()],
+    ['label' => 'kode · 全栈 · 业务端点 (审计触发)',  'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, [], '/bench/json')],
+    ['label' => 'kode · 全栈 · 业务端点 (审计关闭)',  'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, ['audit'], '/bench/json')],
+    ['label' => 'kode · 全栈 · 探针 (审计/事务跳过)', 'route' => '/ping',       'build' => static fn () => Kode::scenario($repoRoot, [], '/ping')],
+    ['label' => 'kode · 内核 (最小中间件)',           'route' => '/ping',       'build' => static fn () => Kode::scenario($repoRoot, $disable, '/ping')],
+    ['label' => 'kode · 内核 (json+DI)',              'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, $disable, '/bench/json')],
+    ['label' => 'baseline · 裸 PHP (纯逻辑)',         'route' => '(logic)',     'build' => static fn () => Baseline::scenario()],
 ];
 
 $slimAvailable = Slim::available($peerRoot);
@@ -153,6 +162,27 @@ foreach ($results as $r) {
     );
 }
 
+// 同等条件隔离：审计税 与 框架税（基于同轮比值，机器方差已抵消）。
+$auditOn  = array_find_key($results, 'kode · 全栈 · 业务端点 (审计触发)');
+$auditOff = array_find_key($results, 'kode · 全栈 · 业务端点 (审计关闭)');
+$coreJson = array_find_key($results, 'kode · 内核 (json+DI)');
+$auditTax = null;   // 审计带来的吞吐损耗比例（同等业务端点，仅差审计开关）
+$frameTax = null;   // 全栈相对内核的吞吐损耗比例（业务端点）
+if ($auditOn !== null && $auditOff !== null && $auditOff['ops'] > 0) {
+    $auditTax = 1 - ($auditOn['ops'] / $auditOff['ops']);
+}
+if ($auditOn !== null && $coreJson !== null && $auditOn['ops'] > 0) {
+    $frameTax = 1 - ($auditOn['ops'] / $coreJson['ops']);
+}
+
+echo "\n同等条件隔离（同业务端点 /bench/json，机器方差已抵消）:\n";
+if ($auditTax !== null) {
+    echo sprintf("  审计税（全栈含审计 ÷ 同端点关审计）：审计带来约 %.2f%% 吞吐损耗\n", $auditTax * 100);
+}
+if ($frameTax !== null) {
+    echo sprintf("  框架税（全栈业务端点 ÷ 内核同端点）：默认全栈中间件带来约 %.2f%% 吞吐损耗\n", $frameTax * 100);
+}
+
 if ($slimAvailable) {
     echo "\n（已包含 Slim 4 对等框架实测数据）\n";
 } else {
@@ -160,7 +190,7 @@ if ($slimAvailable) {
         . "      运行 `cd benchmarks/peers/slim && composer install` 后可获得同类框架真实对比。\n";
 }
 
-writeReport($results, $base, $slimAvailable, $iters, $warmup, $rounds, $repoRoot, $oc, $jitBuf);
+writeReport($results, $base, $slimAvailable, $iters, $warmup, $rounds, $repoRoot, $oc, $jitBuf, $auditTax, $frameTax);
 
 echo "\n报告已生成：benchmarks/report.md\n";
 
@@ -182,7 +212,23 @@ function median(array $xs): float
     return $n % 2 === 1 ? (float) $xs[$mid] : ((float) $xs[$mid - 1] + (float) $xs[$mid]) / 2.0;
 }
 
-function writeReport(array $results, ?float $base, bool $slimAvailable, int $iters, int $warmup, int $rounds, string $repoRoot, bool $opcache, int $jitBuf): void
+/**
+ * 按 label 在结果数组中查找对应聚合（找不到返回 null）。
+ *
+ * @param array<int, array<string, mixed>> $results
+ */
+function array_find_key(array $results, string $label): ?array
+{
+    foreach ($results as $r) {
+        if (($r['label'] ?? null) === $label) {
+            return $r;
+        }
+    }
+
+    return null;
+}
+
+function writeReport(array $results, ?float $base, bool $slimAvailable, int $iters, int $warmup, int $rounds, string $repoRoot, bool $opcache, int $jitBuf, ?float $auditTax = null, ?float $frameTax = null): void
 {
     $version = Application::VERSION;
     $now = date('c');
@@ -220,9 +266,14 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
     $md .= "\n## 二、方法说明与口径\n\n";
     $md .= "- **测量对象**：常驻内存运行时（Swoole/Swow/Fiber 长生命周期）下的每请求成本——\n";
     $md .= "  启动框架一次，循环调用 `HttpApp::handle(ServerRequest)`，排除 HTTP 服务器与进程启动噪声。\n";
-    $md .= "- **kode · 全栈**：保留生产默认中间件（异常/请求ID/追踪/CORS/安全头/熔断/重试/幂等/会话/特性开关），\n";
-    $md .= "  仅关闭全局限流以避免压测触发 429。\n";
-    $md .= "- **kode · 内核**：在上述基础上剥离可选中间件，仅保留路由分发 + 请求ID + 异常兜底，用于隔离框架内核成本。\n";
+    $md .= "- **kode · 全栈 · 业务端点（审计触发）**：保留生产默认中间件（异常/请求ID/CORS/安全头/限流/熔断/\n";
+    $md .= "  重试/幂等/会话/特性开关/审计…），在 **/bench/json** 上运行——该路由不在审计 ignore_paths，\n";
+    $md .= "  审计**真实触发**（离路径异步写入），是对外展示的**诚实全栈数字**（含审计成本）。\n";
+    $md .= "- **kode · 全栈 · 业务端点（审计关闭）**：同一业务端点但关闭审计，用于**隔离审计税**，\n";
+    $md .= "  使「必要的审计」在同等条件下被显式量化，而非被探针短路掩盖。\n";
+    $md .= "- **kode · 全栈 · 探针（/ping）**：/ping 命中审计 ignore_paths 与事务/JSON 的 skipPaths，\n";
+    $md .= "  属「探针短路」——只反映探针吞吐，**不计入审计与事务成本**，不代表真实全栈业务成本。\n";
+    $md .= "- **kode · 内核**：剥离可选中间件，仅保留路由分发 + 请求ID + 异常兜底，用于隔离框架内核成本。\n";
     $md .= "- **baseline · 裸 PHP**：仅执行等价业务逻辑（构造 50 条记录数组 + `json_encode`），不含任何框架开销，作为下限基准。\n";
     if ($slimAvailable) {
         $md .= "- **Slim 4**：隔离安装在 `benchmarks/peers/slim`（不污染框架 vendor），镜像相同两条路由，作为轻量微框架对等对比。\n";
@@ -269,14 +320,33 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
     $md .= "5. **用「相对裸 PHP 比例」作稳定主指标**：kode 是「分配 / GC 绑定」的——跨机器 / 跨时刻的**绝对** req/s 波动很大\n";
     $md .= "   （本机裸 PHP 基线与 Slim 在两次运行间可差 2.4×），而 kode 全栈稳定在同一量级——说明其吞吐受每请求对象分配与 GC\n";
     $md .= "   主导，而非原始 CPU 频率。故本版压测改为**多轮（默认 5 轮）+ 比值**：每轮 kode 与基线同机同状态测得，取「kode ÷ 同轮\n";
-    $md .= "   基线」中位数比例，机器方差在比值中抵消。实测稳定结论：**全栈 `/ping` ≈ 裸 PHP 的 16.4%（波动 16.1~17.0%）、\n";
-    $md .= "   全栈 `json+DI` ≈ 9.0%；内核（最小中间件）与全栈几乎同量级（16.6% vs 16.4%），印证瓶颈在「每请求分配 / 中间件栈」而非路由内核。\n";
-    $md .= "   因此**减少每请求分配**才是继续提响应的真实杠杆。v0.8.25 已把**访问日志做成「离路径异步导出」**（与追踪同范式）：\n";
-    $md .= "   中间件热路径仅做一次内存入队，真实格式化 + 文件写入由响应后的 shutdown / 优雅停机钩子批量执行。在**本地文件** sink 下\n";
-    $md .= "   该改动吞吐中性（本地 fwrite 廉价、被缓冲，A/B：async 与同步写同机同量级）——印证 kode 并非被日志 I/O 阻塞。其真实价值在\n";
-    $md .= "   **生产**：把日志侧的格式化 / 写入（尤其网络 / syslog / 集中式日志等慢 sink）移出请求路径，消除每请求最坏情况延迟，\n";
-    $md .= "   且同样保留 synchronous 退化开关（`access_log.async=false`）以兼容审计强一致场景。微小的单点分配削减（如去掉一次 Uri\n";
-    $md .= "   克隆）在单进程微基准里被 GC 噪声淹没，不构成可测增益。\n\n";
+    $md .= "   基线」中位数比例，机器方差在比值中抵消。**同等条件下（同业务端点 /bench/json、审计真实触发）**的全栈数字见上表，\n";
+    $md .= "   内核（最小中间件）与之同量级，印证瓶颈在「每请求分配 / 中间件栈」而非路由内核。因此**减少每请求分配**才是继续提响应的\n";
+    $md .= "   真实杠杆。v0.8.25 已把**访问日志做成「离路径异步导出」**（与追踪同范式）、v0.8.27 把**审计做成离路径异步导出**：\n";
+    $md .= "   中间件热路径仅做一次内存入队，真实格式化 + 落盘由响应后的 shutdown / 优雅停机钩子批量执行。在**本地** sink 下\n";
+    $md .= "   这些改动吞吐中性（本地 fwrite 廉价、被缓冲）——印证 kode 并非被日志 / 审计 I/O 阻塞；其真实价值在**生产**：把慢 sink\n";
+    $md .= "   （网络 / syslog / 集中式日志）移出请求路径，消除每请求最坏情况延迟，且保留 synchronous 退化开关以兼容强一致场景。\n\n";
+
+    $md .= "## 四·续、同等条件下的审计税 / 框架税（本轮重点）
+
+";
+    $md .= "为回应「必要的审计等应在同等条件下压测」：本轮把审计**真实触发**的业务端点作为诚实全栈数字，\n";
+    $md .= "并加「同端点关审计」隔离项，直接量化审计带来的吞吐损耗（审计税），以及全栈相对内核的损耗（框架税）。\n";
+    $md .= "二者均在「同业务端点 /bench/json、同轮测得」下计算，机器方差已被比值抵消。\n\n";
+    if ($auditTax !== null) {
+        $md .= "- **审计税 ≈ " . sprintf('%.2f', $auditTax * 100) . "%**：全栈（审计开）÷ 同端点（审计关）。\n";
+        $md .= "  审计已为离路径异步导出（v0.8.27），热路径仅一次内存入队；该损耗即每请求构建审计上下文 +\n";
+        $md .= "  入队的成本，属必要的合规记录开销，且可通过 `audit.async=false` 退化同步写以契合强一致场景。\n";
+    }
+    if ($frameTax !== null) {
+        $md .= "- **框架税 ≈ " . sprintf('%.2f', $frameTax * 100) . "%**：全栈业务端点 ÷ 内核同端点。\n";
+        $md .= "  即默认全栈企业中间件（CORS/安全头/限流/熔断/重试/幂等/会话/特性/审计）相对最小内核的吞吐损耗。\n";
+        $md .= "  其中每请求 PSR-7 不可变消息的 `with*` 克隆是主要分配来源（随中间件数与头数线性增长）。\n";
+    }
+    $md .= "\n> 结论：在**同等条件（同一业务端点、审计真实触发）**下，kode 全栈的吞吐损耗主要来自「每请求分配 /\n";
+    $md .= "> 中间件栈」，而非路由内核；继续提响应的真实杠杆是减少每请求 `with*` 克隆（见 docs/throughput-analysis.md\n";
+    $md .= "> 方案 A：kode/http 内部可变消息对象 / 批量 `withHeaders`）。框架侧的审计离路径异步导出（v0.8.27）已把\n";
+    $md .= "> 审计最坏情况延迟移出请求路径。\n\n";
 
     $md .= "## 五、复现方式
 
