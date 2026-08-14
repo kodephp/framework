@@ -112,14 +112,17 @@ final class AuditService
      * @param string                 $action  事件名（建议点分隔语义串，如 'user.login' / 'role.assigned'）
      * @param array<string, mixed>   $detail  结构化明细（敏感键会被脱敏）
      * @param ?ServerRequestInterface $request 可选：提供则补全 client_ip / request_id / 取证头
+     * @param ?string                $userId  可选：显式用户标识；传入时不回退到 context 读取，
+     *                                        亦不清除 context 中的 auth_user_id（避免抢占请求审计的用户）。
      */
     public function recordEvent(
         string $action,
         array $detail = [],
         ?ServerRequestInterface $request = null,
+        ?string $userId = null,
     ): void {
         $level = $this->config['event_log_level'] ?? LogLevel::INFO;
-        $userId = $this->resolveUser();
+        $userId = $userId ?? $this->resolveUser();
 
         $context = [
             'event'   => $action,
@@ -145,11 +148,11 @@ final class AuditService
     }
 
     /**
-     * {@see recordEvent()} 的流式别名：audit()->event('user.login', [...])。
+     * {@see recordEvent()} 的流式别名：audit()->event('user.login', [...], $request, $uid)。
      */
-    public function event(string $action, array $detail = [], ?ServerRequestInterface $request = null): void
+    public function event(string $action, array $detail = [], ?ServerRequestInterface $request = null, ?string $userId = null): void
     {
-        $this->recordEvent($action, $detail, $request);
+        $this->recordEvent($action, $detail, $request, $userId);
     }
 
     /**

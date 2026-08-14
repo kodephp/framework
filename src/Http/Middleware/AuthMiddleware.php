@@ -7,6 +7,7 @@ namespace Kode\Framework\Http\Middleware;
 use Kode\Context\Context;
 use Kode\Framework\Contracts\AuthGuard;
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Security\Audit\AuditService;
 use Kode\Http\Request;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -26,6 +27,8 @@ final class AuthMiddleware implements MiddlewareInterface
     {
         $token = Request::bearerToken();
         if ($token === null || $token === '') {
+            $this->auditEvent($request, 'auth.failed', ['reason' => 'missing_token']);
+
             return $this->unauthorized('缺少访问令牌');
         }
 
@@ -33,6 +36,8 @@ final class AuthMiddleware implements MiddlewareInterface
             // 仅依赖 AuthGuard 契约，不依赖具体 JWT 库；更换鉴权方案改绑定即可。
             $payload = resolve(AuthGuard::class)->authenticate($token);
         } catch (\Throwable) {
+            $this->auditEvent($request, 'auth.failed', ['reason' => 'invalid_token']);
+
             return $this->unauthorized('令牌无效或已过期');
         }
 
@@ -43,6 +48,9 @@ final class AuthMiddleware implements MiddlewareInterface
         $userId = $payload->getSubject() ?? $payload->getUserIdentifier();
         if ($userId !== null) {
             Context::set('auth_user_id', (string) $userId);
+
+            // 鉴别成功安全审计事件（离路径异步导出，不阻塞主流程）。
+            $this->auditEvent($request, 'auth.success', ['uid' => (string) $userId], (string) $userId);
         }
 
         // 回写「当前请求」，使下游控制器可通过 Request::attr('auth') 取到载荷。
@@ -54,5 +62,21 @@ final class AuthMiddleware implements MiddlewareInterface
     private function unauthorized(string $message): ResponseInterface
     {
         return Resp::error($message, 401);
+    }
+
+    /**
+     * 经离路径异步审计管线记录安全事件（审计未启用 / 容器未绑定时静默跳过）。
+     *
+     * 失败时不可影响鉴权主流程，故全程吞掉异常。
+     */
+    private function auditEvent(ServerRequestInterface $request, string $action, array $detail, ?string $userId = null): void
+    {
+        try {
+            /** @var AuditService $audit */
+            $audit = resolve(AuditService::class);
+            $audit->event($action, $detail, $request, $userId);
+        } catch (\Throwable) {
+            // 审计未配置或失败：绝不影响鉴权主流程。
+        }
     }
 }

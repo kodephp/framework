@@ -31,6 +31,9 @@ final class RouteRegistry
     /** @var array<int, OpenApi> spl_object_id(Route) => OpenAPI 补充片段（属性路由才会写入） */
     private array $openApi = [];
 
+    /** @var array<int, bool> spl_object_id(Route) => 是否启用 CSRF 防护（#[Csrf] 标记） */
+    private array $csrf = [];
+
     /**
      * 为一条路由标记来源。
      */
@@ -83,6 +86,22 @@ final class RouteRegistry
     public function openApiOf(Route $route): ?OpenApi
     {
         return $this->openApi[spl_object_id($route)] ?? null;
+    }
+
+    /**
+     * 为一条路由登记 CSRF 防护标记（来自控制器类/方法上的 #[Csrf] 属性）。
+     */
+    public function tagCsrf(Route $route, bool $flag = true): void
+    {
+        $this->csrf[spl_object_id($route)] = $flag;
+    }
+
+    /**
+     * 查询某条路由是否启用 CSRF 防护（未标记则返回 false）。
+     */
+    public function csrfOf(Route $route): bool
+    {
+        return $this->csrf[spl_object_id($route)] ?? false;
     }
 
     /**

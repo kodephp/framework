@@ -31,6 +31,8 @@ use Kode\Framework\Feature\FeatureManager;
 use Kode\Framework\Feature\FeatureRegistry;
 use Kode\Framework\Feature\FeatureAttributeReader;
 use Kode\Framework\Feature\Middleware\FeatureMiddleware;
+use Kode\Framework\Security\Csrf\CsrfMiddleware;
+use Kode\Framework\Security\Csrf\CsrfAttributeReader;
 use Kode\Database\Db\Db;
 use Kode\Http\App;
 use Kode\Http\Middleware\CorsMiddleware;
@@ -236,6 +238,20 @@ final class HttpServiceProvider extends ServiceProvider
             ));
         }
 
+        // CSRF 防护（薄壳层）：全局中间件，但「按需命中」——仅 #[Csrf] 标记或配置 auto_apply_unsafe
+        // 命中的路由才触发令牌校验，其余路由 O(1) 早退零开销（满足「企业中间件不影响响应」）。
+        // 依赖会话承载令牌；无会话的纯 JWT 接口即便被标记也安全跳过。
+        if (!empty($this->config('csrf.enabled', true))) {
+            /** @var RouteRegistry $registry */
+            $registry = $this->container->get(RouteRegistry::class);
+
+            $app->use(new CsrfMiddleware(
+                $app->getRouter(),
+                $registry,
+                (array) $this->config('csrf', [])
+            ));
+        }
+
         // ---- 框架内置探针（适配 k8s / 负载均衡健康检查）----
         $this->registerHealthEndpoints($app);
 
@@ -260,6 +276,11 @@ final class HttpServiceProvider extends ServiceProvider
             /** @var FeatureRegistry $featureRegistry */
             $featureRegistry = $this->container->get(FeatureRegistry::class);
             $this->scanExplicitFeatures($app, $featureRegistry);
+        }
+
+        // 4b) 为显式路由（可反射 handler）补充 #[Csrf] 防护标记登记（与限流同范式）。
+        if (!empty($this->config('csrf.enabled', true))) {
+            $this->scanExplicitCsrf($app, $registry);
         }
     }
 
@@ -403,6 +424,33 @@ final class HttpServiceProvider extends ServiceProvider
             $entry = $reader->read($class, $method);
             if ($entry !== null) {
                 $registry->tag($route, $entry['flag'], $entry['fallback']);
+            }
+        }
+    }
+
+    /**
+     * 扫描显式路由 handler，对可反射出控制器类/方法且带 #[Csrf] 的，登记到 RouteRegistry。
+     *
+     * 与 scanExplicitRateLimits / scanExplicitFeatures 同一范式：属性路由（ControllerScanner）
+     * 已在扫描阶段登记，此处仅处理显式路由里可被反射出 [类, 方法] 的 handler，闭包 handler 跳过。
+     */
+    private function scanExplicitCsrf(App $app, RouteRegistry $registry): void
+    {
+        $reader = new CsrfAttributeReader();
+
+        foreach ($app->getRouter()->getRoutes() as $route) {
+            // 已由属性路由扫描登记过则跳过（避免重复）。
+            if ($registry->csrfOf($route)) {
+                continue;
+            }
+
+            [$class, $method] = $this->resolveHandler($route->getHandler());
+            if ($class === null) {
+                continue;
+            }
+
+            if ($reader->isPresent($class, $method)) {
+                $registry->tagCsrf($route, true);
             }
         }
     }

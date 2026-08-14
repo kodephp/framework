@@ -13,6 +13,7 @@ use Kode\Framework\Feature\FeatureRegistry;
 use Kode\Framework\Http\Attributes\Controller;
 use Kode\Framework\Http\Attributes\Route;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
+use Kode\Framework\Security\Csrf\CsrfAttributeReader;
 use Kode\Http\App;
 use ReflectionMethod;
 
@@ -36,6 +37,7 @@ final class ControllerScanner
         private readonly Reader $reader,
         private readonly RouteRegistry $registry,
         private readonly RateLimitAttributeReader $rateLimitReader = new RateLimitAttributeReader(),
+        private readonly CsrfAttributeReader $csrfReader = new CsrfAttributeReader(),
         private readonly FeatureRegistry $featureRegistry = new FeatureRegistry(),
         private readonly FeatureAttributeReader $featureReader = new FeatureAttributeReader(),
     ) {
@@ -107,6 +109,11 @@ final class ControllerScanner
         /** @var list<\Kode\Limiting\Attribute\RateLimit> $rules */
         $rules = $this->rateLimitReader->read($class, $method);
         $this->registry->tagRateLimits($route, $rules);
+
+        // 声明式 CSRF 防护：类级（全部方法）/ 方法级（个别写操作）标记，供全局 CsrfMiddleware 命中。
+        if ($this->csrfReader->isPresent($class, $method)) {
+            $this->registry->tagCsrf($route, true);
+        }
 
         if ($attr->name !== null) {
             $route->name($attr->name);

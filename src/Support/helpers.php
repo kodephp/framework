@@ -230,6 +230,31 @@ if (!function_exists('session')) {
     }
 }
 
+if (!function_exists('csrf_token')) {
+    /**
+     * 取当前请求的 CSRF 令牌（cookie-session 应用渲染表单时嵌入隐藏域 / 元标签）。
+     *
+     * 令牌存于会话（由 CsrfMiddleware 同一机制签发），缺失时此处惰性补签；
+     * 无会话（纯 JWT 接口 / CLI）时返回 null。
+     */
+    function csrf_token(): ?string
+    {
+        $session = session();
+        if ($session === null) {
+            return null;
+        }
+
+        $key = (string) (config('csrf.token_key') ?? '_csrf_token');
+        $token = $session->get($key);
+        if (!is_string($token) || $token === '') {
+            $token = bin2hex(random_bytes(32));
+            $session->set($key, $token);
+        }
+
+        return $token;
+    }
+}
+
 if (!function_exists('tenant')) {
     /**
      * 获取当前请求的租户标识（kode/context 请求级 scope）。
