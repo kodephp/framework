@@ -21,6 +21,10 @@ use Psr\Log\LogLevel;
  *
  * 设计立场：审计是「合规记录」，写入 PSR 日志器（默认 Monolog 落 storage/logs），
  * 不侵入业务；敏感路径可在 config/audit.ignore_paths 屏蔽。
+ *
+ * 默认**离路径异步导出**（v0.8.27，与 v0.8.25 访问日志同范式）：record() 在热路径上只
+ * 做一次内存入队，真实格式化 + 日志写入由响应后的 shutdown / 优雅停机钩子批量执行，绝不
+ * 阻塞客户端响应；async=false 时退化为同步写，兼容审计强一致场景。
  */
 final class AuditService
 {
@@ -30,6 +34,8 @@ final class AuditService
     public function __construct(
         private readonly LoggerInterface $logger,
         private readonly array $config = [],
+        private readonly ?AuditSink $sink = null,
+        private readonly bool $async = true,
     ) {
     }
 
@@ -62,6 +68,12 @@ final class AuditService
             'user_id'     => $userId,
         ];
 
+        // 离路径异步导出：热路径仅内存入队，真实写入由 flush 钩子批量执行。
+        if ($this->sink !== null && $this->async) {
+            $this->sink->emit($level, 'audit', $context);
+            return;
+        }
+
         $this->logger->log($level, 'audit', $context);
     }
 
@@ -90,7 +102,7 @@ final class AuditService
     {
         $fwd = $request->getHeaderLine('X-Forwarded-For');
         if ($fwd !== '') {
-            return strtok($fwd, ',');
+            return strstr($fwd, ',', true) ?: $fwd;
         }
         $real = $request->getHeaderLine('X-Real-IP');
         if ($real !== '') {

@@ -42,6 +42,7 @@ final class Kode
                         // 又不把真实导出成本计入每请求在路径开销（导出本就是 v0.8.23 异步离路径设计）。
                         \Kode\Framework\Observability\Trace\Tracer::resetOutbox();
                         \Kode\Framework\Logging\AccessLogSink::reset();
+                        \Kode\Framework\Security\Audit\AuditSink::reset();
 
                         return $code;
                     }
