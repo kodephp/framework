@@ -34,17 +34,18 @@ final class Kode
             // 每请求结束显式 drain 追踪 outbox——贴合 FPM 的 register_shutdown_function（响应发出后
             // 离请求路径导出）行为；否则进程级静态 outbox 在单进程循环里无限累积，使 enqueueFlush 的
             // array_merge 逐迭代变慢、吞吐被系统性低估。
-            return Context::run(
-                static function () use ($http, $route): int {
-                    $code = $http->handle(new ServerRequest('GET', $route))->getStatusCode();
-                    // 每请求清空进程级导出队列（仅清静态 outbox，不触发网络导出）：模拟「离请求路径的
-                    // drain 已在响应发出后发生」——既消除单进程循环里 outbox 无限累积导致的测量伪影，
-                    // 又不把真实导出成本计入每请求在路径开销（导出本就是 v0.8.23 异步离路径设计）。
-                    \Kode\Framework\Observability\Trace\Tracer::resetOutbox();
+                return Context::run(
+                    static function () use ($http, $route): int {
+                        $code = $http->handle(new ServerRequest('GET', $route))->getStatusCode();
+                        // 每请求清空进程级导出队列（仅清静态队列，不触发真实导出）：模拟「离请求路径的
+                        // drain 已在响应发出后发生」——既消除单进程循环里队列无限累积导致的测量伪影，
+                        // 又不把真实导出成本计入每请求在路径开销（导出本就是 v0.8.23 异步离路径设计）。
+                        \Kode\Framework\Observability\Trace\Tracer::resetOutbox();
+                        \Kode\Framework\Logging\AccessLogSink::reset();
 
-                    return $code;
-                }
-            );
+                        return $code;
+                    }
+                );
         };
     }
 

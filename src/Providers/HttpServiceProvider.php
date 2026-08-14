@@ -8,6 +8,7 @@ use Kode\Attributes\Reader;
 use Kode\Framework\Application;
 use Kode\Framework\Http\ControllerScanner;
 use Kode\Framework\Http\Middleware\AccessLogMiddleware;
+use Kode\Framework\Logging\AccessLogSink;
 use Kode\Framework\Http\Middleware\LocaleMiddleware;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Providers\ServiceProvider;
@@ -94,7 +95,12 @@ final class HttpServiceProvider extends ServiceProvider
         if (!empty($this->config('logging.access_log.enabled', true))) {
             /** @var LoggerInterface $logger */
             $logger = $this->container->get(LoggerInterface::class);
-            $app->use(new AccessLogMiddleware($logger, true));
+            $async = (bool) ($this->config('logging.access_log.async', true) ?? true);
+            $sink = $this->container->bound(AccessLogSink::class)
+                ? $this->container->get(AccessLogSink::class)
+                : null;
+
+            $app->use(new AccessLogMiddleware($logger, true, $sink, $async));
         }
 
         if (!empty($this->config('cors.enabled', true))) {

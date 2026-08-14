@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Http\Middleware;
 
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Logging\AccessLogSink;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -23,9 +24,17 @@ use Psr\Log\LoggerInterface;
  */
 final class AccessLogMiddleware implements MiddlewareInterface
 {
+    /**
+     * @param LoggerInterface      $logger 同步退化路径使用的 logger（及离路径 flush 目标）
+     * @param bool                 $enabled 是否记录访问日志
+     * @param AccessLogSink|null   $sink   离路径导出队列；为 null 时强制同步写 logger
+     * @param bool                 $async  是否异步（入队后由 shutdown / 停机钩子离路径落盘）
+     */
     public function __construct(
         private readonly LoggerInterface $logger,
         private readonly bool $enabled = true,
+        private readonly ?AccessLogSink $sink = null,
+        private readonly bool $async = true,
     ) {
     }
 
@@ -86,17 +95,30 @@ final class AccessLogMiddleware implements MiddlewareInterface
 
         if ($error !== null) {
             $context['error'] = $error->getMessage();
-            $this->logger->error('access', $context);
+            $this->write('error', $context);
             return;
         }
 
-        if ($status >= 500) {
-            $this->logger->error('access', $context);
-        } elseif ($status >= 400) {
-            $this->logger->warning('access', $context);
-        } else {
-            $this->logger->info('access', $context);
+        $level = $status >= 500 ? 'error' : ($status >= 400 ? 'warning' : 'info');
+        $this->write($level, $context);
+    }
+
+    /**
+     * 落盘：异步（sink 已注入且开启）时仅内存入队，离请求路径再批量写入；
+     * 否则（无 sink 或 async=false）直接同步写 logger，保证向后兼容与审计强一致场景。
+     */
+    private function write(string $level, array $context): void
+    {
+        if ($this->sink !== null && $this->async) {
+            $this->sink->emit($level, 'access', $context);
+            return;
         }
+
+        match ($level) {
+            'error'   => $this->logger->error('access', $context),
+            'warning' => $this->logger->warning('access', $context),
+            default   => $this->logger->info('access', $context),
+        };
     }
 
     /**

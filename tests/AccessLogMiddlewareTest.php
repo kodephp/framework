@@ -6,6 +6,7 @@ namespace Kode\Framework\Tests;
 
 use Kode\Framework\Http\Middleware\AccessLogMiddleware;
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Logging\AccessLogSink;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -81,6 +82,55 @@ final class AccessLogMiddlewareTest extends TestCase
         $mw->process($request, $this->okHandler(200));
 
         self::assertSame('req-123', $this->logger->records[0]['context']['request_id']);
+    }
+
+    public function testAsyncEmitsToSinkWithoutWritingLogger(): void
+    {
+        $sink = new AccessLogSink();
+        // sink 注入且 async=true：热路径只入队，不写 logger
+        $mw = new AccessLogMiddleware($this->logger, true, $sink, true);
+        $mw->process(new ServerRequest('GET', '/api/users'), $this->okHandler(200));
+
+        self::assertCount(0, $this->logger->records, '异步模式不应在请求路径内写 logger');
+        self::assertSame(1, $sink->pending());
+
+        // 离路径 flush：批量写入 logger 并清空队列
+        $written = $sink->flush($this->logger);
+        self::assertSame(1, $written);
+        self::assertCount(1, $this->logger->records);
+        self::assertSame('info', $this->logger->records[0]['level']);
+        self::assertSame('/api/users', $this->logger->records[0]['context']['uri']);
+        self::assertSame(0, $sink->pending());
+    }
+
+    public function testAsyncServerErrorLevelRecordedOnFlush(): void
+    {
+        $sink = new AccessLogSink();
+        $mw = new AccessLogMiddleware($this->logger, true, $sink, true);
+        $mw->process(new ServerRequest('POST', '/api/pay'), $this->okHandler(500));
+
+        $sink->flush($this->logger);
+        self::assertSame('error', $this->logger->records[0]['level']);
+    }
+
+    public function testSyncFallbackWhenSinkNull(): void
+    {
+        // 无 sink（如旧调用 / 未绑定容器）时强制同步写，保持向后兼容
+        $mw = new AccessLogMiddleware($this->logger, true, null, true);
+        $mw->process(new ServerRequest('GET', '/'), $this->okHandler(200));
+
+        self::assertCount(1, $this->logger->records);
+        self::assertSame('info', $this->logger->records[0]['level']);
+    }
+
+    public function testSyncFallbackWhenAsyncFalse(): void
+    {
+        $sink = new AccessLogSink();
+        $mw = new AccessLogMiddleware($this->logger, true, $sink, false);
+        $mw->process(new ServerRequest('GET', '/'), $this->okHandler(200));
+
+        self::assertCount(1, $this->logger->records, 'async=false 应直接同步写 logger');
+        self::assertSame(0, $sink->pending(), 'async=false 不应入队');
     }
 }
 
