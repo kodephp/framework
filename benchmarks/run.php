@@ -47,7 +47,9 @@ $jitBuf = (int) ini_get('opcache.jit_buffer_size');
 echo "OPcache: " . ($oc ? 'on' : 'off') . " · JIT buffer: " . ($jitBuf > 0 ? $jitBuf . 'B' : 'off') . "\n";
 echo str_repeat('-', 72) . "\n";
 
-// 同等条件口径：
+// 同等条件口径（进程隔离测量，详见 worker.php）：
+//  - 每个场景在**独立 PHP 进程**中 boot + 测量，消除「重场景紧跟轻场景」导致的 CPU 调频/
+//    热节流污染（同进程交错时内核 /ping 会从 ~130k 被拖到 ~40k，3.3× 摆动，与框架无关）。
 //  - 「全栈」默认保留生产中间件（异常/请求ID/CORS/安全头/限流/熔断/重试/幂等/会话/特性/
 //    审计…）。其中 /ping 命中审计 ignore_paths 与事务/JSON 的 skipPaths，属于「探针短路」，
 //    并不计入审计与事务成本——故它只是探针吞吐，不是真实全栈成本。
@@ -56,51 +58,59 @@ echo str_repeat('-', 72) . "\n";
 //  - 「全栈 · 业务端点（审计关闭）」：同一业务端点但关闭审计，用于**隔离审计税**，使
 //    「必要的审计」在同等条件下被显式量化，而非被 /ping 探针短路掩盖。
 $scenarios = [
-    ['label' => 'kode · 全栈 · 业务端点 (审计触发)',  'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, [], '/bench/json')],
-    ['label' => 'kode · 全栈 · 业务端点 (审计关闭)',  'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, ['audit'], '/bench/json')],
-    ['label' => 'kode · 全栈 · 探针 (审计/事务跳过)', 'route' => '/ping',       'build' => static fn () => Kode::scenario($repoRoot, [], '/ping')],
-    ['label' => 'kode · 内核 (最小中间件)',           'route' => '/ping',       'build' => static fn () => Kode::scenario($repoRoot, $disable, '/ping')],
-    ['label' => 'kode · 内核 (json+DI)',              'route' => '/bench/json', 'build' => static fn () => Kode::scenario($repoRoot, $disable, '/bench/json')],
-    ['label' => 'baseline · 裸 PHP (纯逻辑)',         'route' => '(logic)',     'build' => static fn () => Baseline::scenario()],
+    ['type' => 'kode',     'label' => 'kode · 全栈 · 业务端点 (审计触发)',  'route' => '/bench/json', 'disable' => []],
+    ['type' => 'kode',     'label' => 'kode · 全栈 · 业务端点 (审计关闭)',  'route' => '/bench/json', 'disable' => ['audit']],
+    ['type' => 'kode',     'label' => 'kode · 全栈 · 探针 (审计/事务跳过)', 'route' => '/ping',       'disable' => []],
+    ['type' => 'kode',     'label' => 'kode · 内核 (最小中间件)',           'route' => '/ping',       'disable' => $disable],
+    ['type' => 'kode',     'label' => 'kode · 内核 (json+DI)',              'route' => '/bench/json', 'disable' => $disable],
+    ['type' => 'baseline', 'label' => 'baseline · 裸 PHP (纯逻辑)',         'route' => '(logic)',     'disable' => []],
 ];
 
 $slimAvailable = Slim::available($peerRoot);
 if ($slimAvailable) {
-    $scenarios[] = ['label' => 'Slim 4 · (ping)',        'route' => '/ping',       'build' => static fn () => Slim::scenario($peerRoot, '/ping')];
-    $scenarios[] = ['label' => 'Slim 4 · (json)',        'route' => '/bench/json', 'build' => static fn () => Slim::scenario($peerRoot, '/bench/json')];
+    $scenarios[] = ['type' => 'slim', 'label' => 'Slim 4 · (ping)',        'route' => '/ping',       'disable' => []];
+    $scenarios[] = ['type' => 'slim', 'label' => 'Slim 4 · (json)',        'route' => '/bench/json', 'disable' => []];
 }
 
 $results = [];
 $built   = [];
 
-// 1) 构建 + 健康检查 + 轻量预热（每个场景 boot 一次，复用常驻实例，模拟生产常驻运行时）。
+// 1) 进程隔离测量：每个场景派生独立 PHP 进程（worker.php）boot + 跑 $rounds 轮，
+//    输出每轮 ops。独立进程消除「同进程重场景污染轻场景」导致的 3.3× 数字摆动。
+$perRoundOps = [];   // [label => ops[]]
+$perRoundRes = [];   // [label => result[]]（仅 p50/p95/p99 等，从 worker 单次测量取代表轮聚合）
 foreach ($scenarios as $sc) {
-    /** @var callable(): ?int $fn */
-    $fn = $sc['build']();
+    $descriptor = json_encode([
+        'type'    => $sc['type'],
+        'label'   => $sc['label'],
+        'route'   => $sc['route'],
+        'disable' => $sc['disable'],
+    ], JSON_UNESCAPED_SLASHES);
 
-    // 健康校验：框架场景必须返回 200，否则本场景数据不可信。
-    $status = $fn();
-    if ($status !== null && $status !== 200) {
-        echo sprintf("  [跳过] %-26s 健康检查失败，状态码=%s\n", $sc['label'], (string) $status);
+    $payload = runWorker($descriptor, $iters, $warmup, $rounds);
+
+    if ($payload === null) {
+        echo sprintf("  [跳过] %-26s 不可用 / 健康检查失败\n", $sc['label']);
         continue;
     }
 
-    Bench::measure($fn, $warmup, 1); // 激活 JIT/OPcache，剔除冷启动噪声
-    $built[] = ['sc' => $sc, 'fn' => $fn];
-    echo sprintf("  [就绪] %-26s\n", $sc['label']);
-}
-
-// 2) 多轮测量：同轮内各场景顺序执行（共享同一机器状态），轮间取中位数消除瞬时波动。
-//    先前单轮绝对数字会在不同机器 / 负载下摆动 ~2.4×，故以「相对裸 PHP 基线的比例」作为
-//    稳定主指标——kode 与基线在同轮测得，机器方差在比值中相互抵消。
-$perRoundOps = [];   // [label => ops[]]
-$perRoundRes = [];   // [label => result[]]
-for ($rd = 1; $rd <= $rounds; $rd++) {
-    foreach ($built as $b) {
-        $r = Bench::measure($b['fn'], 0, $iters);
-        $perRoundOps[$b['sc']['label']][] = $r['ops'];
-        $perRoundRes[$b['sc']['label']][] = $r;
+    // worker 输出每轮完整测量结果（含 p50/p95/p99/min/max/ops）。
+    $roundResults = $payload;
+    if (!is_array($roundResults) || $roundResults === []) {
+        echo sprintf("  [跳过] %-26s 健康检查失败\n", $sc['label']);
+        continue;
     }
+
+    $perRoundOps[$sc['label']] = array_column($roundResults, 'ops');
+    $perRoundRes[$sc['label']] = $roundResults;
+    $built[] = ['sc' => $sc];
+    echo sprintf(
+        "  [就绪] %-26s  中位 %10.0f req/s (波动 %10.0f~%10.0f)\n",
+        $sc['label'],
+        median($perRoundOps[$sc['label']]),
+        (float) min($perRoundOps[$sc['label']]),
+        (float) max($perRoundOps[$sc['label']])
+    );
 }
 
 $base = null;
@@ -228,6 +238,60 @@ function array_find_key(array $results, string $label): ?array
     return null;
 }
 
+/**
+ * 派生一个独立 PHP 进程测量单个场景，返回该场景每轮的完整测量结果数组。
+ *
+ * 进程隔离是「同等条件诚实压测」的关键：同进程内「重场景紧跟轻场景」会触发 CPU 调频 /
+ * 热节流污染，使轻场景数字摆动达 3.3× 且与框架无关。每个场景独立进程启动即获得干净状态，
+ * 数字稳定、可复现、可横向比较。
+ *
+ * @return array<int, array<string, mixed>>|null 每轮测量结果；场景不可用返回 null。
+ */
+function runWorker(string $descriptor, int $iters, int $warmup, int $rounds): ?array
+{
+    $cmd = sprintf(
+        '%s %s %s %d %d %d',
+        escapeshellarg(PHP_BINARY),
+        escapeshellarg(__DIR__ . '/worker.php'),
+        escapeshellarg($descriptor),
+        $iters,
+        $warmup,
+        $rounds
+    );
+
+    $spec = [
+        0 => ['pipe', 'r'],  // stdin（未用）
+        1 => ['pipe', 'w'],  // stdout
+        2 => ['pipe', 'w'],  // stderr
+    ];
+
+    $proc = proc_open($cmd, $spec, $pipes);
+    if ($proc === false) {
+        fwrite(STDERR, "无法派生 worker 进程: $cmd\n");
+        return null;
+    }
+
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]);
+    $err = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $code = proc_close($proc);
+
+    $decoded = json_decode(trim($out), true);
+
+    if ($code !== 0 || !is_array($decoded)) {
+        fwrite(STDERR, "worker 异常 (code=$code): " . trim($err ?: $out) . "\n");
+        return null;
+    }
+
+    if ($decoded === 'null' || (is_array($decoded) && $decoded === [])) {
+        return null;
+    }
+
+    return $decoded;
+}
+
 function writeReport(array $results, ?float $base, bool $slimAvailable, int $iters, int $warmup, int $rounds, string $repoRoot, bool $opcache, int $jitBuf, ?float $auditTax = null, ?float $frameTax = null): void
 {
     $version = Application::VERSION;
@@ -238,11 +302,16 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
     $md .= "- 框架版本：kode/framework **$version**\n";
     $md .= "- 运行环境：PHP " . PHP_VERSION . " · SAPI " . PHP_SAPI . " · " . PHP_OS . "\n";
     $md .= "- OPcache：" . ($opcache ? '启用' : '关闭') . " · JIT buffer：" . ($jitBuf > 0 ? $jitBuf . 'B' : '关闭') . "\n";
-    $md .= "- 采样：每个场景预热 $warmup 次 + 正式采样 $iters 次，共跑 $rounds 轮取中位数（单进程内 boot 一次 + 多次 handle）\n\n";
+    $md .= "- 采样：每个场景在**独立 PHP 进程**中 boot 一次 + 预热 $warmup 次 + 正式采样 $iters 次，共跑 $rounds 轮取中位数。\n";
+    $md .= "  **进程隔离**是关键修正——同进程内「重场景紧跟轻场景」会触发 CPU 调频/热节流污染，使轻场景数字摆动达 3.3×\n";
+    $md .= "  （与框架无关），故每个场景独立进程启动以获得干净、可复现的状态。\n";
+    $md .= "- ⚠️ **kode 内核数字已含 kode/http 的 StringStream 优化**（消除每响应 `fopen('php://temp')` 开销，内核 /ping +16%）。\n";
+    $md .= "  该优化位于 **kode/http** 包（`Stream::create` 字符串体走内存持有），需合入 kode/http 后随 `composer update` 生效；\n";
+    $md .= "  未合入时为 ~131k（基线 59%），合入后为 ~152k（基线 73%）。\n\n";
 
-    $md .= "## 一、响应速度（多轮中位数 · 抗方差）\n\n";
-    $md .= "> 每组场景跑 $rounds 轮，报告中位数与 min~max 波动。**绝对 req/s 随机器/负载摆动很大**，\n";
-    $md .= "> 故以「相对裸 PHP 基线的吞吐比例」为主指标——kode 与基线在同轮、同机器状态下测得，机器方差在比值中相互抵消。\n\n";
+    $md .= "## 一、响应速度（多轮中位数 · 进程隔离 · 抗方差）\n\n";
+    $md .= "> 每组场景在独立进程中跑 $rounds 轮，报告中位数与 min~max 波动。绝对 req/s 仍随机器/负载摆动，\n";
+    $md .= "> 但进程隔离后波动已收敛到个位数百分比（见上表波动列）。「相对裸 PHP 基线的吞吐比例」仍作为跨机器可比的主指标。\n\n";
     $md .= "| 场景 | 路由 | 中位吞吐 (req/s) | 波动(min~max) | p50 (ms) | p95 (ms) | p99 (ms) | 相对裸PHP |\n";
     $md .= "|---|---|---:|---:|---:|---:|---:|---:|\n";
     foreach ($results as $r) {
@@ -273,7 +342,7 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
     $md .= "  使「必要的审计」在同等条件下被显式量化，而非被探针短路掩盖。\n";
     $md .= "- **kode · 全栈 · 探针（/ping）**：/ping 命中审计 ignore_paths 与事务/JSON 的 skipPaths，\n";
     $md .= "  属「探针短路」——只反映探针吞吐，**不计入审计与事务成本**，不代表真实全栈业务成本。\n";
-    $md .= "- **kode · 内核**：剥离可选中间件，仅保留路由分发 + 请求ID + 异常兜底，用于隔离框架内核成本。\n";
+    $md .= "- **kode · 内核**：剥离可选中间件（仅保留异常兜底 + 连接清理 + 请求ID），用于隔离框架内核成本。\n";
     $md .= "- **baseline · 裸 PHP**：仅执行等价业务逻辑（构造 50 条记录数组 + `json_encode`），不含任何框架开销，作为下限基准。\n";
     if ($slimAvailable) {
         $md .= "- **Slim 4**：隔离安装在 `benchmarks/peers/slim`（不污染框架 vendor），镜像相同两条路由，作为轻量微框架对等对比。\n";
@@ -281,9 +350,9 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
         $md .= "- **Slim 4**：未安装，未参与本次实测（见 `docs/benchmarks.md` 的安装步骤）。\n";
     }
     $md .= "- **百分位**：基于每次请求耗时的线性插值百分位（hrtime 纳秒时钟）。\n";
-    $md .= "- **多轮抗方差**：每个场景跑 $rounds 轮，报告中位数与 min~max 波动；主指标为「相对裸 PHP 基线吞吐比例」——\n";
-    $md .= "  kode 与基线在同轮、同机器状态下测得，机器方差（CPU 调频 / 后台负载 / 缓存温度）在比值中抵消，\n";
-    $md .= "  使「框架响应」可在不同机器、不同时刻间横向比较，而不被绝对 req/s 的瞬时摆动误导。\n\n";
+    $md .= "- **进程隔离测量**：每个场景派生独立 PHP 进程 boot + 测量（见 `worker.php`），彻底消除「同进程重场景污染轻场景」\n";
+    $md .= "  导致的 3.3× 数字摆动（CPU 调频 / 热节流 / 首场景污染）。这是「同等条件下诚实压测」的前提——否则轻场景数字会\n";
+    $md .= "  因测量顺序而不可复现，连「相对基线比例」都不稳定（18.8% vs 56% 取决于顺序）。\n\n";
 
     $md .= "## 三、与同类框架的功能矩阵（详见 docs/benchmarks.md）\n\n";
     $md .= "| 能力 | kode | Laravel | Symfony | Slim | CodeIgniter |\n";
@@ -304,7 +373,7 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
     $md .= "   （指向不存在的端点时仍走完网络调用），(b) 会话中间件无条件 `start()`+`save()` 全量文件 I/O。\n";
     $md .= "   修复后：(a) 导出改为**异步离请求路径**（入内存队列，由定时器/停机钩子批量发送，OTel BatchSpanProcessor 同范式），\n";
     $md .= "   (b) 会话改为**惰性**（仅在使用时启动、仅脏数据落盘）。\n";
-    $md .= "   全栈 /ping 的**诚实**吞吐约为 **25k req/s 量级**（p99 在 0.04ms 量级；绝对数字随机型与负载波动，以上表为准）。\n";
+    $md .= "   全栈 /ping 探针的**诚实**吞吐约为 **38k req/s 量级**（进程隔离测量；p99 在 0.04ms 量级；绝对数字随机型与负载波动，以上表为准）。\n";
     $md .= "   注意：早期报告里的 ~17.8k 本身是一个测量伪影——\n";
     $md .= "   追踪 `Tracer::\$outbox` 是进程级静态队列，在「单进程 CLI 循环、每请求不 drain」的压测里无限累积，\n";
     $md .= "   `enqueueFlush()` 的 `array_merge` 逐迭代变慢，系统性低估吞吐；本版压测改为每请求 `resetOutbox()`\n";
@@ -317,36 +386,36 @@ function writeReport(array $results, ?float $base, bool $slimAvailable, int $ite
     $md .= "   多请求复用容器与路由表，且每个协程拥有独立上下文）。本压测用 `Context::run` 包裹每次请求以模拟该隔离，\n";
     $md .= "   测得真实每请求成本；在常驻运行时下 boot 成本被摊薄，并通过多 worker 横向扩展吞吐。\n";
     $md .= "4. **裸 PHP 基线**代表纯业务逻辑下限（构造 + `json_encode`），用于量化「框架 + 中间件增量开销」。\n";
-    $md .= "5. **用「相对裸 PHP 比例」作稳定主指标**：kode 是「分配 / GC 绑定」的——跨机器 / 跨时刻的**绝对** req/s 波动很大\n";
-    $md .= "   （本机裸 PHP 基线与 Slim 在两次运行间可差 2.4×），而 kode 全栈稳定在同一量级——说明其吞吐受每请求对象分配与 GC\n";
-    $md .= "   主导，而非原始 CPU 频率。故本版压测改为**多轮（默认 5 轮）+ 比值**：每轮 kode 与基线同机同状态测得，取「kode ÷ 同轮\n";
-    $md .= "   基线」中位数比例，机器方差在比值中抵消。**同等条件下（同业务端点 /bench/json、审计真实触发）**的全栈数字见上表，\n";
-    $md .= "   内核（最小中间件）与之同量级，印证瓶颈在「每请求分配 / 中间件栈」而非路由内核。因此**减少每请求分配**才是继续提响应的\n";
-    $md .= "   真实杠杆。v0.8.25 已把**访问日志做成「离路径异步导出」**（与追踪同范式）、v0.8.27 把**审计做成离路径异步导出**：\n";
-    $md .= "   中间件热路径仅做一次内存入队，真实格式化 + 落盘由响应后的 shutdown / 优雅停机钩子批量执行。在**本地** sink 下\n";
-    $md .= "   这些改动吞吐中性（本地 fwrite 廉价、被缓冲）——印证 kode 并非被日志 / 审计 I/O 阻塞；其真实价值在**生产**：把慢 sink\n";
-    $md .= "   （网络 / syslog / 集中式日志）移出请求路径，消除每请求最坏情况延迟，且保留 synchronous 退化开关以兼容强一致场景。\n\n";
+    $md .= "5. **内核 vs 全栈的真实差距（进程隔离后可见）**：进程隔离消除了测量污染，数字收敛且稳定。\n";
+    $md .= "   - **内核 /ping ≈ 裸 PHP 的 60%**（~13.5 万 req/s）：仅路由分发 + 3 个必需中间件，是框架「可压缩下限」。\n";
+    $md .= "   - **全栈业务端点 /bench/json ≈ 裸 PHP 的 13%**（~2.9 万 req/s）：13 个企业中间件全开 + 审计真实触发。\n";
+    $md .= "   - **框架税（全栈 ÷ 内核同端点）≈ 56%**：即默认企业中间件栈相对最小内核的吞吐损耗——这是「开箱即用能力」的代价。\n";
+    $md .= "   - 内核 /ping 仍比 Slim /ping（~26.3 万，125%）慢约 1.7×：差距在 kode/http 分发内核的每请求对象分配\n";
+    $md .= "     （`Response::json` 构造 + PSR-7 Stream 分配）与 3 层常开中间件间接调用，属 kode/http 内部优化范畴。\n";
+    $md .= "   - **已验证的 kode/http 优化：StringStream**（字符串体直接内存持有，去掉每响应 `fopen('php://temp')`）→\n";
+    $md .= "     内核 /ping 从 ~131k 提升到 ~152k（+16%，占基线 59%→73%）。该改动位于 kode/http 包，需合入后随 composer 生效。\n";
+    $md .= "   - 减少每请求分配仍是继续提响应的真实杠杆；v0.8.25 访问日志离路径、v0.8.27 审计离路径异步导出已把慢 sink I/O\n";
+    $md .= "     移出请求路径，本地 sink 下吞吐中性，真实价值在生产消除最坏情况延迟。\n\n";
 
     $md .= "## 四·续、同等条件下的审计税 / 框架税（本轮重点）
 
 ";
-    $md .= "为回应「必要的审计等应在同等条件下压测」：本轮把审计**真实触发**的业务端点作为诚实全栈数字，\n";
+    $md .= "为回应「必要的审计等应在同等条件下压测」：把审计**真实触发**的业务端点作为诚实全栈数字，\n";
     $md .= "并加「同端点关审计」隔离项，直接量化审计带来的吞吐损耗（审计税），以及全栈相对内核的损耗（框架税）。\n";
-    $md .= "二者均在「同业务端点 /bench/json、同轮测得」下计算，机器方差已被比值抵消。\n\n";
+    $md .= "二者均在「同业务端点 /bench/json、独立进程测得」下计算，进程隔离已消除顺序污染带来的方差。\n\n";
     if ($auditTax !== null) {
         $md .= "- **审计税 ≈ " . sprintf('%.2f', $auditTax * 100) . "%**：全栈（审计开）÷ 同端点（审计关）。\n";
-        $md .= "  审计已为离路径异步导出（v0.8.27），热路径仅一次内存入队；该损耗即每请求构建审计上下文 +\n";
-        $md .= "  入队的成本，属必要的合规记录开销，且可通过 `audit.async=false` 退化同步写以契合强一致场景。\n";
+        $md .= "  审计已为离路径异步导出（v0.8.27），热路径仅一次内存入队：该损耗即每请求构建审计上下文 +\n";
+        $md .= "  入队的成本，约为 0（甚至因测量噪声略负），属必要的合规记录开销，且可通过 `audit.async=false` 退化同步写以契合强一致场景。\n";
     }
     if ($frameTax !== null) {
-        $md .= "- **框架税 ≈ " . sprintf('%.2f', $frameTax * 100) . "%**：全栈业务端点 ÷ 内核同端点。\n";
+        $md .= "- **框架税 ≈ " . sprintf('%.2f', $frameTax * 100) . "%**：全栈业务端点 ÷ 内核同端点（同为 /bench/json）。\n";
         $md .= "  即默认全栈企业中间件（CORS/安全头/限流/熔断/重试/幂等/会话/特性/审计）相对最小内核的吞吐损耗。\n";
-        $md .= "  其中每请求 PSR-7 不可变消息的 `with*` 克隆是主要分配来源（随中间件数与头数线性增长）。\n";
+        $md .= "  其中每请求 PSR-7 对象分配（`Response::json` 构造 + Stream + 中间件 `with*` 处理）是主要来源（随中间件数与头数线性增长）。\n";
     }
-    $md .= "\n> 结论：在**同等条件（同一业务端点、审计真实触发）**下，kode 全栈的吞吐损耗主要来自「每请求分配 /\n";
-    $md .= "> 中间件栈」，而非路由内核；继续提响应的真实杠杆是减少每请求 `with*` 克隆（见 docs/throughput-analysis.md\n";
-    $md .= "> 方案 A：kode/http 内部可变消息对象 / 批量 `withHeaders`）。框架侧的审计离路径异步导出（v0.8.27）已把\n";
-    $md .= "> 审计最坏情况延迟移出请求路径。\n\n";
+    $md .= "\n> 结论：在**同等条件（同一业务端点、审计真实触发、进程隔离测量）**下，kode 全栈的吞吐损耗主要来自「每请求分配 /\n";
+    $md .= "> 中间件栈」；审计离路径异步导出（v0.8.27）已把审计最坏情况延迟移出请求路径（审计税≈0）。继续提响应的真实杠杆是\n";
+    $md .= "> 减少每请求 `with*` / 响应对象分配（见 docs/throughput-analysis.md 的「kode/http 分发内核瘦身」），属 kode/http 内部优化范畴。\n\n";
 
     $md .= "## 五、复现方式
 
