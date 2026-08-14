@@ -10,6 +10,7 @@
 use Kode\Core\App;
 use Kode\Framework\Feature\FeatureManager;
 use Kode\Framework\Health\HealthChecker;
+use Kode\Framework\Idempotency\IdempotencyManager;
 use Kode\Framework\Lock\LockManager;
 use Kode\Framework\Observability\Trace\Tracer;
 use Kode\Framework\ServiceDiscovery\ServiceDiscovery;
@@ -614,6 +615,29 @@ if (!function_exists('lock')) {
         }
 
         return resolve(LockManager::class);
+    }
+}
+
+if (!function_exists('idempotency')) {
+    /**
+     * 获取幂等管理器（薄壳层）。
+     *
+     * 未引导或 IdempotencyServiceProvider 未接线时返回 null。
+     *
+     * 与 lock() 的边界：lock = 并发互斥；idempotency = 重试安全（同一 key 在 TTL 内只处理一次）。
+     *
+     * 用法：
+     *   idempotency()?->once($reqId, fn () => charge(), 3600);   // 首次执行，重复抛 DuplicateRequest
+     *   if (idempotency()?->seen($key, 3600)) { ... }            // 首次 true，重复 false
+     *   idempotency()?->forget($key);                            // 重试放行 / 运维清理
+     */
+    function idempotency(): ?IdempotencyManager
+    {
+        if (app() === null || !app()->container->bound(IdempotencyManager::class)) {
+            return null;
+        }
+
+        return resolve(IdempotencyManager::class);
     }
 }
 

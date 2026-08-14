@@ -30,6 +30,8 @@ use Kode\Framework\Console\Commands\HealthCheckCommand;
 use Kode\Framework\Console\Commands\TenantStorageCommand;
 use Kode\Framework\Console\Commands\TracingFlushCommand;
 use Kode\Framework\Console\Commands\LockListCommand;
+use Kode\Framework\Console\Commands\IdempotencyListCommand;
+use Kode\Framework\Console\Commands\IdempotencyForgetCommand;
 use Kode\Framework\Providers\ServiceProvider;
 
 /**
@@ -106,5 +108,9 @@ final class ConsoleServiceProvider extends ServiceProvider
 
         // 分布式锁（薄壳层）：列出当前持有的锁（运维排查 / 死锁巡检）
         $kernel->add(LockListCommand::class);
+
+        // 幂等（薄壳层）：列出 / 删除记录的幂等键（运维排查 / 去重巡检 / 重试放行）
+        $kernel->add(IdempotencyListCommand::class);
+        $kernel->add(IdempotencyForgetCommand::class);
     }
 }

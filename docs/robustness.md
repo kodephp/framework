@@ -800,5 +800,61 @@ LockAcquired / LockReleased 经框架事件系统派发）。全量 **303 tests 
 > 把「跨主机一致性」交给专业后端——与配置中心、服务发现、OTLP 追踪、多租户存储、健康巡检同一哲学：
 > 框架给「契约 + 钩子 + 默认值」，不给「绑定实现」。
 
+## 21. 幂等薄壳层（Idempotency）（v0.8.16）
+
+保证「重试安全」——同一请求 / 消息在 TTL 内只成功处理一次，重放返回一致语义（典型：Stripe 风格
+幂等键、消息队列至少一次投递去重、支付 / 下单防重复提交）。与分布式锁（v0.8.15）互补：
+**锁 = 并发互斥（同一时刻仅一个持有者运行）；幂等 = 重试安全（同一 key 只处理一次）**，两者解决
+不同问题，常配合使用。
+
+### 抽象与边界
+
+- `Idempotency\IdempotencyStore`（持久化契约）：`has / put / forget / ttl / keys / prune`（仅记录
+  「已处理」事实 + 到期时间，不做响应体缓存——那是上层 HTTP 幂等中间件的职责）；
+- `Idempotency\IdempotencyManager`（语义契约）：`once / seen / forget / store`；
+- `Idempotency\StaticIdempotencyStore` + `Idempotency\StaticIdempotencyManager`（内置零依赖后端）：
+  - `driver=memory`：进程内静态表（单实例 / 同进程 Fiber·协程并发）；
+  - `driver=file`：文件落盘（`storage_path('framework/idempotency')`），覆盖同主机多进程去重；
+  - 惰性过期（无需后台 reaper）；`LOCK_EX` 原子落盘；
+- 跨主机共享去重（Redis / etcd / DB）不在此实现：实现 `IdempotencyStore` 经 `providers` 绑定即零改动替换。
+
+### 接线与用法
+
+`IdempotencyServiceProvider` 无条件绑定 `IdempotencyManager` 单例（注入事件派发闭包），已接入 `Application::$defaults`。
+
+```php
+use function Kode\Framework\idempotency;
+
+// 首次执行并返回结果；TTL 内重放抛 DuplicateRequest（上层据此返回 409 / 缓存响应）
+$res = idempotency()?->once($requestId, fn () => charge(), 3600);
+
+// 仅判重（首次 true，重复 false），自行处理响应
+if (idempotency()?->seen($key, 3600)) { /* 首次 */ }
+
+// 业务失败 → once() 自动回滚记录，允许修复后重试（避免永久死锁在重复态）
+idempotency()?->forget($key);   // 主动重试放行 / 运维清理
+```
+
+- 运维命令：`idempotency:list`（表格 / `--json`，列出键 + 剩余 TTL）、`idempotency:forget <key>`（删除指定键）；
+- 事件：`IdempotencyRecorded`（首次记录）/ `IdempotencyHit`（重复命中）便于指标（重复请求率）/ 审计。
+
+### 关键约定
+
+- **once() 的事务语义**：业务正常 → 记录保留（重放判重）；业务抛异常 → 回滚记录，调用方可重试。
+- **TTL 选择**：应覆盖「客户端最大重试窗口 + 处理耗时」，过短会漏掉迟到重放，过长会拖延合法重试放行。
+- **不要依赖 memory 后端做跨进程去重**：跨进程 / 跨机请用实现 `IdempotencyStore` 的共享存储后端。
+- **与锁配合**：高并发「首次计算」可用锁保证单飞，幂等层负责「重放一致」，两者职责不重叠。
+
+验证：`tests/IdempotencyTest.php`（once 首次执行 / 重放抛 DuplicateRequest / 失败回滚允许重试 / seen 语义 /
+forget 重试放行 / 惰性过期 / store keys 过滤 / file 后端落盘）、`tests/IdempotencyIntegrationTest.php`
+（`#[RunInSeparateProcess]` 真实引导：idempotency() 解析单例、once 重放抛异常、IdempotencyRecorded /
+IdempotencyHit 经框架事件系统派发）。全量 **315 tests / 25846 assertions OK**（1 skipped=MySQL）。
+
+> 设计立场：幂等是「重试安全原语」，框架只做契约 + 内置零依赖存储（进程内 / 同主机文件），
+> 把「跨主机去重」交给专业后端——与配置中心、服务发现、OTLP 追踪、多租户存储、健康、分布式锁同一哲学：
+> 框架给「契约 + 钩子 + 默认值」，不给「绑定实现」。
+
+
+
 
 

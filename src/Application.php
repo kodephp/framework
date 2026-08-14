@@ -36,6 +36,7 @@ use Kode\Framework\Providers\GracefulShutdownServiceProvider;
 use Kode\Framework\Providers\HealthServiceProvider;
 use Kode\Framework\Providers\FeatureServiceProvider;
 use Kode\Framework\Providers\LockServiceProvider;
+use Kode\Framework\Providers\IdempotencyServiceProvider;
 use Kode\Framework\Providers\ServiceDiscoveryServiceProvider;
 use Kode\Framework\Providers\TracerServiceProvider;
 use Kode\Framework\Providers\HttpClientServiceProvider;
@@ -57,7 +58,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.15';
+    public const VERSION = '0.8.16';
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。
@@ -230,6 +231,7 @@ final class Application
             TracerServiceProvider::class,
             HealthServiceProvider::class,
             LockServiceProvider::class,
+            IdempotencyServiceProvider::class,
             ConsoleServiceProvider::class,
         ];
 
