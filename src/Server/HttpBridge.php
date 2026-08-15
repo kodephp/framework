@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Server;
 
+use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
+use Kode\Http\Psr7\Stream;
 use Kode\Http\Response;
 use Kode\Process\Http\Request as ProcessRequest;
-use Nyholm\Psr7\ServerRequest;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -47,16 +48,16 @@ final class HttpBridge
             'HTTPS'                => $request->isSecure() ? 'on' : 'off',
         ];
 
-        $psr = new ServerRequest(
+        // 复用 kode/http 自研 ServerRequest（v3.4 起可变消息：with* 原地修改零拷贝），
+        // 取代 Nyholm 不可变 ServerRequest 每请求 4 次克隆的开销。
+        return (new KodeServerRequest(
             method: $request->method(),
             uri: $uri,
-            headers: $request->headers(),
-            body: $request->body(),
-            version: self::normalizeVersion($request->protocol()),
             serverParams: $serverParams,
-        );
-
-        return $psr
+            headers: $request->headers(),
+            body: Stream::create($request->body()),
+            protocolVersion: self::normalizeVersion($request->protocol()),
+        ))
             ->withQueryParams($request->get())
             ->withParsedBody($request->post())
             ->withCookieParams($request->cookies())

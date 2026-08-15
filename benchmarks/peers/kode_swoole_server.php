@@ -3,7 +3,13 @@
 declare(strict_types=1);
 
 /**
- * kode 全频谱对标服务器（Swoole HTTP Server 包裹 kode App::handle，与 webman/hyperf 同形态）。
+ * kode 全频谱对标服务器。
+ *
+ * **重要（审计修正）**：本脚本不再自建 `Swoole\Http\Server`，而是委托
+ * `Kode::serve()`（kode/process 运行时，自动择优 Swoole/Workerman/Native 后端），
+ * 请求/响应经 `HttpBridge` 与 kode/http 的 PSR-7 内核互转——与框架
+ * `bin/kode serve` 实际交付路径**完全一致**。压测数字即真实生产数字，
+ * 不再因「自建 Swoole 适配器」而偏离框架实际运行时。
  *
  * 频谱：/ping(hello world) → /bench/json(内存) → 10 个「真实 DB 业务查询」端点
  *       = {raw PDO, kode 原生查询构造器, Eloquent, Doctrine DBAL, ThinkPHP} × {MySQL, pgsql}
@@ -13,7 +19,7 @@ declare(strict_types=1);
  * 以公平对比「框架 + 各 ORM + 各 DB」的真实吞吐。
  *
  * 运行：php benchmarks/peers/kode_swoole_server.php
- * 端口：BENCH_PORT（默认 8093）；worker：BENCH_WORKERS（默认 8，双库 I/O 绑定需等 worker）。
+ * 端口：BENCH_PORT（默认 8093）；worker：BENCH_WORKERS（默认 8）
  * 档位：KODE_PROFILE=default|lean；KODE_DISABLE=组名(逗号) 追加关闭中间件（定位边际成本）。
  */
 
@@ -28,9 +34,11 @@ if (is_file($harnessAutoload)) {
 use Kode\Framework\Application;
 use Kode\Http\App;
 use Kode\Framework\Http\Resp;
-use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
-use Kode\Http\Psr7\Uri;
-use Kode\Http\Psr7\Stream;
+use Kode\Process\Http\Request as ProcessRequest;
+use Kode\Process\Kode;
+use Kode\Process\Runtime\ConnectionInterface;
+use Kode\Framework\Server\HttpBridge;
+use Kode\Framework\Server\GracefulShutdown;
 
 $repoRoot = dirname(__DIR__, 2);
 
@@ -71,10 +79,6 @@ if (!is_dir($tmp . '/config')) {
     }
 }
 
-$state = new class {
-    public ?App $http = null;
-};
-
 $port = (int) ($_SERVER['BENCH_PORT'] ?? 8093);
 $workers = (int) ($_SERVER['BENCH_WORKERS'] ?? 8);
 
@@ -82,10 +86,15 @@ $workers = (int) ($_SERVER['BENCH_WORKERS'] ?? 8);
 $mysqlCred = ['host' => '127.0.0.1', 'port' => 3306, 'database' => 'kode_bench', 'username' => 'root', 'password' => 'root'];
 $pgCred = ['host' => '127.0.0.1', 'port' => 5432, 'database' => 'kode_bench', 'username' => 'root', 'password' => ''];
 
-$server = new Swoole\Http\Server('0.0.0.0', $port);
-$server->set(['worker_num' => $workers, 'enable_coroutine' => false]);
+$http = null;
+$app = null;
+$graceful = null;
 
-$server->on('WorkerStart', static function () use ($tmp, $state, $mysqlCred, $pgCred): void {
+$bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCred, $pgCred): void {
+    if ($http !== null) {
+        return;
+    }
+
     $app = Application::make($tmp);
     /** @var App $http */
     $http = $app->http();
@@ -218,49 +227,42 @@ $server->on('WorkerStart', static function () use ($tmp, $state, $mysqlCred, $pg
         }
     }
 
-    $state->http = $http;
-});
+    /** @var GracefulShutdown|null $graceful */
+    $graceful = $app->core()->container->get(GracefulShutdown::class);
+};
 
-$server->on('request', static function (Swoole\Http\Request $req, Swoole\Http\Response $res) use ($state): void {
-    $http = $state->http;
-    if ($http === null) {
-        $res->status(503);
-        $res->end('not ready');
-
-        return;
-    }
-
-    // 与生产 SwooleServerAdapter 完全一致：使用 kode 自研 PSR-7 构造请求，
-    // 不引入 Nyholm（否则给 kode 强加一份生产运行时并不存在的开销，压测失真）。
-    $method = $req->server['request_method'] ?? 'GET';
-    $uri = new Uri($req->server['request_uri'] ?? '/');
-    if (isset($req->server['query_string'])) {
-        $uri = $uri->withQuery($req->server['query_string']);
-    }
-    $headers = [];
-    foreach ($req->header ?: [] as $name => $value) {
-        $headers[$name] = [$value];
-    }
-    $body = Stream::create((string) ($req->rawContent() ?: ''));
-    $psr = new KodeServerRequest($method, $uri, $req->server ?? [], $headers, $body);
-
-    $response = $http->handle($psr);
-
-    // 注意：生产 SwooleServerAdapter 不调用 Tracer/AccessLog/Audit 的 reset()，
-    // 此处刻意不调用以保持与生产线完全一致（lean 档 observability/logging/audit 均已禁用，reset 为多余空清）。
-    $res->status($response->getStatusCode());
-    foreach ($response->getHeaders() as $name => $values) {
-        foreach ($values as $v) {
-            $res->header($name, $v);
-        }
-    }
-    // 与生产 SwooleServerAdapter（已打 kode/http 补丁）一致：kode 自研响应走内部字符串体
-    $body = $response instanceof \Kode\Http\Response
-        ? $response->getBodyString()
-        : (string) $response->getBody();
-    $res->end($body);
-});
-
-echo "kode Swoole peer server on :$port (workers=$workers, profile=$profile)\n";
+echo "kode peer server on :$port (workers=$workers, profile=$profile, runtime=auto)\n";
 echo "routes: /ping /bench/json /bench/{raw,kode,eloquent,doctrine,think}/{mysql,pgsql}\n";
-$server->start();
+
+Kode::serve("http://127.0.0.1:$port", [
+    'workers' => $workers,
+    'name'    => 'kode-http',
+])
+    ->on('workerStart', static function (int $workerId) use ($bootWorker): void {
+        $bootWorker();
+    })
+    ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, &$graceful, $bootWorker): void {
+        if (!$message instanceof ProcessRequest) {
+            return;
+        }
+
+        $bootWorker();
+        if ($http === null) {
+            $conn->send(HttpBridge::toRaw(Resp::error('服务尚未就绪', 503)), true);
+
+            return;
+        }
+
+        try {
+            $psr = HttpBridge::toPsr7($message);
+            $handler = static fn () => $http->handle($psr);
+            $response = $graceful instanceof GracefulShutdown
+                ? $graceful->track($handler)
+                : $handler();
+            $protocol = preg_match('#HTTP/(\d+\.\d+)#i', $message->protocol(), $m) ? $m[1] : '1.1';
+            $conn->send(HttpBridge::toRaw($response, $protocol), true);
+        } catch (\Throwable $e) {
+            $conn->send(HttpBridge::toRaw(Resp::error('服务器内部错误', 500)), true);
+        }
+    })
+    ->start();
