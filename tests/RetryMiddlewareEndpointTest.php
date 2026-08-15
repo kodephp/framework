@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\RouteRegistry;
 use Kode\Http\App;
 use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
@@ -43,6 +44,22 @@ final class RetryMiddlewareEndpointTest extends TestCase
 
             return Resp::json(['ok' => true]);
         });
+
+        // 重试中间件已改为「按路由属性 #[Retry] 按需挂载」，需显式标记这些路由（模拟属性扫描登记）。
+        $this->tagRetry('/retry-mw-test');
+        $this->tagRetry('/retry-mw-test-post');
+    }
+
+    /**
+     * 把已注册的路由标记为启用 HTTP 重试（模拟 #[Retry] 属性扫描登记）。
+     */
+    private function tagRetry(string $path, string $method = 'GET'): void
+    {
+        $app = resolve(App::class);
+        $matched = $app->getRouter()->match($method, $path);
+        if ($matched->isFound() && $matched->route !== null) {
+            resolve(RouteRegistry::class)->tagRetry($matched->route, true);
+        }
     }
 
     #[\RunInSeparateProcess]
@@ -60,5 +77,21 @@ final class RetryMiddlewareEndpointTest extends TestCase
         $r = $this->post('/retry-mw-test-post')->assertStatus(503);
 
         self::assertSame(1, count($this->runs), 'POST 默认不重试，首次 503 直接返回');
+    }
+
+    #[\RunInSeparateProcess]
+    public function testUntaggedRouteBypassesRetry(): void
+    {
+        // 未标记 #[Retry] 的路由：重试中间件应 O(1) 早退，不包裹重试，
+        // 下游 503 直接透传、handler 仅执行一次。
+        $runs = &$this->runs;
+        resolve(App::class)->get('/retry-mw-open', static function () use (&$runs): mixed {
+            $runs[] = count($runs) + 1;
+
+            return Resp::error('upstream down', 503);
+        });
+
+        $r = $this->get('/retry-mw-open')->assertStatus(503);
+        self::assertSame(1, count($this->runs), '未标记路由不应被重试中间件包裹');
     }
 }

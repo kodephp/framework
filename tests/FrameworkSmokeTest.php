@@ -44,6 +44,17 @@ final class FrameworkSmokeTest extends TestCase
                 ]);
             });
 
+            // 幂等功能端点：显式标记 #[Idempotency]，供 test_idempotency_key_records_then_replays 验证
+            // 「按路由属性按需挂载」后的幂等行为（健康探针 /ping 不携带该能力，属预期）。
+            $this->app()->http()->get('/_smoke/idem', function () {
+                return Resp::json(['ok' => true, 'nonce' => bin2hex(random_bytes(4))]);
+            });
+            $idemRoute = $this->app()->http()->getRouter()->match('GET', '/_smoke/idem');
+            if ($idemRoute->isFound() && $idemRoute->route !== null) {
+                resolve(\Kode\Framework\Http\RouteRegistry::class)
+                    ->tagIdempotency($idemRoute->route, true);
+            }
+
             self::$routesRegistered = true;
         }
     }
@@ -63,10 +74,13 @@ final class FrameworkSmokeTest extends TestCase
         $r->assertStatus(200);
         $this->assertSame('{"pong":true}', $r->body());
 
-        // 证明全栈中间件管线已执行：请求ID（kode/http）+ 熔断可观测头（本框架 Resilience）。
+        // 证明全栈中间件管线已执行：请求ID（kode/http）+ 链路追踪头（本框架可观测）。
+        // 注：熔断 / 重试 / 幂等中间件已改为「按路由属性 #[CircuitBreaker]/#[Retry]/#[Idempotency]
+        // 按需挂载」——仅显式声明路由才纳入，健康探针 /ping 不携带这些头（属预期）。
+        // 其按需挂载行为由 CircuitBreakerMiddlewareEndpointTest / RetryMiddlewareEndpointTest /
+        // IdempotencyEndpointTest 专项验证。
         $this->assertNotEmpty($r->header('X-Request-Id'), '缺少 X-Request-Id：请求ID中间件未生效');
-        $this->assertNotEmpty($r->header('X-Circuit-Breaker'), '缺少 X-Circuit-Breaker：熔断中间件未生效');
-        $this->assertNotEmpty($r->header('X-Circuit-Breaker-Name'), '缺少 X-Circuit-Breaker-Name：熔断中间件未生效');
+        $this->assertNotEmpty($r->header('X-Trace-Id'), '缺少 X-Trace-Id：链路追踪中间件未生效');
     }
 
     public function test_404_returns_structured_json(): void
@@ -91,11 +105,11 @@ final class FrameworkSmokeTest extends TestCase
     {
         $key = 'smoke-' . uniqid();
 
-        $first = $this->get('/ping', ['Idempotency-Key' => $key]);
+        $first = $this->get('/_smoke/idem', ['Idempotency-Key' => $key]);
         $first->assertStatus(200);
         $this->assertSame('true', $first->header('Idempotency-Recorded'), '首次请求应标记 Idempotency-Recorded');
 
-        $second = $this->get('/ping', ['Idempotency-Key' => $key]);
+        $second = $this->get('/_smoke/idem', ['Idempotency-Key' => $key]);
         $second->assertStatus(200);
         $this->assertSame('true', $second->header('Idempotency-Replay'), '相同幂等键应触发重放 Idempotency-Replay');
     }

@@ -50,7 +50,10 @@ final class TraceMiddleware implements MiddlewareInterface
 
         $root = null;
         $tracer = $this->tracer;
-        if ($tracer !== null && $tracer->isEnabled()) {
+        // 仅当 tracing 启用且「本请求被采样」才开根 span——未采样直接跳过 span 创建，
+        // 避免 100% 请求都付出上下文 / 对象开销（sample_ratio < 1 时绝大部分请求走此快路径）。
+        // 链路头（traceparent / X-Trace-Id）仍由下方 TraceContext::responseHeaders() 统一附加。
+        if ($tracer !== null && $tracer->isEnabled() && $tracer->decideSampled()) {
             $root = $tracer->start(
                 $request->getMethod() . ' ' . $request->getUri()->getPath(),
                 [
@@ -60,6 +63,7 @@ final class TraceMiddleware implements MiddlewareInterface
                     'http.host' => $request->getUri()->getAuthority(),
                 ],
                 SpanKind::SERVER,
+                true,
             );
         }
 

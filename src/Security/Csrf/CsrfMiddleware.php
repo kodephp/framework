@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Kode\Framework\Security\Csrf;
 
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\RouteMatchTrait;
 use Kode\Framework\Http\RouteRegistry;
+use Kode\Framework\Http\RouteResolver;
 use Kode\Framework\Security\Audit\AuditService;
 use Kode\Http\Routing\Router;
 use Psr\Http\Message\ResponseInterface;
@@ -36,6 +38,8 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class CsrfMiddleware implements MiddlewareInterface
 {
+    use RouteMatchTrait;
+
     private const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 
     /**
@@ -45,6 +49,7 @@ final class CsrfMiddleware implements MiddlewareInterface
         private readonly Router $router,
         private readonly RouteRegistry $registry,
         private readonly array $config = [],
+        private readonly ?RouteResolver $resolver = null,
     ) {
     }
 
@@ -55,12 +60,12 @@ final class CsrfMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
+        [$request, $matched] = $this->resolveRoute($request);
         $method = strtoupper($request->getMethod());
         $path = $request->getUri()->getPath();
 
-        // 路由匹配（kode 路由表内已缓存，O(1)）。
-        $matched = $this->router->match($method, $path);
-        if (!$matched->isFound() || $matched->route === null) {
+        // 路由匹配（由 RouteResolver 在单次请求内缓存，首个中间件 match 一次，后续命中）。
+        if ($matched === null || !$matched->isFound() || $matched->route === null) {
             return $handler->handle($request);
         }
 

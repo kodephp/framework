@@ -48,9 +48,13 @@ final class LimitingServiceProvider extends ServiceProvider
     private function build(array $config): Limiter
     {
         $driver = (string) ($config['driver'] ?? 'memory');
-        $type = Algorithm::fromName((string) ($config['algorithm'] ?? 'token_bucket'));
-        $capacity = (int) ($config['capacity'] ?? 10);
-        $rate = (float) ($config['rate'] ?? 1.0);
+        // 全局兜底限流配置已收敛到 global 子块（默认关闭），此处优先读 global，
+        // 并保留对旧版顶层 capacity/rate/algorithm 的兼容回退；默认额度由 10 提至 1000，
+        // 避免「未声明 #[RateLimit] 时显式调用 rateLimit() 门面」被压到极低额度。
+        $limiterCfg = $config['global'] ?? [];
+        $type = Algorithm::fromName((string) ($limiterCfg['algorithm'] ?? $config['algorithm'] ?? 'token_bucket'));
+        $capacity = (int) ($limiterCfg['capacity'] ?? $config['capacity'] ?? 1000);
+        $rate = (float) ($limiterCfg['rate'] ?? $config['rate'] ?? 1.0);
 
         return match ($driver) {
             'apcu' => Limiter::apcu($type, $capacity, $rate),

@@ -10,7 +10,7 @@
  *            - memcached / pdo：其他分布式后端
  * algorithm：令牌桶 token_bucket | 滑动窗口 sliding_window | 固定窗口 counter
  *            | 漏桶 leaky_bucket | 滑动窗口计数器 sliding_window_counter
- * capacity ：全局默认额度（#[RateLimit] 未声明时生效）
+ * capacity ：全局兜底额度（仅当 global.enabled=true 时对「未声明 #[RateLimit] 的路由」生效）
  * rate     ：令牌桶=每秒补充速率；滑动窗口/固定窗口=时间窗口秒数
  *
  * 规则与存储解耦：在路由/控制器上用 #[RateLimit] 声明「限制什么」，此处统一决定
@@ -20,9 +20,15 @@
 return [
     'enabled' => true,
     'driver' => env('RATE_LIMIT_DRIVER', 'memory'),
-    'algorithm' => env('RATE_LIMIT_ALGO', 'token_bucket'),
-    'capacity' => (int) env('RATE_LIMIT_CAPACITY', 10),
-    'rate' => (float) env('RATE_LIMIT_RATE', 1.0),
+    // 全局兜底限流：仅当显式开启（RATE_LIMIT_GLOBAL=true）时，对「未声明 #[RateLimit] 的路由」
+    // 施加统一限额。默认关闭 —— 限流只作用于 #[RateLimit] 标记的路由，避免无意识地把整站
+    // 压到极低额度（原默认 capacity=10/s 会真实限流生产流量）。
+    'global' => [
+        'enabled' => (bool) env('RATE_LIMIT_GLOBAL', false),
+        'capacity' => (int) env('RATE_LIMIT_CAPACITY', 1000),
+        'rate' => (float) env('RATE_LIMIT_RATE', 1.0),
+        'algorithm' => env('RATE_LIMIT_ALGO', 'token_bucket'),
+    ],
     'redis' => [
         'host' => env('REDIS_HOST', '127.0.0.1'),
         'port' => (int) env('REDIS_PORT', 6379),

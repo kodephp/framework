@@ -8,6 +8,7 @@ use Kode\Attributes\Reader;
 use Kode\Framework\Application;
 use Kode\Framework\Http\ControllerScanner;
 use Kode\Framework\Http\Middleware\AccessLogMiddleware;
+use Kode\Framework\Http\RouteResolver;
 use Kode\Framework\Logging\AccessLogSink;
 use Kode\Framework\Http\Middleware\LocaleMiddleware;
 use Kode\Framework\Http\RouteRegistry;
@@ -23,6 +24,9 @@ use Kode\Framework\Resilience\Retry;
 use Kode\Framework\Resilience\RetryMiddleware;
 use Kode\Framework\Resilience\Breaker;
 use Kode\Framework\Resilience\CircuitBreakerMiddleware;
+use Kode\Framework\Resilience\CircuitBreakerAttributeReader;
+use Kode\Framework\Resilience\RetryAttributeReader;
+use Kode\Framework\Idempotency\IdempotencyAttributeReader;
 use Kode\Framework\Http\Middleware\ExceptionMiddleware;
 use Kode\Framework\Http\Middleware\TransactionMiddleware;
 use Kode\Framework\Http\Middleware\JsonBodyMiddleware;
@@ -56,6 +60,10 @@ final class HttpServiceProvider extends ServiceProvider
         // 路由来源登记表（route:list 命令按来源/文件聚合用）。
         $this->container->singleton(RouteRegistry::class, fn(): RouteRegistry => new RouteRegistry());
 
+        // 路由匹配共享器：把「全局中间件按路由属性按需挂载」所需的 router->match() 在单次请求内
+        // 只执行一次（结果挂请求属性供后续中间件复用），避免每个路由感知型中间件各自全表重匹配。
+        $this->container->singleton(RouteResolver::class, fn(): RouteResolver => new RouteResolver($this->container->get(App::class)->getRouter()));
+
         // 属性路由扫描器依赖（kode/attributes Reader，无缓存即可）。
         $this->container->singleton(Reader::class, fn(): Reader => new Reader());
     }
@@ -64,6 +72,9 @@ final class HttpServiceProvider extends ServiceProvider
     {
         /** @var App $app */
         $app = $this->container->get(App::class);
+
+        /** @var RouteResolver $resolver 跨中间件复用单次请求内的路由匹配结果 */
+        $resolver = $this->container->get(RouteResolver::class);
 
         // 用框架异常中间件包裹 kode/http 默认管线：
         // 错误响应 100% 交给 kode/exception（结构化 JSON，含 file/line/chain，无 HTML 调试页）。
@@ -131,7 +142,8 @@ final class HttpServiceProvider extends ServiceProvider
                 $app->getRouter(),
                 $registry,
                 $factory,
-                (array) $this->config('limiting', [])
+                (array) $this->config('limiting', []),
+                $resolver,
             ));
         }
 
@@ -147,6 +159,9 @@ final class HttpServiceProvider extends ServiceProvider
                 $breaker,
                 (array) $this->config('resilience.breaker.http', []),
                 static fn (object $event): object => event($event),
+                $app->getRouter(),
+                $registry,
+                $resolver,
             ));
         }
 
@@ -159,7 +174,10 @@ final class HttpServiceProvider extends ServiceProvider
 
             $app->use(new \Kode\Framework\Idempotency\IdempotencyMiddleware(
                 $idemManager,
-                (array) $this->config('idempotency.http', [])
+                (array) $this->config('idempotency.http', []),
+                $app->getRouter(),
+                $registry,
+                $resolver,
             ));
         }
 
@@ -172,7 +190,10 @@ final class HttpServiceProvider extends ServiceProvider
 
             $app->use(new RetryMiddleware(
                 $retry,
-                (array) $this->config('resilience.retry.http', [])
+                (array) $this->config('resilience.retry.http', []),
+                $app->getRouter(),
+                $registry,
+                $resolver,
             ));
         }
 
@@ -235,6 +256,7 @@ final class HttpServiceProvider extends ServiceProvider
                 $featureRegistry,
                 $featureManager,
                 (array) $this->config('feature', []),
+                $resolver,
             ));
         }
 
@@ -248,7 +270,8 @@ final class HttpServiceProvider extends ServiceProvider
             $app->use(new CsrfMiddleware(
                 $app->getRouter(),
                 $registry,
-                (array) $this->config('csrf', [])
+                (array) $this->config('csrf', []),
+                $resolver,
             ));
         }
 
@@ -281,6 +304,18 @@ final class HttpServiceProvider extends ServiceProvider
         // 4b) 为显式路由（可反射 handler）补充 #[Csrf] 防护标记登记（与限流同范式）。
         if (!empty($this->config('csrf.enabled', true))) {
             $this->scanExplicitCsrf($app, $registry);
+        }
+
+        // 4c) 为显式路由（可反射 handler）补充 #[CircuitBreaker] / #[Retry] / #[Idempotency] 标记登记
+        //     （与限流 / CSRF 同范式）：属性路由已在扫描阶段登记，此处仅处理显式路由。
+        if (!empty($this->config('resilience.breaker.http.enabled', true))) {
+            $this->scanExplicitCircuitBreakers($app, $registry);
+        }
+        if (!empty($this->config('resilience.retry.http.enabled', true))) {
+            $this->scanExplicitRetries($app, $registry);
+        }
+        if (!empty($this->config('idempotency.http.enabled', true))) {
+            $this->scanExplicitIdempotencies($app, $registry);
         }
     }
 
@@ -451,6 +486,82 @@ final class HttpServiceProvider extends ServiceProvider
 
             if ($reader->isPresent($class, $method)) {
                 $registry->tagCsrf($route, true);
+            }
+        }
+    }
+
+    /**
+     * 扫描显式路由 handler，对可反射出控制器类/方法且带 #[CircuitBreaker] 的，登记到 RouteRegistry。
+     *
+     * 与 scanExplicitCsrf / scanExplicitRateLimits / scanExplicitFeatures 同一范式：
+     * 属性路由（ControllerScanner）已在扫描阶段登记，此处仅处理显式路由里可被反射的 handler。
+     */
+    private function scanExplicitCircuitBreakers(App $app, RouteRegistry $registry): void
+    {
+        $reader = new CircuitBreakerAttributeReader();
+
+        foreach ($app->getRouter()->getRoutes() as $route) {
+            if ($registry->circuitBreakerOf($route)) {
+                continue;
+            }
+
+            [$class, $method] = $this->resolveHandler($route->getHandler());
+            if ($class === null) {
+                continue;
+            }
+
+            if ($reader->isPresent($class, $method)) {
+                $registry->tagCircuitBreaker($route, true);
+            }
+        }
+    }
+
+    /**
+     * 扫描显式路由 handler，对可反射出控制器类/方法且带 #[Retry] 的，登记到 RouteRegistry。
+     *
+     * 同 scanExplicitCircuitBreakers 范式。
+     */
+    private function scanExplicitRetries(App $app, RouteRegistry $registry): void
+    {
+        $reader = new RetryAttributeReader();
+
+        foreach ($app->getRouter()->getRoutes() as $route) {
+            if ($registry->retryOf($route)) {
+                continue;
+            }
+
+            [$class, $method] = $this->resolveHandler($route->getHandler());
+            if ($class === null) {
+                continue;
+            }
+
+            if ($reader->isPresent($class, $method)) {
+                $registry->tagRetry($route, true);
+            }
+        }
+    }
+
+    /**
+     * 扫描显式路由 handler，对可反射出控制器类/方法且带 #[Idempotency] 的，登记到 RouteRegistry。
+     *
+     * 同 scanExplicitCircuitBreakers 范式。
+     */
+    private function scanExplicitIdempotencies(App $app, RouteRegistry $registry): void
+    {
+        $reader = new IdempotencyAttributeReader();
+
+        foreach ($app->getRouter()->getRoutes() as $route) {
+            if ($registry->idempotencyOf($route)) {
+                continue;
+            }
+
+            [$class, $method] = $this->resolveHandler($route->getHandler());
+            if ($class === null) {
+                continue;
+            }
+
+            if ($reader->isPresent($class, $method)) {
+                $registry->tagIdempotency($route, true);
             }
         }
     }

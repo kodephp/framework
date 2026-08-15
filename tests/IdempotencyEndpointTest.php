@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\RouteRegistry;
 use Kode\Http\App;
 use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
@@ -32,6 +33,13 @@ final class IdempotencyEndpointTest extends TestCase
 
             return Resp::json(['runs' => count($runs), 'nonce' => bin2hex(random_bytes(4))]);
         });
+
+        // 幂等中间件已改为「按路由属性 #[Idempotency] 按需挂载」，需显式标记该路由（模拟属性扫描登记）。
+        $app = resolve(App::class);
+        $matched = $app->getRouter()->match('GET', '/idem-test');
+        if ($matched->isFound() && $matched->route !== null) {
+            resolve(RouteRegistry::class)->tagIdempotency($matched->route, true);
+        }
     }
 
     #[\RunInSeparateProcess]
@@ -63,5 +71,26 @@ final class IdempotencyEndpointTest extends TestCase
         self::assertSame('', $r->header('Idempotency-Replay'));
         self::assertSame('', $r->header('Idempotency-Recorded'));
         self::assertSame(1, count($this->runs));
+    }
+
+    #[\RunInSeparateProcess]
+    public function testUntaggedRouteBypassesIdempotency(): void
+    {
+        // 未标记 #[Idempotency] 的路由：幂等中间件应 O(1) 早退，不查存储、不去重，
+        // 即便携带相同 Idempotency-Key，handler 仍每次执行、不返回重放头。
+        $runs = &$this->runs;
+        resolve(App::class)->get('/idem-open', static function () use (&$runs): mixed {
+            $runs[] = microtime(true);
+
+            return Resp::json(['runs' => count($runs), 'nonce' => bin2hex(random_bytes(4))]);
+        });
+
+        $first = $this->get('/idem-open', ['Idempotency-Key' => 'same-key'])->assertStatus(200);
+        $second = $this->get('/idem-open', ['Idempotency-Key' => 'same-key'])->assertStatus(200);
+
+        self::assertSame(2, count($this->runs), '未标记路由 handler 每次都执行（不去重）');
+        self::assertSame('', $first->header('Idempotency-Recorded'));
+        self::assertSame('', $second->header('Idempotency-Replay'));
+        self::assertNotSame($first->body(), $second->body(), '未标记路由每次返回新响应（非重放）');
     }
 }

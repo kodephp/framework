@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\RouteRegistry;
 use Kode\Http\App;
 use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
@@ -41,6 +42,24 @@ final class CircuitBreakerMiddlewareEndpointTest extends TestCase
         resolve(App::class)->get('/cb-mw-probe', static function (): mixed {
             return Resp::error('boom', 500);
         });
+
+        // 熔断中间件已改为「按路由属性 #[CircuitBreaker] 按需挂载」，
+        // 故需在 RouteRegistry 显式标记这些路由，以模拟属性扫描登记的结果。
+        $this->tagBreaker('/cb-mw-trip');
+        $this->tagBreaker('/cb-mw-healthy');
+        $this->tagBreaker('/cb-mw-probe');
+    }
+
+    /**
+     * 把已注册的路由标记为启用边缘熔断（模拟 #[CircuitBreaker] 属性扫描登记）。
+     */
+    private function tagBreaker(string $path): void
+    {
+        $app = resolve(App::class);
+        $matched = $app->getRouter()->match('GET', $path);
+        if ($matched->isFound() && $matched->route !== null) {
+            resolve(RouteRegistry::class)->tagCircuitBreaker($matched->route, true);
+        }
     }
 
     #[\RunInSeparateProcess]
@@ -81,5 +100,22 @@ final class CircuitBreakerMiddlewareEndpointTest extends TestCase
         $r = $this->get('/cb-mw-probe');
         $r->assertStatus(500);
         self::assertSame('boom', $r->json()['message'] ?? null);
+    }
+
+    #[\RunInSeparateProcess]
+    public function testUntaggedRouteBypassesBreaker(): void
+    {
+        // 未标记 #[CircuitBreaker] 的路由：熔断中间件应 O(1) 早退，
+        // 不记录失败、不短路，handler 每次都执行、始终返回 500（无熔断头）。
+        resolve(App::class)->get('/cb-mw-open', static function (): mixed {
+            return Resp::error('boom', 500);
+        });
+
+        for ($i = 0; $i < 6; $i++) {
+            $r = $this->get('/cb-mw-open');
+            $r->assertStatus(500);
+            self::assertSame('', $r->header('X-Circuit-Breaker'), '未标记路由不应被熔断中间件处理');
+            self::assertSame('boom', $r->json()['message'] ?? null);
+        }
     }
 }

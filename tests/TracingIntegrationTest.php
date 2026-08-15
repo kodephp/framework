@@ -26,6 +26,10 @@ final class TracingIntegrationTest extends TestCase
 {
     protected function setUp(): void
     {
+        // 本类验证「span 是否真的被创建并导出」，需确定性：强制全采样，
+        // 避免默认 sample_ratio=0.1 下 span 偶发不创建导致断言抖动。
+        // （采样行为本身由 ObservabilityTest 覆盖，此处只验导出链路。）
+        putenv('OBS_TRACING_SAMPLE_RATIO=1.0');
         parent::setUp();
         $this->bootApp();
         \Kode\Framework\Observability\Trace\Tracer::resetOutbox();

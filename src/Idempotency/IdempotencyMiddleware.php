@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Kode\Framework\Idempotency;
 
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\RouteMatchTrait;
+use Kode\Framework\Http\RouteRegistry;
+use Kode\Framework\Http\RouteResolver;
 use Kode\Http\Response;
+use Kode\Http\Routing\Router;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -35,17 +39,31 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class IdempotencyMiddleware implements MiddlewareInterface
 {
+    use RouteMatchTrait;
+
     /**
      * @param array<string, mixed> $options 见 config/idempotency.php 的 `http` 段
      */
     public function __construct(
         private readonly IdempotencyManager $manager,
         private readonly array $options = [],
+        private readonly ?Router $router = null,
+        private readonly ?RouteRegistry $registry = null,
+        private readonly ?RouteResolver $resolver = null,
     ) {
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        // 路由属性门控：未标记 #[Idempotency] 的路由直接放行（O(1) 早退），
+        // 仅保护显式声明路由，避免对无关请求做幂等键查询与存储占位。
+        // 匹配由 RouteResolver 在单次请求内缓存（首个中间件 match 一次，后续命中）。
+        [$request, $matched] = $this->resolveRoute($request);
+        if ($matched !== null && $matched->isFound() && $matched->route !== null
+            && $this->registry !== null && !$this->registry->idempotencyOf($matched->route)) {
+            return $handler->handle($request);
+        }
+
         $header = (string) ($this->options['header'] ?? 'Idempotency-Key');
         $key = trim($request->getHeaderLine($header));
 

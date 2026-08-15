@@ -120,7 +120,11 @@ final class RateLimitTest extends TestCase
         // 该路由无任何 #[RateLimit] 规则。
         $router->add('GET', '/open', fn() => new Response(200));
 
-        $mw = new RateLimitMiddleware($router, $registry, $factory, ['enabled' => true, 'driver' => 'memory', 'capacity' => 1, 'rate' => 0.1]);
+        $mw = new RateLimitMiddleware($router, $registry, $factory, [
+            'enabled' => true,
+            'driver' => 'memory',
+            'global' => ['enabled' => true, 'capacity' => 1, 'rate' => 0.1],
+        ]);
 
         $handler = new class implements RequestHandlerInterface {
             #[\Override]
@@ -155,6 +159,30 @@ final class RateLimitTest extends TestCase
 
         for ($i = 0; $i < 3; $i++) {
             self::assertSame(200, $mw->process(new ServerRequest('GET', '/x'), $handler)->getStatusCode());
+        }
+    }
+
+    public function testUntaggedRoutePassesThroughWhenGlobalDisabled(): void
+    {
+        $router = new Router();
+        $registry = new RouteRegistry();
+        // 全局兜底限流默认关闭：未声明 #[RateLimit] 的路由直接放行，不触发 429。
+        $factory = new LimiterFactory(['driver' => 'memory', 'capacity' => 1, 'rate' => 0.1, 'algorithm' => 'token_bucket']);
+        $router->add('GET', '/open', fn() => new Response(200));
+
+        // 未显式开启 global.enabled（框架默认即为 false）。
+        $mw = new RateLimitMiddleware($router, $registry, $factory, ['enabled' => true, 'driver' => 'memory']);
+
+        $handler = new class implements RequestHandlerInterface {
+            #[\Override]
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new Response(200, [], 'ok');
+            }
+        };
+
+        for ($i = 0; $i < 3; $i++) {
+            self::assertSame(200, $mw->process(new ServerRequest('GET', '/open'), $handler)->getStatusCode());
         }
     }
 

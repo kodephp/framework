@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Resilience;
 
+use Kode\Framework\Http\RouteMatchTrait;
+use Kode\Framework\Http\RouteRegistry;
+use Kode\Framework\Http\RouteResolver;
+use Kode\Http\Routing\Router;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -30,18 +34,32 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class RetryMiddleware implements MiddlewareInterface
 {
+    use RouteMatchTrait;
+
     /**
      * @param array<string, mixed> $options 见 config/resilience.php 的 `retry.http` 段
      */
     public function __construct(
         private readonly Retry $retry,
         private readonly array $options = [],
+        private readonly ?Router $router = null,
+        private readonly ?RouteRegistry $registry = null,
+        private readonly ?RouteResolver $resolver = null,
     ) {
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         if (empty($this->options['enabled'] ?? true)) {
+            return $handler->handle($request);
+        }
+
+        // 路由属性门控：未标记 #[Retry] 的路由直接放行（O(1) 早退），
+        // 仅包裹显式声明路由，避免对无关请求（如 /ping）做重试闭包包裹。
+        // 匹配由 RouteResolver 在单次请求内缓存（首个中间件 match 一次，后续命中）。
+        [$request, $matched] = $this->resolveRoute($request);
+        if ($matched !== null && $matched->isFound() && $matched->route !== null
+            && $this->registry !== null && !$this->registry->retryOf($matched->route)) {
             return $handler->handle($request);
         }
 

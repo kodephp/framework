@@ -73,8 +73,10 @@ final class Tracer
      * 开启一个 span（自动作为当前 active span 的子跨度）。
      *
      * @param array<string, mixed> $attributes
+     * @param bool|null            $sampled 采样决策（根跨度由调用方在 {@see decideSampled()} 先行判定后传入，
+     *                                     避免「已决定不采样却仍创建 span 对象」的无效开销）。
      */
-    public function start(string $name, array $attributes = [], int $kind = SpanKind::INTERNAL): Span
+    public function start(string $name, array $attributes = [], int $kind = SpanKind::INTERNAL, ?bool $sampled = null): Span
     {
         if (!$this->enabled) {
             return new Span('', '', null, $name, $kind, microtime(true), $attributes, false, true);
@@ -88,12 +90,12 @@ final class Tracer
             TraceContext::childSpan();
             $spanId = TraceContext::spanId() ?? TraceContext::newSpanId();
             $parentSpanId = $active->spanId;
-            $sampled = $active->sampled;
+            $sampled = $sampled ?? $active->sampled;
         } else {
             // 根跨度：复用请求级 span_id（与响应 traceparent 一致），采样按比率决策
             $spanId = TraceContext::spanId() ?? TraceContext::newSpanId();
             $parentSpanId = TraceContext::parentSpanId();
-            $sampled = $this->decideSampled();
+            $sampled = $sampled ?? $this->decideSampled();
         }
 
         $span = new Span(
@@ -353,7 +355,14 @@ final class Tracer
         return $traceId;
     }
 
-    private function decideSampled(): bool
+    /**
+     * 根跨度采样决策（head-based）。
+     *
+     * 调用方（TraceMiddleware）应在创建根 span 前先行调用，未采样则直接跳过 span 创建，
+     * 避免「已决定不采样却仍付出上下文 / 对象开销」——这是把 sample_ratio 真正落地为
+     * 吞吐优化的关键（否则 start() 总会创建 span 对象，降采样无任何收益）。
+     */
+    public function decideSampled(): bool
     {
         $ratio = (float) ($this->config['sample_ratio'] ?? 1.0);
         if ($ratio >= 1.0) {

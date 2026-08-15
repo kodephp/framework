@@ -13,6 +13,9 @@ use Kode\Framework\Feature\FeatureRegistry;
 use Kode\Framework\Http\Attributes\Controller;
 use Kode\Framework\Http\Attributes\Route;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
+use Kode\Framework\Idempotency\IdempotencyAttributeReader;
+use Kode\Framework\Resilience\CircuitBreakerAttributeReader;
+use Kode\Framework\Resilience\RetryAttributeReader;
 use Kode\Framework\Security\Csrf\CsrfAttributeReader;
 use Kode\Http\App;
 use ReflectionMethod;
@@ -38,6 +41,9 @@ final class ControllerScanner
         private readonly RouteRegistry $registry,
         private readonly RateLimitAttributeReader $rateLimitReader = new RateLimitAttributeReader(),
         private readonly CsrfAttributeReader $csrfReader = new CsrfAttributeReader(),
+        private readonly CircuitBreakerAttributeReader $circuitBreakerReader = new CircuitBreakerAttributeReader(),
+        private readonly RetryAttributeReader $retryReader = new RetryAttributeReader(),
+        private readonly IdempotencyAttributeReader $idempotencyReader = new IdempotencyAttributeReader(),
         private readonly FeatureRegistry $featureRegistry = new FeatureRegistry(),
         private readonly FeatureAttributeReader $featureReader = new FeatureAttributeReader(),
     ) {
@@ -113,6 +119,21 @@ final class ControllerScanner
         // 声明式 CSRF 防护：类级（全部方法）/ 方法级（个别写操作）标记，供全局 CsrfMiddleware 命中。
         if ($this->csrfReader->isPresent($class, $method)) {
             $this->registry->tagCsrf($route, true);
+        }
+
+        // 声明式边缘熔断：类级/方法级 #[CircuitBreaker] 标记，供全局 CircuitBreakerMiddleware 命中。
+        if ($this->circuitBreakerReader->isPresent($class, $method)) {
+            $this->registry->tagCircuitBreaker($route, true);
+        }
+
+        // 声明式 HTTP 重试：类级/方法级 #[Retry] 标记，供全局 RetryMiddleware 命中。
+        if ($this->retryReader->isPresent($class, $method)) {
+            $this->registry->tagRetry($route, true);
+        }
+
+        // 声明式幂等防护：类级/方法级 #[Idempotency] 标记，供全局 IdempotencyMiddleware 命中。
+        if ($this->idempotencyReader->isPresent($class, $method)) {
+            $this->registry->tagIdempotency($route, true);
         }
 
         if ($attr->name !== null) {

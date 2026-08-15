@@ -34,6 +34,15 @@ final class RouteRegistry
     /** @var array<int, bool> spl_object_id(Route) => 是否启用 CSRF 防护（#[Csrf] 标记） */
     private array $csrf = [];
 
+    /** @var array<int, bool> spl_object_id(Route) => 是否启用边缘熔断（#[CircuitBreaker] 标记） */
+    private array $circuitBreakers = [];
+
+    /** @var array<int, bool> spl_object_id(Route) => 是否启用 HTTP 重试（#[Retry] 标记） */
+    private array $retries = [];
+
+    /** @var array<int, bool> spl_object_id(Route) => 是否启用幂等防护（#[Idempotency] 标记） */
+    private array $idempotencies = [];
+
     /**
      * 为一条路由标记来源。
      */
@@ -102,6 +111,54 @@ final class RouteRegistry
     public function csrfOf(Route $route): bool
     {
         return $this->csrf[spl_object_id($route)] ?? false;
+    }
+
+    /**
+     * 为一条路由登记边缘熔断标记（来自控制器类/方法上的 #[CircuitBreaker] 属性）。
+     */
+    public function tagCircuitBreaker(Route $route, bool $flag = true): void
+    {
+        $this->circuitBreakers[spl_object_id($route)] = $flag;
+    }
+
+    /**
+     * 查询某条路由是否启用边缘熔断（未标记则返回 false）。
+     */
+    public function circuitBreakerOf(Route $route): bool
+    {
+        return $this->circuitBreakers[spl_object_id($route)] ?? false;
+    }
+
+    /**
+     * 为一条路由登记 HTTP 重试标记（来自控制器类/方法上的 #[Retry] 属性）。
+     */
+    public function tagRetry(Route $route, bool $flag = true): void
+    {
+        $this->retries[spl_object_id($route)] = $flag;
+    }
+
+    /**
+     * 查询某条路由是否启用 HTTP 重试（未标记则返回 false）。
+     */
+    public function retryOf(Route $route): bool
+    {
+        return $this->retries[spl_object_id($route)] ?? false;
+    }
+
+    /**
+     * 为一条路由登记幂等防护标记（来自控制器类/方法上的 #[Idempotency] 属性）。
+     */
+    public function tagIdempotency(Route $route, bool $flag = true): void
+    {
+        $this->idempotencies[spl_object_id($route)] = $flag;
+    }
+
+    /**
+     * 查询某条路由是否启用幂等防护（未标记则返回 false）。
+     */
+    public function idempotencyOf(Route $route): bool
+    {
+        return $this->idempotencies[spl_object_id($route)] ?? false;
     }
 
     /**

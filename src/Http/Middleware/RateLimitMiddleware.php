@@ -7,7 +7,9 @@ namespace Kode\Framework\Http\Middleware;
 use Kode\Framework\Http\RateLimit\Algorithm;
 use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\RouteMatchTrait;
 use Kode\Framework\Http\RouteRegistry;
+use Kode\Framework\Http\RouteResolver;
 use Kode\Http\Routing\Router;
 use Kode\Limiting\Attribute\RateLimit;
 use Kode\Limiting\Enum\LimiterType;
@@ -35,6 +37,8 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class RateLimitMiddleware implements MiddlewareInterface
 {
+    use RouteMatchTrait;
+
     /**
      * @param array<string, mixed> $globalConfig 框架 config/limiting.php 全量配置
      */
@@ -43,6 +47,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
         private readonly RouteRegistry $registry,
         private readonly LimiterFactory $factory,
         private readonly array $globalConfig = [],
+        private readonly ?RouteResolver $resolver = null,
     ) {
     }
 
@@ -53,16 +58,16 @@ final class RateLimitMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
-        $method = $request->getMethod();
+        [$request, $matched] = $this->resolveRoute($request);
         $path = $request->getUri()->getPath();
 
         $rules = [];
-        $matched = $this->router->match($method, $path);
-        if ($matched->isFound() && $matched->route !== null) {
+        if ($matched !== null && $matched->isFound() && $matched->route !== null) {
             $rules = $this->registry->rateLimitsOf($matched->route);
         }
 
-        // 无声明式规则：回落全局默认限流（原行为）。
+        // 无声明式规则：仅在全局兜底限流开启时回落，否则直接放行
+        //（限流只作用于 #[RateLimit] 标记的路由，避免无意识地把整站压到极低额度）。
         if ($rules === []) {
             return $this->applyGlobal($request, $handler);
         }
@@ -101,8 +106,15 @@ final class RateLimitMiddleware implements MiddlewareInterface
      */
     private function applyGlobal(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        // 全局兜底限流默认关闭：未声明 #[RateLimit] 的路由直接放行，
+        // 避免无意识地把整站限到极低额度（原默认 capacity=10/s 会真实限流生产流量）。
+        $global = $this->globalConfig['global'] ?? [];
+        if (empty($global['enabled'])) {
+            return $handler->handle($request);
+        }
+
         $key = 'rl:' . $this->routeKey($request) . ':' . $this->clientIp($request);
-        $rule = $this->defaultRule($this->globalConfig);
+        $rule = $this->defaultRule($global);
         $limiter = $this->factory->make($rule);
 
         $result = $limiter->consume($key, 1);
@@ -127,7 +139,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
     private function defaultRule(array $config): RateLimit
     {
         return new RateLimit(
-            capacity: (int) ($config['capacity'] ?? 10),
+            capacity: (int) ($config['capacity'] ?? 1000),
             rate: (float) ($config['rate'] ?? 1.0),
             type: Algorithm::fromName((string) ($config['algorithm'] ?? 'token_bucket')),
         );

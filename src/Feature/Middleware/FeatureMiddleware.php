@@ -7,6 +7,8 @@ namespace Kode\Framework\Feature\Middleware;
 use Kode\Framework\Feature\FeatureManager;
 use Kode\Framework\Feature\FeatureRegistry;
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\RouteMatchTrait;
+use Kode\Framework\Http\RouteResolver;
 use Kode\Http\Routing\Router;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -24,6 +26,8 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class FeatureMiddleware implements MiddlewareInterface
 {
+    use RouteMatchTrait;
+
     /**
      * @param array<string, mixed> $config 框架 config/feature.php 全量配置
      */
@@ -32,6 +36,7 @@ final class FeatureMiddleware implements MiddlewareInterface
         private readonly FeatureRegistry $registry,
         private readonly FeatureManager $manager,
         private readonly array $config = [],
+        private readonly ?RouteResolver $resolver = null,
     ) {
     }
 
@@ -42,12 +47,13 @@ final class FeatureMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
+        [$request, $matched] = $this->resolveRoute($request);
         $method = $request->getMethod();
         $path = $request->getUri()->getPath();
 
-        $matched = $this->router->match($method, $path);
+        // 匹配由 RouteResolver 在单次请求内缓存（首个中间件 match 一次，后续命中）。
         $entry = null;
-        if ($matched->isFound() && $matched->route !== null) {
+        if ($matched !== null && $matched->isFound() && $matched->route !== null) {
             $entry = $this->registry->flagOf($matched->route);
         }
 

@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Kode\Framework\Resilience;
 
 use Kode\Framework\Resilience\Events\CircuitOpened;
+use Kode\Framework\Http\RouteMatchTrait;
+use Kode\Framework\Http\RouteRegistry;
+use Kode\Framework\Http\RouteResolver;
 use Kode\Http\Response;
+use Kode\Http\Routing\Router;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -35,6 +39,8 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class CircuitBreakerMiddleware implements MiddlewareInterface
 {
+    use RouteMatchTrait;
+
     private ?\Closure $dispatcher = null;
 
     /**
@@ -45,6 +51,9 @@ final class CircuitBreakerMiddleware implements MiddlewareInterface
         private readonly Breaker $breaker,
         private readonly array $options = [],
         ?callable $dispatcher = null,
+        private readonly ?Router $router = null,
+        private readonly ?RouteRegistry $registry = null,
+        private readonly ?RouteResolver $resolver = null,
     ) {
         $this->dispatcher = $dispatcher === null ? null : \Closure::fromCallable($dispatcher);
     }
@@ -52,6 +61,16 @@ final class CircuitBreakerMiddleware implements MiddlewareInterface
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         if (empty($this->options['enabled'] ?? true)) {
+            return $handler->handle($request);
+        }
+
+        // 路由属性门控：未标记 #[CircuitBreaker] 的路由直接放行（O(1) 早退），
+        // 仅保护显式声明路由，避免对无关请求做每次熔断器状态读写。
+        // 匹配结果由 RouteResolver 在单次请求内缓存（首个中间件 match 一次，后续命中），
+        // 避免每个路由感知型中间件各自全表重匹配。resolver/registry 为空（单测直构）则跳过门控。
+        [$request, $matched] = $this->resolveRoute($request);
+        if ($matched !== null && $matched->isFound() && $matched->route !== null
+            && $this->registry !== null && !$this->registry->circuitBreakerOf($matched->route)) {
             return $handler->handle($request);
         }
 

@@ -54,8 +54,10 @@ return [
         // 写入 OTLP resource.service.name 的服务标识
         'service_name' => env('APP_NAME', 'kode-app'),
 
-        // 采样比例 0..1（1 = 全采；高流量生产可调低，如 0.1）
-        'sample_ratio' => (float) env('OBS_TRACING_SAMPLE_RATIO', 1.0),
+        // 采样比例 0..1（1 = 全采；高流量生产务必调低，避免 100% 请求都付出 span 录制开销）。
+        // 默认 0.1：仅 10% 请求录制 span（足够定位问题），其余走「无 span 创建」快路径，
+        // 吞吐影响从「全采 ~45%」降为「采样 ~5%」。需要全链路时显式设 1.0。
+        'sample_ratio' => (float) env('OBS_TRACING_SAMPLE_RATIO', 0.1),
 
         // 请求（根 span）结束时自动 flush 缓冲 span（HTTP 场景推荐开启）
         'flush_on_request_end' => (bool) env('OBS_TRACING_FLUSH_ON_END', true),
