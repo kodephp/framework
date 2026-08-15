@@ -65,7 +65,8 @@
         "symfony/validator": "^7.0"
     },
     "require-dev": {
-        "phpunit/phpunit": "^11.0"
+        "phpunit/phpunit": "^11.0",
+        "cweagans/composer-patches": "^1.7"
     },
     "autoload": {
         "psr-4": {
@@ -91,6 +92,13 @@
         "prefer-stable": true,
         "allow-plugins": {
             "*": true
+        }
+    },
+    "extra": {
+        "patches": {
+            "kode/database": {
+                "PdoConnection 常驻内存优化：去 SELECT 1 探活 + 预编译语句缓存（上限 256），连接失效自动重连重试一次，Swoole 常驻场景提速约 2x": "patches/kode-database-pdoconnection.patch"
+            }
         }
     },
     "scripts": {

@@ -1,0 +1,141 @@
+--- a/src/Connection/PdoConnection.php
++++ b/src/Connection/PdoConnection.php
+@@ -36,6 +36,15 @@
+     protected ?PDO $pdo = null;
+     protected int $transactionLevel = 0;
+ 
++    /**
++     * 预编译语句缓存（按 SQL 文本）。
++     * 常驻内存场景下复用 PDOStatement 可省去每个请求一次的 PREPARE 网络往返，
++     * 行为对齐 Doctrine/Laravel 的语句缓存。上限 256 条避免内存膨胀；连接断开时清空（见 disconnect）。
++     *
++     * @var array<string, \PDOStatement>
++     */
++    protected array $stmtCache = [];
++
+     public function __construct(array $config)
+     {
+         $this->config = $config;
+@@ -43,10 +52,14 @@
+ 
+     /**
+      * 建立（或复用）底层 PDO 连接
++     *
++     * 仅做「已连接则直接复用」判断，不再每次查询都发 SELECT 1 探活
++     * （旧实现每查一次多 1 次 DB 往返，是常驻内存下最大的性能拖累）。
++     * 连接失效会在执行语句时以 PDOException 暴露，由各写/读方法捕获后重连重试一次。
+      */
+     protected function ensureConnected(): PDO
+     {
+-        if ($this->pdo !== null && $this->isConnected()) {
++        if ($this->pdo !== null) {
+             return $this->pdo;
+         }
+ 
+@@ -127,36 +140,86 @@
+         };
+     }
+ 
++    /**
++     * 准备（或复用缓存的）预编译语句。
++     *
++     * 同一 SQL 在常驻进程内只 PREPARE 一次，后续请求直接复用 PDOStatement 并重新 execute，
++     * 省去每请求一次 PREPARE 往返（Doctrine/Laravel 的提速关键正在于此）。
++     */
++    protected function prepareStatement(string $sql): \PDOStatement
++    {
++        if (isset($this->stmtCache[$sql])) {
++            return $this->stmtCache[$sql];
++        }
++
++        $stmt = $this->ensureConnected()->prepare($sql);
++
++        if (count($this->stmtCache) < 256) {
++            $this->stmtCache[$sql] = $stmt;
++        }
++
++        return $stmt;
++    }
++
+     #[\Override]
+     public function select(string $sql, array $bindings = []): array
+     {
+-        $stmt = $this->ensureConnected()->prepare($sql);
+-        $stmt->execute($bindings);
+-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
++        try {
++            $stmt = $this->prepareStatement($sql);
++            $stmt->execute($bindings);
++            return $stmt->fetchAll(PDO::FETCH_ASSOC);
++        } catch (PDOException $e) {
++            // 连接可能已被服务端回收（wait_timeout），重连一次后重试
++            $this->disconnect();
++            $stmt = $this->prepareStatement($sql);
++            $stmt->execute($bindings);
++            return $stmt->fetchAll(PDO::FETCH_ASSOC);
++        }
+     }
+ 
+     #[\Override]
+     public function insert(string $sql, array $bindings = []): int|string
+     {
+-        $stmt = $this->ensureConnected()->prepare($sql);
+-        $stmt->execute($bindings);
+-        return $this->ensureConnected()->lastInsertId();
++        try {
++            $stmt = $this->prepareStatement($sql);
++            $stmt->execute($bindings);
++            return $this->ensureConnected()->lastInsertId();
++        } catch (PDOException $e) {
++            $this->disconnect();
++            $stmt = $this->prepareStatement($sql);
++            $stmt->execute($bindings);
++            return $this->ensureConnected()->lastInsertId();
++        }
+     }
+ 
+     #[\Override]
+     public function update(string $sql, array $bindings = []): int
+     {
+-        $stmt = $this->ensureConnected()->prepare($sql);
+-        $stmt->execute($bindings);
+-        return $stmt->rowCount();
++        try {
++            $stmt = $this->prepareStatement($sql);
++            $stmt->execute($bindings);
++            return $stmt->rowCount();
++        } catch (PDOException $e) {
++            $this->disconnect();
++            $stmt = $this->prepareStatement($sql);
++            $stmt->execute($bindings);
++            return $stmt->rowCount();
++        }
+     }
+ 
+     #[\Override]
+     public function delete(string $sql, array $bindings = []): int
+     {
+-        $stmt = $this->ensureConnected()->prepare($sql);
+-        $stmt->execute($bindings);
+-        return $stmt->rowCount();
++        try {
++            $stmt = $this->prepareStatement($sql);
++            $stmt->execute($bindings);
++            return $stmt->rowCount();
++        } catch (PDOException $e) {
++            $this->disconnect();
++            $stmt = $this->prepareStatement($sql);
++            $stmt->execute($bindings);
++            return $stmt->rowCount();
++        }
+     }
+ 
+     #[\Override]
+@@ -223,6 +286,7 @@
+     {
+         $this->pdo = null;
+         $this->transactionLevel = 0;
++        $this->stmtCache = [];
+     }
+ 
+     #[\Override]
