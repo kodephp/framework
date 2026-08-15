@@ -1,0 +1,29 @@
+--- a/src/Response.php
++++ b/src/Response.php
+@@ -78,7 +78,7 @@
+     public static function json(mixed $data, int $code = 0): self
+     {
+         $payload = $code > 0 ? ['code' => $code, 'data' => $data] : $data;
+ 
+-        return (new self())->body(self::encode($payload));
++        return new self(200, [], Stream::create(self::encode($payload)));
+     }
+ 
+--- a/src/Server/SwooleServerAdapter.php
++++ b/src/Server/SwooleServerAdapter.php
+@@ -29,10 +29,14 @@
+             $swooleResponse->status($response->getStatusCode(), $response->getReasonPhrase());
+ 
+             foreach ($response->getHeaders() as $name => $values) {
+                 foreach ($values as $value) {
+                     $swooleResponse->header($name, $value);
+                 }
+             }
+ 
+-            $swooleResponse->end($response->getBody()->getContents());
++            // kode 自研响应直接取内部字符串体，避开 PSR-7 getBody()->getContents() 接口分发
++            $body = $response instanceof \Kode\Http\Response
++                ? $response->getBodyString()
++                : $response->getBody()->getContents();
++            $swooleResponse->end($body);
+         });

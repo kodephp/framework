@@ -197,7 +197,7 @@ A > B > D > C。**A（可变消息）/ B（管道预编译）已在 kode/http 3.
 而审计热路径已是「一次内存入队（µs 级、零 I/O、零格式化）」——脱敏仅为若干字符串比较、取证仅为两次
 `getHeaderLine`、事件 API 与 `record()` 同管线。因此新增能力**不改变审计税≈0 的结论**：全栈业务端点的
 吞吐损耗仍来自「13 个企业中间件栈 ÷ 最小内核」的框架税（≈57%），与审计本身无关。进程隔离压测已重跑确认
-（`benchmarks/report.md`）无回归。
+（[`benchmarks/PEER_BENCHMARK.md`](../benchmarks/PEER_BENCHMARK.md)）无回归。
 
 ### CSRF 防护：按需挂载，对无关路由零开销（v0.8.29）
 

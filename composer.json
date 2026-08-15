@@ -98,6 +98,9 @@
         "patches": {
             "kode/database": {
                 "PdoConnection 常驻内存优化：去 SELECT 1 探活 + 预编译语句缓存（上限 256），连接失效自动重连重试一次，Swoole 常驻场景提速约 2x": "patches/kode-database-pdoconnection.patch"
+            },
+            "kode/http": {
+                "Response::json 直构 + Swoole 发射走内部字符串体，削减常驻内存吞吐路径的每请求开销": "patches/kode-http-response-optimize.patch"
             }
         }
     },

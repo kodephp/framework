@@ -22,6 +22,8 @@ THREADS=8
 CONN=200
 DUR=8
 ITERS=3
+WARMUP=3   # 预热秒数：每 peer / 每路由测量前拉满 boost 时钟，消除冷启动与热降频偏置
+COOLDOWN=15 # 冷却秒数：每 peer 测量前让 CPU 从上一 peer 的热态回到 boost 基线，消除累积热降频偏置（笔记本多 peer 连续满负载会持续降频）
 
 probe() { # port
   local port="$1"
@@ -44,14 +46,22 @@ bench() { # name start_cmd port [profile]
   env BENCH_PORT="$port" BENCH_WORKERS="$WORKERS" ${profile:+KODE_PROFILE="$profile"} $start >"/tmp/bench_${name}.log" 2>&1 &
   local pid=$!
   if ! probe "$port"; then echo "  !! $name 未能就绪（见 /tmp/bench_${name}.log）"; kill -9 "$pid" 2>/dev/null; return 1; fi
+  # 测量前先冷却，让 CPU 从上一 peer 的热态回到 boost 基线，消除累积热降频偏置
+  sleep "$COOLDOWN"
+  # 每 peer 启动时先整体预热（拉满 boost 时钟、热 CPU/OPcache 缓存），避免冷启动首测偏低
+  wrk -t "$THREADS" -c "$CONN" -d "${WARMUP}s" "http://127.0.0.1:$port/ping" >/dev/null 2>&1
   for path in ping bench/json; do
+    # 路由级预热：每条路由测量前单独预热，使 /bench/json 不因「排在 /ping 后、连续满负载热降频」而失真
+    wrk -t "$THREADS" -c "$CONN" -d "${WARMUP}s" "http://127.0.0.1:$port/$path" >/dev/null 2>&1
     local vals=""
     for _ in $(seq 1 "$ITERS"); do
       local r; r=$(measure "$port" "$path")
       vals="$vals $r"
+      sleep 2   # 轮间冷却，平抑瞬时热抖动
     done
     local median; median=$(printf '%s\n' $vals | grep -v '^$' | sort -n | awk '{a[NR]=$1} END{ if(NR==0){print "NA"} else if(NR%2){print a[(NR+1)/2]} else {print (a[NR/2]+a[NR/2+1])/2} }')
     printf "  %-12s median=%-12s runs:%s\n" "/$path" "$median" "$vals"
+    sleep 3     # 路由间冷却，消除热累积偏置
   done
   kill -TERM "$pid" 2>/dev/null
   sleep 1

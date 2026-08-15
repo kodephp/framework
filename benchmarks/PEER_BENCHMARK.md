@@ -27,26 +27,29 @@
 
 | 框架 | 形态 | /ping | /bench/json |
 |---|---|---:|---:|
-| swoole_raw | Swoole 原生（无中间件·天花板） | 190,530 | 176,299 |
-| workerman_raw | Workerman 原生（无中间件·天花板） | 177,268 | 187,512 |
-| **webman** | Workerman 系框架（默认近乎零中间件） | 185,313 | 189,015 |
-| **hyperf** | Swoole 系框架（自带 DI/可观测） | 114,466 | 122,321 |
-| **kode · lean** | 仅路由+异常+连接收口 | 179,726 | 135,684 |
-| **kode · default** | 完整企业级中间件栈 | 122,764 | 98,449 |
+| swoole_raw | Swoole 原生（无中间件·天花板） | 185,117 | 170,824 |
+| workerman_raw | Workerman 原生（无中间件·天花板） | 182,311 | 182,000 |
+| **webman** | Workerman 系框架（默认近乎零中间件） | 177,172 | 162,229 |
+| **hyperf** | Swoole 系框架（自带 DI/可观测） | 151,301 | 137,661 |
+| **kode · lean** | 仅路由+异常+连接收口 | 158,925 | 145,984 |
+| **kode · default** | 完整企业级中间件栈 | 108,899 | 82,567 |
 
 > 注：本机为笔记本，跨次运行有 ±20~30% 热漂移；**横比看比值，不看绝对数**。
 
 ## 3. 关键结论
 
-1. **kode 内核极强**：`kode · lean`（180k/136k）达到裸 Swoole 天花板的 **94~97%**，
-   与 webman（185k）几乎并列。框架路由/`kode/http` 本身不是瓶颈。
-2. **kode · default（完整企业栈）= 123k/98k**，已**反超 hyperf（114k/122k）**，
-   约为自身 lean 的 **68%（/ping）/ 72%（/bench）**。即「默认企业栈」带来约 **30% 吞吐折损**，
-   这是为换取 cors/安全头/限流/韧性/追踪/审计等能力的代价。
-3. **此前「慢」的两大真因**：
+1. **kode 内核极强**：`kode · lean`（159k/146k）达到裸 Swoole 天花板的 **86%（/ping）/85%（/bench）**，
+   约为 webman（177k/162k）的 **90%**。框架路由/`kode/http` 本身不是瓶颈；剩余 ~10~14% 差距来自 kode 保留的
+   完整 PSR-7 管线（ServerRequest/Response 构造 + 异常处理中间件 + 全局请求上下文），与极简 webman 的本质差异。
+2. **kode · default（完整企业栈）= 109k/83k**，约为自身 lean 的 **68%（/ping）/57%（/bench）**。
+   即「默认企业栈」带来约 **30~43% 吞吐折损**，这是为换取 cors/安全头/限流/韧性/追踪/审计等能力的代价
+   （属功能对价，非缺陷）。
+3. **此前「慢」与「失真」的真因**：
    - (a) `ab` 客户端封顶（已用 wrk 修正）；
-   - (b) **默认链路追踪是全采样（`sample_ratio=1.0`）**——每个请求都录制 span，
-     是默认栈里**单项最大（~45%）的吞吐税**（详见第 4、5 节）。
+   - (b) **默认链路追踪全采样（`sample_ratio=1.0`）**——每个请求都录制 span，是默认栈里单项最大吞吐税
+     （已改默认 0.1 采样 + 未采样短路 span 创建，见第 5.1 节）；
+   - (c) **压测方法学失真**：旧 harness 用 Nyholm PSR-7 给 kode 强加生产不存在的开销、多 peer 连续满负载
+     导致 CPU 热降频累积（kode 排第 5 最热）。已修正为 kode 自研 PSR-7 + 每 peer 预热/冷却，见第 5.3 节。
 
 ## 4. 默认栈成本剖析（/ping，逐项关闭定位）
 
@@ -60,7 +63,7 @@
 进一步切分 observability：关闭 tracing（仅留指标）→ **+53%**；关闭指标（仅留追踪）→ 噪声范围内。
 **追踪（全采样）是绝对主导**。
 
-## 5. 已实施的修复（in-framework，非 vendor 包）
+## 5. 已实施的修复（in-framework + vendor patch）
 
 ### 5.1 链路追踪改为按采样决策，且未采样时跳过 span 创建
 - `src/Observability/Trace/Tracer.php`
@@ -75,10 +78,51 @@
 
 效果（同一机器前后对比，已消除 ab 干扰）：
 `kode_default / kode_lean` 比值 **0.62 → 0.68（/ping）/ 0.60 → 0.73（/bench）**；
-`kode_default` 绝对吞吐 +14%（/ping）、+12%（/bench），并**反超 hyperf**。
+`kode_default` 绝对吞吐 +14%（/ping）、+12%（/bench）。
+（注：当时 hyperf 处于旧无冷却口径被热降频压至 114k，故当时测出「反超」；补 `COOLDOWN=15` 后 hyperf 回升至 151k/138k，
+kode_default 实际低于 hyperf——属完整企业栈与自带 DI 框架的合理定位差异。）
 
 ### 5.2 测试
 `tests/ObservabilityTest.php` 10/10 通过（采样短路后追踪头仍正确下发、采样比例行为不变）。
+
+### 5.3 kode/http 吞吐路径微优化（vendor patch，经 composer-patches 固化）
+
+目标：把 kode 自研 PSR-7 在「常驻内存发射」这条最热的每请求路径上的不必要开销削掉，
+使其无限逼近 webman 那种「`new Response(200, [h], json_encode)` 直构」的极简形态。
+
+两处改动落在 `vendor/kode/http`，通过 `patches/kode-http-response-optimize.patch` 固化、
+在 `composer.json` 的 `extra.patches["kode/http"]` 注册——**vendor 本身不入库**，
+CI / `composer install` 自动应用，与生产 SwooleServerAdapter 口径一致。
+
+1. **`Response::json` 去中间层**（`src/Response.php`）
+   - 旧：`(new self())->body(self::encode($payload))` → `body()` 内部再 `withBody(Stream::create())`，
+     即「构造空对象 → 不可变 with* → 再包一层 Stream」，多一次对象分配 + 一次 PSR-7 接口分发。
+   - 新：`return new self(200, [], Stream::create(self::encode($payload)));` 一步直构（与 webman `json()` 等价）。
+2. **`SwooleServerAdapter` 发射走内部字符串体**（`src/Server/SwooleServerAdapter.php`）
+   - 旧：`$swooleResponse->end($response->getBody()->getContents());`——对 kode 自研 Response 也走 PSR-7
+     `getBody()`（多态 `StreamInterface` 分发）+ `getContents()` 接口调用。
+   - 新：对 `Kode\Http\Response` 实例直接 `$response->getBodyString()` 取内部持有的原生字符串，
+     避开 PSR-7 接口分发；外部（Nyholm 等）响应仍走通用 `getBody()->getContents()`。
+
+**micro-bench 隔离验证**（同一进程内纯函数级吞吐，消除框架/网络噪声）：
+- tiny 响应：`Resp::json(['ok'=>1])` 1.46M → 1.9M ops/s（**+30%**）
+- 50 条记录：`Resp::json($items)` 385k → 400k ops/s（**+4%**）
+- 参照：纯 `json_encode($items)` 504k ops/s；webman `json()` 即 `new Response(200,[h],json_encode)`，
+  与本改动后的 kode 直构形态等价。
+
+**harness 同构**（消除 handler 不公）：`benchmarks/peers/kode_swoole_server.php` 的 `/bench/json` handler
+改为与 webman 完全同构——`array_map(range(1,50), fn => ['id','name'])` + `framework`/`now`/`items`
+字段——确保横向 rps 只反映框架开销，不反映「handler 写法差异」。
+
+**run.sh 冷却**（对应第 3(c) 条）：新增 `COOLDOWN=15`，每 peer 测量前 `sleep 15` 让 CPU 从上一 peer
+的热态回到 boost 基线，消除多 peer 连续满负载的累积热降频（此前 kode 排第 5、hyperf 排第 6 被系统性压低）。
+
+**全链路效果**（vatsov 同会话，见第 2 节）：`kode · lean` 达 webman **90%**、裸 Swoole **86%/85%**，
+且 `/bench/json` 较优化前上行（微优化真实生效）。
+
+> 立场：本轮回到的真实数字是 **kode · lean ≈ webman 90%（未超过）**——剩余 ~10% 差距来自
+> kode 保留的**完整 PSR-7 管线 + 异常处理中间件 + 全局请求上下文**，是「企业级框架 vs 极简框架」的
+> 架构差异，非可轻易消除的 bug。要彻底超过 webman 需放弃 PSR-7 兼容或中间件收口，会削弱 kode 的差异化价值。
 
 ## 6. 仍可继续提高的点（按性价比排序，待确认后实施）
 

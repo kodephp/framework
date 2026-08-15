@@ -31,7 +31,9 @@ use Kode\Framework\Http\Resp;
 use Kode\Framework\Observability\Trace\Tracer;
 use Kode\Framework\Logging\AccessLogSink;
 use Kode\Framework\Security\Audit\AuditSink;
-use Nyholm\Psr7\ServerRequest;
+use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
+use Kode\Http\Psr7\Uri;
+use Kode\Http\Psr7\Stream;
 
 $repoRoot = dirname(__DIR__, 2);
 
@@ -61,7 +63,7 @@ if (!is_dir($tmp . '/config')) {
             'idempotency'    => "<?php return ['http' => ['enabled' => false]];\n",
             'feature'        => "<?php return ['enabled' => false];\n",
             'cors'           => "<?php return ['enabled' => false];\n",
-            'security'       => "<?php return ['enabled' => false, 'audit' => ['enabled' => false]];\n",
+            'security'       => "<?php return ['enabled' => false, 'audit' => ['enabled' => false], 'request_id' => false];\n",
             'locale'         => "<?php return ['enabled' => false];\n",
             'resilience'     => "<?php return ['breaker' => ['http' => ['enabled' => false]], 'retry' => ['http' => ['enabled' => false]]];\n",
             'observability'  => "<?php return ['metrics' => ['enabled' => false], 'tracing' => ['enabled' => false]];\n",
@@ -94,12 +96,17 @@ $server->on('WorkerStart', static function () use ($tmp, $state, $mysqlCred, $pg
     // ---------- hello world / 内存锚点 ----------
     $http->get('/ping', static fn () => Resp::json(['status' => 'ok']));
     $http->get('/bench/json', static function () {
-        $items = [];
-        for ($i = 1; $i <= 50; ++$i) {
-            $items[] = ['id' => $i, 'name' => 'item-' . $i];
-        }
+        // 与 webman 对标 handler 完全同构：array_map(range) + framework/now 字段
+        $items = array_map(
+            static fn (int $i) => ['id' => $i, 'name' => 'item-' . $i],
+            range(1, 50)
+        );
 
-        return Resp::json(['items' => $items]);
+        return Resp::json([
+            'framework' => 'kode',
+            'now'       => date('c'),
+            'items'     => $items,
+        ]);
     });
 
     // ---------- kode 原生查询构造器连接（driver=pdo 执行器） ----------
@@ -226,18 +233,19 @@ $server->on('request', static function (Swoole\Http\Request $req, Swoole\Http\Re
         return;
     }
 
-    $uri = $req->server['request_uri'] ?? '/';
+    // 与生产 SwooleServerAdapter 完全一致：使用 kode 自研 PSR-7 构造请求，
+    // 不引入 Nyholm（否则给 kode 强加一份生产运行时并不存在的开销，压测失真）。
     $method = $req->server['request_method'] ?? 'GET';
-    $headers = $req->header ?: [];
-    $body = (string) $req->rawContent();
-
-    $psr = new ServerRequest($method, $uri, $headers, $body);
-    if (!empty($req->get)) {
-        $psr = $psr->withQueryParams($req->get);
+    $uri = new Uri($req->server['request_uri'] ?? '/');
+    if (isset($req->server['query_string'])) {
+        $uri = $uri->withQuery($req->server['query_string']);
     }
-    if (!empty($req->cookie)) {
-        $psr = $psr->withCookieParams($req->cookie);
+    $headers = [];
+    foreach ($req->header ?: [] as $name => $value) {
+        $headers[$name] = [$value];
     }
+    $body = Stream::create((string) ($req->rawContent() ?: ''));
+    $psr = new KodeServerRequest($method, $uri, $req->server ?? [], $headers, $body);
 
     $response = $http->handle($psr);
 
