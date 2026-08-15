@@ -99,6 +99,37 @@ $server->on('WorkerStart', static function () use ($tmp, $state): void {
 
         return Resp::json(['items' => $items]);
     });
+    // 数据库业务端点：与 peer 一致的「一次主键索引 SELECT + 返回 JSON」，
+    // 用于「带数据库业务」同条件对标（隔离框架在 DB 路径上的开销与连接复用）。
+    // 连接经 kode/database 静态连接池在 worker 内复用；DB_* 由启动环境变量注入。
+    $http->get('/bench/db', static function () {
+        $id = random_int(1, 1000);
+        $row = \Kode\Database\Db\Db::table('bench_users')->where('id', $id)->first();
+
+        return Resp::json(['user' => $row]);
+    });
+    // 隔离探针：在 kode 框架内用「原生 PDO」做同构查询，剥离 kode/database 查询构造器开销，
+    // 定位 DB 路径瓶颈到底在「框架中间件」还是「kode/database 执行层」。worker 内复用同一 PDO。
+    $http->get('/bench/dbraw', static function () {
+        static $pdo = null;
+        if ($pdo === null) {
+            $pdo = new \PDO(
+                'mysql:host=' . ($_SERVER['DB_HOST'] ?? '127.0.0.1') . ';port=' . ($_SERVER['DB_PORT'] ?? 3306)
+                    . ';dbname=' . ($_SERVER['DB_DATABASE'] ?? 'kode_bench') . ';charset=utf8mb4',
+                $_SERVER['DB_USERNAME'] ?? 'root',
+                $_SERVER['DB_PASSWORD'] ?? 'root',
+                [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]
+            );
+        }
+        $t0 = hrtime(true);
+        $id = random_int(1, 1000);
+        $stmt = $pdo->prepare('SELECT * FROM bench_users WHERE id = ?');
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        $us = (hrtime(true) - $t0) / 1000;
+
+        return Resp::json(['user' => $row, 'query_us' => $us]);
+    });
     $state->http = $http;
 });
 

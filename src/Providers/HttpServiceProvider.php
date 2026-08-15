@@ -75,6 +75,10 @@ final class HttpServiceProvider extends ServiceProvider
 
         /** @var RouteResolver $resolver 跨中间件复用单次请求内的路由匹配结果 */
         $resolver = $this->container->get(RouteResolver::class);
+        /** @var RouteRegistry $registry 路由属性登记表（限流/韧性/幂等/CSRF/特性 共享），
+         *  必须置于各 if 块之外：熔断/重试/幂等中间件的 opt-in 门控都依赖它，而限流可能因
+         *  limiting 被关闭而跳过其定义块，导致此处变量未定义、门控失效（退化成每请求都跑全套逻辑）。 */
+        $registry = $this->container->get(RouteRegistry::class);
 
         // 用框架异常中间件包裹 kode/http 默认管线：
         // 错误响应 100% 交给 kode/exception（结构化 JSON，含 file/line/chain，无 HTML 调试页）。
@@ -135,8 +139,6 @@ final class HttpServiceProvider extends ServiceProvider
         if (!empty($this->config('limiting.enabled', true))) {
             /** @var LimiterFactory $factory */
             $factory = $this->container->get(LimiterFactory::class);
-            /** @var RouteRegistry $registry */
-            $registry = $this->container->get(RouteRegistry::class);
 
             $app->use(new RateLimitMiddleware(
                 $app->getRouter(),

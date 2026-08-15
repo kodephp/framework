@@ -45,6 +45,29 @@ $server->on('request', static function (Request $req, Response $res) {
         return;
     }
 
+    // 数据库业务端点：一次主键索引 SELECT + 返回 JSON（与 kode/webman/hyperf 对标同构）。
+    // worker 内复用同一 PDO 连接（模拟连接池/持久连接，避免每次建连掩盖查询本身成本）。
+    if ($uri === '/bench/db') {
+        static $pdo = null;
+        if ($pdo === null) {
+            $pdo = new PDO(
+                'mysql:host=' . ($_SERVER['DB_HOST'] ?? '127.0.0.1') . ';port=' . ($_SERVER['DB_PORT'] ?? 3306)
+                    . ';dbname=' . ($_SERVER['DB_DATABASE'] ?? 'kode_bench') . ';charset=utf8mb4',
+                $_SERVER['DB_USERNAME'] ?? 'root',
+                $_SERVER['DB_PASSWORD'] ?? 'root',
+                [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+            );
+        }
+        $id = random_int(1, 1000);
+        $stmt = $pdo->prepare('SELECT * FROM bench_users WHERE id = ?');
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $res->header('Content-Type', 'application/json; charset=utf-8');
+        $res->end((string) json_encode(['user' => $row]));
+
+        return;
+    }
+
     $res->status(404);
     $res->header('Content-Type', 'application/json; charset=utf-8');
     $res->end('{"error":"not found"}');
