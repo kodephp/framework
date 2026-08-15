@@ -45,8 +45,8 @@ benchmarks/
 
 **结果**：见 [`PEER_BENCHMARK.md`](PEER_BENCHMARK.md)。结论摘要：
 
-- `kode · lean`（仅路由+异常+连接收口）达裸 Swoole 天花板 **86%/85%**（159k/146k），约为 webman 的 **90%**，并超过 hyperf（151k/138k）；
-- `kode · default`（完整企业栈）**109k/83k**，约为 lean 的 **68%/57%**（公平冷却口径下低于自带 DI 的 hyperf，属完整企业栈定位差异，非缺陷）；
+- `kode · lean`（仅路由+异常+连接收口）达裸 Swoole 天花板 **91%/82%**（170k/152k），约为 webman 的 **93%/86%**，并超过 hyperf（156k/148k）；
+- `kode · default`（完整企业栈）**95k/59k**（本轮含热事件离群，稳定双跑约 95-120k/59-68k），约为 lean 的 **56~70%（/ping）**（公平冷却口径下低于自带 DI 的 hyperf，属完整企业栈定位差异，非缺陷）；
 - 默认栈 ~30% 折损是**功能对价**（cors/安全头/限流/韧性/追踪/审计），其中链路追踪全采样是单项最大税（~45%，已通过采样默认 0.1 修复）。
 
 > 注：此前「94~97%、kode_default 反超 hyperf」系旧 harness 未做 peer 间冷却、排第 6 的 hyperf 被热降频系统性压低（114k）的失真结论；补 `COOLDOWN=15` 后 hyperf 回到 151k/138k，旧结论作废。

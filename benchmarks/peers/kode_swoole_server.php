@@ -28,9 +28,6 @@ if (is_file($harnessAutoload)) {
 use Kode\Framework\Application;
 use Kode\Http\App;
 use Kode\Framework\Http\Resp;
-use Kode\Framework\Observability\Trace\Tracer;
-use Kode\Framework\Logging\AccessLogSink;
-use Kode\Framework\Security\Audit\AuditSink;
 use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
 use Kode\Http\Psr7\Uri;
 use Kode\Http\Psr7\Stream;
@@ -249,17 +246,19 @@ $server->on('request', static function (Swoole\Http\Request $req, Swoole\Http\Re
 
     $response = $http->handle($psr);
 
-    Tracer::resetOutbox();
-    AccessLogSink::reset();
-    AuditSink::reset();
-
+    // 注意：生产 SwooleServerAdapter 不调用 Tracer/AccessLog/Audit 的 reset()，
+    // 此处刻意不调用以保持与生产线完全一致（lean 档 observability/logging/audit 均已禁用，reset 为多余空清）。
     $res->status($response->getStatusCode());
     foreach ($response->getHeaders() as $name => $values) {
         foreach ($values as $v) {
             $res->header($name, $v);
         }
     }
-    $res->end((string) $response->getBody());
+    // 与生产 SwooleServerAdapter（已打 kode/http 补丁）一致：kode 自研响应走内部字符串体
+    $body = $response instanceof \Kode\Http\Response
+        ? $response->getBodyString()
+        : (string) $response->getBody();
+    $res->end($body);
 });
 
 echo "kode Swoole peer server on :$port (workers=$workers, profile=$profile)\n";

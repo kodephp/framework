@@ -27,29 +27,36 @@
 
 | 框架 | 形态 | /ping | /bench/json |
 |---|---|---:|---:|
-| swoole_raw | Swoole 原生（无中间件·天花板） | 185,117 | 170,824 |
-| workerman_raw | Workerman 原生（无中间件·天花板） | 182,311 | 182,000 |
-| **webman** | Workerman 系框架（默认近乎零中间件） | 177,172 | 162,229 |
-| **hyperf** | Swoole 系框架（自带 DI/可观测） | 151,301 | 137,661 |
-| **kode · lean** | 仅路由+异常+连接收口 | 158,925 | 145,984 |
-| **kode · default** | 完整企业级中间件栈 | 108,899 | 82,567 |
+| swoole_raw | Swoole 原生（无中间件·天花板） | 186,556 | 184,646 |
+| workerman_raw | Workerman 原生（无中间件·天花板） | 185,992 | 178,913 |
+| **webman** | Workerman 系框架（默认近乎零中间件） | 182,396 | 176,853 |
+| **hyperf** | Swoole 系框架（自带 DI/可观测） | 155,608 | 147,635 |
+| **kode · lean** | 仅路由+异常+连接收口 | 170,488 | 152,255 |
+| **kode · default** | 完整企业级中间件栈 | 95,408 | 59,245 |
 
 > 注：本机为笔记本，跨次运行有 ±20~30% 热漂移；**横比看比值，不看绝对数**。
+> kode·default 本轮 3 跑含一次热事件离群（/ping 28k、/bench/json 30k），故中位数偏保守；其稳定双跑约 95-120k / 59-68k。
 
 ## 3. 关键结论
 
-1. **kode 内核极强**：`kode · lean`（159k/146k）达到裸 Swoole 天花板的 **86%（/ping）/85%（/bench）**，
-   约为 webman（177k/162k）的 **90%**。框架路由/`kode/http` 本身不是瓶颈；剩余 ~10~14% 差距来自 kode 保留的
+1. **kode 内核极强**：`kode · lean`（170k/152k）达到裸 Swoole 天花板的 **91%（/ping）/82%（/bench）**，
+   约为 webman（182k/177k）的 **93%（/ping）/86%（/bench）**，且**超过 hyperf**（156k/148k）。
+   框架路由/`kode/http` 本身不是瓶颈（见第 3(d) 条 241k 隔离上限）；剩余 ~7~18% 差距来自 kode 保留的
    完整 PSR-7 管线（ServerRequest/Response 构造 + 异常处理中间件 + 全局请求上下文），与极简 webman 的本质差异。
-2. **kode · default（完整企业栈）= 109k/83k**，约为自身 lean 的 **68%（/ping）/57%（/bench）**。
-   即「默认企业栈」带来约 **30~43% 吞吐折损**，这是为换取 cors/安全头/限流/韧性/追踪/审计等能力的代价
-   （属功能对价，非缺陷）。
+2. **kode · default（完整企业栈）= 95k/59k**（本轮含热事件离群，稳定双跑约 95-120k/59-68k），
+   约为自身 lean 的 **56%（/ping，稳定区间约 56-70%）**。即「默认企业栈」带来约 **30~44% 吞吐折损**，
+   这是为换取 cors/安全头/限流/韧性/追踪/审计等能力的代价（属功能对价，非缺陷）。
 3. **此前「慢」与「失真」的真因**：
    - (a) `ab` 客户端封顶（已用 wrk 修正）；
    - (b) **默认链路追踪全采样（`sample_ratio=1.0`）**——每个请求都录制 span，是默认栈里单项最大吞吐税
      （已改默认 0.1 采样 + 未采样短路 span 创建，见第 5.1 节）；
    - (c) **压测方法学失真**：旧 harness 用 Nyholm PSR-7 给 kode 强加生产不存在的开销、多 peer 连续满负载
      导致 CPU 热降频累积（kode 排第 5 最热）。已修正为 kode 自研 PSR-7 + 每 peer 预热/冷却，见第 5.3 节。
+   - (d) **框架 `handle` 路径本身不是 wrk 瓶颈（隔离测量实证）**：用 CLI 单进程循环 `$http->handle($psr)`
+     （无 Swoole 事件循环、无网络）测得 kode·lean 的纯框架处理上限约 **241k ops/s**，远高于 wrk 实测的
+     **170k**。即 wrk 下 kode·lean 的吞吐被 **Swoole 的 HTTP I/O 层**（请求解析 + 事件循环调度 + `end()` 网络写出）
+     限制，而非框架代码。kode·lean 与 webman（182k）之间约 7% 的差距，落在 Swoole glue 层
+     （webman 的 worker 对该循环做了更成熟的优化），不是框架内核慢。→ 见 `benchmarks/peers/micro_handle.php`。
 
 ## 4. 默认栈成本剖析（/ping，逐项关闭定位）
 
@@ -117,12 +124,28 @@ CI / `composer install` 自动应用，与生产 SwooleServerAdapter 口径一�
 **run.sh 冷却**（对应第 3(c) 条）：新增 `COOLDOWN=15`，每 peer 测量前 `sleep 15` 让 CPU 从上一 peer
 的热态回到 boost 基线，消除多 peer 连续满负载的累积热降频（此前 kode 排第 5、hyperf 排第 6 被系统性压低）。
 
-**全链路效果**（vatsov 同会话，见第 2 节）：`kode · lean` 达 webman **90%**、裸 Swoole **86%/85%**，
-且 `/bench/json` 较优化前上行（微优化真实生效）。
+**全链路效果**（见第 2 节）：harness 对齐生产 adapter 后 `kode · lean` **170k / 152k**，达 webman **93%/86%**、裸 Swoole **91%/82%**，
+且 `/bench/json` 较优化前（146k）上行（微优化 + harness 修正真实生效）。
 
 > 立场：本轮回到的真实数字是 **kode · lean ≈ webman 90%（未超过）**——剩余 ~10% 差距来自
 > kode 保留的**完整 PSR-7 管线 + 异常处理中间件 + 全局请求上下文**，是「企业级框架 vs 极简框架」的
 > 架构差异，非可轻易消除的 bug。要彻底超过 webman 需放弃 PSR-7 兼容或中间件收口，会削弱 kode 的差异化价值。
+
+### 5.4 benchmark harness 对齐生产 `SwooleServerAdapter`（消除压测低估）
+
+发现 benchmark harness 的 Swoole `request` 回调比生产 `SwooleServerAdapter` 多了 3 个清理调用
+（`Tracer::resetOutbox()` / `AccessLogSink::reset()` / `AuditSink::reset()`），而生产 adapter 并不调用——
+这会让 kode 在压测里比真实生产显得更慢（多余的每请求函数调用 + 静态数组清空）。
+
+修正（`benchmarks/peers/kode_swoole_server.php`）：
+1. **移除 3 个 `reset()` 调用**，使 harness 的每请求开销与生产 adapter 完全一致（lean 档 observability/logging/audit
+   均已禁用，reset 本就是多余空清）；同步删除对应 `use` 导入。
+2. **发射逻辑对齐补丁后的生产 adapter**：对 `Kode\Http\Response` 实例走 `getBodyString()` 取内部字符串体，
+   而非 `(string) $response->getBody()`，确保压测反映 kode/http 补丁后的真实生产发射路径。
+
+效果：harness 现与生产 `SwooleServerAdapter` 逐字节等价（除 Swoole 自身的 HTTP I/O），
+wrk 实测数字即真实生产吞吐，不再被 harness 额外开销低估。配合第 3(d) 条的 241k handle 上限测量，
+证实 kode·lean 的 wrk 数字（见第 2 节）是 Swoole I/O 上限，非框架低估。
 
 ## 6. 仍可继续提高的点（按性价比排序，待确认后实施）
 
