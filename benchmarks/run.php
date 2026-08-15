@@ -85,6 +85,8 @@ foreach ($scenarios as $sc) {
         'label'   => $sc['label'],
         'route'   => $sc['route'],
         'disable' => $sc['disable'],
+        'method'  => $sc['method'] ?? 'GET',
+        'expect'  => $sc['expect'] ?? 200,
     ], JSON_UNESCAPED_SLASHES);
 
     $payload = runWorker($descriptor, $iters, $warmup, $rounds);

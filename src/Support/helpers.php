@@ -255,6 +255,36 @@ if (!function_exists('csrf_token')) {
     }
 }
 
+if (!function_exists('csrf_token_rotate')) {
+    /**
+     * 轮换（重新生成）当前会话的 CSRF 令牌。
+     *
+     * 用于**会话固定（session fixation）防护**：在「建立身份」的节点（如登录成功、
+     * 权限提升）调用一次，使旧令牌立即失效，攻击者持有的固定令牌无法再用于后续写操作。
+     *
+     * 用法示例（登录处理末尾）：
+     * ```php
+     * auth()->attempt($credentials);   // 建立会话
+     * csrf_token_rotate();             // 轮换 CSRF 令牌，作废登录前的固定令牌
+     * ```
+     *
+     * 无会话（纯 JWT / CLI）时返回 null，不产生副作用。
+     */
+    function csrf_token_rotate(): ?string
+    {
+        $session = session();
+        if ($session === null) {
+            return null;
+        }
+
+        $key = (string) (config('csrf.token_key') ?? '_csrf_token');
+        $token = bin2hex(random_bytes(32));
+        $session->set($key, $token);
+
+        return $token;
+    }
+}
+
 if (!function_exists('tenant')) {
     /**
      * 获取当前请求的租户标识（kode/context 请求级 scope）。

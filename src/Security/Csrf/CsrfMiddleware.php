@@ -6,6 +6,7 @@ namespace Kode\Framework\Security\Csrf;
 
 use Kode\Framework\Http\Resp;
 use Kode\Framework\Http\RouteRegistry;
+use Kode\Framework\Security\Audit\AuditService;
 use Kode\Http\Routing\Router;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -29,6 +30,9 @@ use Psr\Http\Server\RequestHandlerInterface;
  *
  * 前置依赖：会话（LazySessionMiddleware）。无会话（如纯 JWT 无 cookie 应用）的路由
  * 即便被标记也会安全跳过——CSRF 仅对「cookie-session」形态的会话劫持有效。
+ *
+ * 安全可观测性：校验失败时经离路径异步审计管线记录 csrf.failed 事件（与 auth.failed 同源，
+ * SOC 可统一监测），仅在失败时触发、不污染正常热路径，且审计未启用则静默跳过。
  */
 final class CsrfMiddleware implements MiddlewareInterface
 {
@@ -91,6 +95,11 @@ final class CsrfMiddleware implements MiddlewareInterface
         $stored = $session->get($tokenKey);
         $submitted = $this->submittedToken($request);
         if (!is_string($stored) || $stored === '' || $submitted === null || !hash_equals($stored, $submitted)) {
+            // 联动审计：把「潜在的 CSRF 攻击」作为安全事件离路径异步入审计流，
+            // 与 AuthMiddleware 的 auth.failed 同源（SOC 可统一监测）。仅失败时触发，
+            // 不污染正常请求热路径；审计未启用 / 解析失败一律静默跳过，绝不阻塞 419 主流程。
+            $this->auditFailure($request, $submitted === null ? 'missing_token' : 'token_mismatch');
+
             return Resp::error(
                 $this->config['error_message'] ?? 'CSRF token mismatch',
                 (int) ($this->config['error_status'] ?? 419),
@@ -160,6 +169,38 @@ final class CsrfMiddleware implements MiddlewareInterface
             return session();
         } catch (\Throwable) {
             return null;
+        }
+    }
+
+    /**
+     * 经离路径异步审计管线记录 CSRF 失败安全事件（审计未启用 / 容器未绑定时静默跳过）。
+     *
+     * 失败时不可影响 CSRF 主流程（返回 419），故全程吞掉异常。事件名默认 csrf.failed，
+     * 可被 config/csrf.php 的 audit_action 覆盖；仅当 config audit_on_failure 为真时记录。
+     *
+     * @param ServerRequestInterface $request
+     * @param 'missing_token'|'token_mismatch' $reason
+     */
+    private function auditFailure(ServerRequestInterface $request, string $reason): void
+    {
+        if (empty($this->config['audit_on_failure'] ?? true)) {
+            return;
+        }
+
+        try {
+            /** @var AuditService $audit */
+            $audit = resolve(AuditService::class);
+            $audit->event(
+                (string) ($this->config['audit_action'] ?? 'csrf.failed'),
+                [
+                    'reason' => $reason,
+                    'method' => $request->getMethod(),
+                    'path'   => $request->getUri()->getPath(),
+                ],
+                $request,
+            );
+        } catch (\Throwable) {
+            // 审计未配置或失败：绝不影响 CSRF 主流程。
         }
     }
 }

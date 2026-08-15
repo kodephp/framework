@@ -44,6 +44,16 @@ return [
 
 审计条目（默认走 PSR Logger）包含：方法、路径、状态码、耗时、用户 ID、忽略路径自动跳过。
 
+## 二（补）、CSRF 防护与 `csrf.failed` 安全事件
+
+CSRF 防护为「按需挂载」的企业级中间件，详见 [csrf.md](csrf.md)。要点：
+
+- 仅 `#[Csrf]` 标记（或 `auto_apply_unsafe` 命中）的路由触发令牌校验，其余路由 O(1) 早退零开销；
+- 校验失败时经同一离路径异步审计管线记录 `csrf.failed` 安全事件（与 `auth.failed` 同源），
+  事件含 `detail.reason`（`missing_token` / `token_mismatch`）、`method`、`path` + 取证头；
+- 登录后调用 `csrf_token_rotate()` 轮换令牌，防会话固定（session fixation）；
+- 行为开关见 `config/csrf.php`：`audit_on_failure`（默认开）、`audit_action`（默认 `csrf.failed`）。
+
 ## 三、API 版本化
 
 `VersioningMiddleware` 对带 `/vN` 前缀的路由做版本校验（基础设施路径 `/health`、`/metrics`、`/docs`、`/ping` 跳过）：

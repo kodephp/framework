@@ -42,10 +42,12 @@ $warmup = (int) ($argv[3] ?? 500);
 $rounds = (int) ($argv[4] ?? 5);
 
 $type = $desc['type'] ?? '';
+$method = (string) ($desc['method'] ?? 'GET');
+$expect = $desc['expect'] ?? 200;
 
 switch ($type) {
     case 'kode':
-        $fn = Kode::scenario($repoRoot, (array) ($desc['disable'] ?? []), (string) $desc['route']);
+        $fn = Kode::scenario($repoRoot, (array) ($desc['disable'] ?? []), (string) $desc['route'], $method);
         break;
     case 'baseline':
         $fn = Baseline::scenario();
@@ -62,10 +64,10 @@ switch ($type) {
         exit(1);
 }
 
-// 健康检查：框架场景必须返回 200，否则本场景数据不可信。
+// 健康检查：框架场景必须返回期望状态码（默认 200，CSRF 失败等场景可为 419），否则数据不可信。
 $status = $fn();
-if ($status !== null && $status !== 200) {
-    fwrite(STDERR, "健康检查失败，状态码=" . var_export($status, true) . "\n");
+if ($status !== null && $status !== $expect) {
+    fwrite(STDERR, "健康检查失败，期望=$expect 实际=" . var_export($status, true) . "\n");
     echo "null\n";
     exit(0);
 }

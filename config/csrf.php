@@ -42,4 +42,11 @@ return [
 
     // 显式跳过 CSRF 校验的路径（即便被 #[Csrf] 标记也豁免，用于需跨站调用的 Webhook 等）。
     'skip_paths' => [],
+
+    // 校验失败时是否经离路径异步审计管线记录安全事件（默认开；与 auth.failed 同源，SOC 可统一监测）。
+    // 仅在失败时触发，不污染正常请求热路径；审计未启用则静默跳过。
+    'audit_on_failure' => (bool) env('CSRF_AUDIT_ON_FAILURE', true),
+
+    // 失败审计事件名（默认 csrf.failed，可由 SIEM/告警规则统一订阅）。
+    'audit_action' => env('CSRF_AUDIT_ACTION', 'csrf.failed'),
 ];
