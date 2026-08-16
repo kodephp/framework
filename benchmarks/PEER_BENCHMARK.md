@@ -345,3 +345,34 @@ no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run_workerman_kode.sh
 **处置（已拍板）**：维持 **kode/process 5.2.31 + Workerman 驱动** 继续框架层调优/增强（用户决策）；Swoole 驱动待上游修复后恢复压测。
 框架侧清理已就位：5.2.31 原生提供 `ConnectionInterface::sendResponse`，故 v0.8.38 的 `kode-process` patch 已删除，`composer.json` `extra.patches` 仅留 `kode/database` 与 `kode/http`；`composer install` + 全量测试通过。
 
+## 9. 自研多进程（Native 驱动）评估结论：非性能路径，仅作零依赖兜底
+
+> **用户问题**：kode/process 的「自研多进程」（`RuntimeType::Native`，纯 PHP `pcntl`/`posix` master-worker + 可插拔事件循环）是否更好？
+>
+> **结论**：**对吞吐 / 并发而言，不是更好，反而不可用**。Native 是 kode/process 的**默认运行时（零扩展依赖）**，其价值在**可移植性**（任意 PHP 8.3+ CLI 直接跑，无需 Swoole/Workerman），**不是性能**。
+> 当前在本机（macOS，无 ext-event/ext-ev → `stream_select` 兜底）下，Native 驱动**首连接正常、并发即崩**——压测结果见下。
+
+### 9.1 同等条件对比（v0.8.39，11 worker，wrk -t8 -c200 -d8s，3 跑中位）
+
+| 框架 / 驱动 | /ping | /bench/json | 备注 |
+|---|---:|---:|---|
+| webman（Workerman 锚） | 182,460 | 177,139 | 100% / 100% |
+| **kode·lean @ Workerman** | 157,359 | 125,048 | ≈ webman 86% / 71% |
+| **kode·lean @ Native** | **≈ 3,188**（connect 200） | **≈ 0** | 首连接 OK，后续全部 `Socket errors: connect` |
+| **kode·default @ Workerman** | 83,502 | 51,013 | ≈ webman 46% / 29% |
+| **kode·default @ Native** | **≈ 0**（connect 200） | **≈ 0** | 同上 |
+
+- 即使用 `-c20 -t2`（仅 20 并发）也已 `Socket errors: connect 20`、`read 16097`，吞吐仅 ~3.2k rps；`-c10` 同样 `connect 10`。**任何 ≥ 约 10 的并发即全面拒绝新连接**。
+- 单连接 `curl /ping` 稳定返回 `HTTP 200`，说明监听/首连接路径正常，**缺陷在事件循环的「后续 accept / 已建连读取」路径**。
+- server log / `error_log` **无任何 PHP fatal / 异常**（已开 `display_errors` + `error_log` 复测），worker 是**静默停止接受新连接**，非崩溃退出——典型 vendor 事件循环 accept 注册未续挂或 `stream_socket_accept` 消费了可读事件的 bug。
+
+### 9.2 处置与对「继续调优」的含义
+
+1. **Native 驱动缺陷属 kode/process（vendor，已 gitignore），框架侧无法以 patch 持久修复**；最小复现与怀疑点见
+   [`benchmarks/kode-process-native-concurrency.md`](./kode-process-native-concurrency.md)（可交还上游，与 §8 Swoole 回归并列）。
+2. **「继续使用自研多进程是否更好」= 否（性能口径）**：自研 Native 当前不可用；即便修好，纯 PHP `stream_select` 事件循环的天花板也远低于 Workerman/Swoole 的 C 层 epoll/kqueue，
+   属「零依赖兜底」定位，不应作为压测/调优的对比基线。
+3. **框架继续调优的「同等条件」= Workerman vs Workerman（webman 锚）**：Swoole 驱动回归（§8）与 Native 驱动缺陷（本节）都已隔离为**上游运行时问题**，
+   框架是**运行时无关**的薄封装，调优目标应锁定 `HttpBridge` + 中间件管线 + 路由内核这些**对所有运行时生效**的公共热路径（如 §6 P2 路由级 resilience 改造）。
+4. 复现脚本：`bash benchmarks/peers/run_native_vs_workerman.sh`（webman 锚 + kode·lean/default 各跑 Workerman/Native）。
+

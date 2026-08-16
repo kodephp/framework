@@ -623,6 +623,15 @@ final class HttpServiceProvider extends ServiceProvider
         $featureRegistry = $this->container->get(FeatureRegistry::class);
         /** @var FeatureAttributeReader $featureReader */
         $featureReader = $this->container->get(FeatureAttributeReader::class);
+        // 韧性中间件在 boot() 中启用时绑定为容器单例；此处从容器解析（未绑定即 null，scanner 内部跳过挂载）。
+        // 注意：不可引用 boot() 的局部变量 $cbMiddleware/$retryMiddleware/$idemMiddleware（不在本方法作用域）。
+        $container = $this->container;
+        $cbMiddleware = $container->bound(CircuitBreakerMiddleware::class)
+            ? $container->get(CircuitBreakerMiddleware::class) : null;
+        $retryMiddleware = $container->bound(RetryMiddleware::class)
+            ? $container->get(RetryMiddleware::class) : null;
+        $idemMiddleware = $container->bound(\Kode\Framework\Idempotency\IdempotencyMiddleware::class)
+            ? $container->get(\Kode\Framework\Idempotency\IdempotencyMiddleware::class) : null;
         $scanner = new ControllerScanner(
             $app,
             $reader,
