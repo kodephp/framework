@@ -6,6 +6,7 @@ namespace Kode\Framework\Tests;
 
 use Kode\Framework\Http\Resp;
 use Kode\Framework\Http\RouteRegistry;
+use Kode\Framework\Resilience\CircuitBreakerMiddleware;
 use Kode\Http\App;
 use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
@@ -51,7 +52,9 @@ final class CircuitBreakerMiddlewareEndpointTest extends TestCase
     }
 
     /**
-     * 把已注册的路由标记为启用边缘熔断（模拟 #[CircuitBreaker] 属性扫描登记）。
+     * 把已注册的路由标记为启用边缘熔断（模拟 #[CircuitBreaker] 属性扫描登记），
+     * 并显式挂载熔断中间件到该路由——自 §6 P2 深化起，韧性中间件改为路由级挂载，
+     * 不再依赖全局管道，故此处必须挂中间件（仅打 RouteRegistry 标记不足以触发）。
      */
     private function tagBreaker(string $path): void
     {
@@ -59,6 +62,7 @@ final class CircuitBreakerMiddlewareEndpointTest extends TestCase
         $matched = $app->getRouter()->match('GET', $path);
         if ($matched->isFound() && $matched->route !== null) {
             resolve(RouteRegistry::class)->tagCircuitBreaker($matched->route, true);
+            $matched->route->middleware(resolve(CircuitBreakerMiddleware::class));
         }
     }
 

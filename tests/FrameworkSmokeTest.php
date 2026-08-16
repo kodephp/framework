@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\Application;
+use Kode\Framework\Idempotency\IdempotencyMiddleware;
 use Kode\Framework\Http\Resp;
 use Kode\Framework\Resilience\Breaker;
 use Kode\Framework\Resilience\Retry;
@@ -53,6 +54,8 @@ final class FrameworkSmokeTest extends TestCase
             if ($idemRoute->isFound() && $idemRoute->route !== null) {
                 resolve(\Kode\Framework\Http\RouteRegistry::class)
                     ->tagIdempotency($idemRoute->route, true);
+                // 幂等中间件已改为「按路由属性 #[Idempotency] 按需挂载」，需显式挂到该路由。
+                $idemRoute->route->middleware(resolve(IdempotencyMiddleware::class));
             }
 
             self::$routesRegistered = true;

@@ -34,11 +34,12 @@ final class IdempotencyEndpointTest extends TestCase
             return Resp::json(['runs' => count($runs), 'nonce' => bin2hex(random_bytes(4))]);
         });
 
-        // 幂等中间件已改为「按路由属性 #[Idempotency] 按需挂载」，需显式标记该路由（模拟属性扫描登记）。
+        // 幂等中间件已改为「按路由属性 #[Idempotency] 按需挂载」，需显式标记并挂载到该路由（模拟属性扫描登记）。
         $app = resolve(App::class);
         $matched = $app->getRouter()->match('GET', '/idem-test');
         if ($matched->isFound() && $matched->route !== null) {
             resolve(RouteRegistry::class)->tagIdempotency($matched->route, true);
+            $matched->route->middleware(resolve(\Kode\Framework\Idempotency\IdempotencyMiddleware::class));
         }
     }
 

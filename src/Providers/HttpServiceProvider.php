@@ -149,55 +149,58 @@ final class HttpServiceProvider extends ServiceProvider
             ));
         }
 
-        // HTTP 熔断中间件（薄壳层）：复用框架 Breaker 注册表（与 breaker()->run() 共享状态），
-        // 在边缘保护下游依赖，避免故障级联雪崩。仅 5xx / 传输层异常计入熔断，4xx 默认不计，
-        // 熔断打开时短路返回 503（连重试都不发起，故注册在重试外层）。与 RetryMiddleware（抖动恢复）、
-        // IdempotencyMiddleware（防重复提交）同属边缘韧性三件套。开关见 config/resilience.php 的 breaker.http。
-        if (!empty($this->config('resilience.breaker.http.enabled', true))) {
-            /** @var Breaker $breaker */
-            $breaker = $this->container->get(Breaker::class);
+        // 边缘韧性三件套：改为「路由级挂载」（§6 P2 深化）——仅对声明 #[CircuitBreaker]/#[Retry]/
+        // #[Idempotency] 的路由挂载对应中间件（见 scanAttributeRoutes / scanExplicit*），彻底移出全局
+        // 管道，未声明路由的默认栈不再付出这三个中间件帧开销。RouteRegistry 标记保留为中间件内部
+        // O(1) 早退门控的元数据来源。挂载顺序 breaker(外) → idempotency → retry(内) 与原全局一致。
+        // 注：不再经 $app->use() 注册到全局管道；此处绑定为单例（启用时），供属性扫描 / 显式路由扫描 /
+        // 测试统一解析挂载。
+        $container = $this->container;
+        $breakerHttpCfg = (array) $this->config('resilience.breaker.http', []);
+        $idemHttpCfg = (array) $this->config('idempotency.http', []);
+        $retryHttpCfg = (array) $this->config('resilience.retry.http', []);
+        $dispatcher = static fn (object $event): object => event($event);
 
-            $app->use(new CircuitBreakerMiddleware(
-                $breaker,
-                (array) $this->config('resilience.breaker.http', []),
-                static fn (object $event): object => event($event),
-                $app->getRouter(),
-                $registry,
-                $resolver,
-            ));
+        if (!empty($breakerHttpCfg['enabled'] ?? true)) {
+            $this->container->singleton(CircuitBreakerMiddleware::class, static fn(): CircuitBreakerMiddleware =>
+                new CircuitBreakerMiddleware(
+                    $container->get(Breaker::class),
+                    $breakerHttpCfg,
+                    $dispatcher,
+                    $app->getRouter(),
+                    $registry,
+                    $resolver,
+                ));
         }
 
-        // HTTP 幂等中间件（薄壳层）：自动处理 Idempotency-Key 头，重放返回首次缓存响应。
-        // 仅对携带该头的请求生效（缺头默认放行，零开销）；开关见 config/idempotency.http.enabled。
-        // 注册在限流之后、业务之前——尽早占位，避免重复执行业务。
-        if (!empty($this->config('idempotency.http.enabled', true))) {
-            /** @var \Kode\Framework\Idempotency\IdempotencyManager $idemManager */
-            $idemManager = $this->container->get(\Kode\Framework\Idempotency\IdempotencyManager::class);
-
-            $app->use(new \Kode\Framework\Idempotency\IdempotencyMiddleware(
-                $idemManager,
-                (array) $this->config('idempotency.http', []),
-                $app->getRouter(),
-                $registry,
-                $resolver,
-            ));
+        if (!empty($idemHttpCfg['enabled'] ?? true)) {
+            $this->container->singleton(\Kode\Framework\Idempotency\IdempotencyMiddleware::class, static fn(): \Kode\Framework\Idempotency\IdempotencyMiddleware =>
+                new \Kode\Framework\Idempotency\IdempotencyMiddleware(
+                    $container->get(\Kode\Framework\Idempotency\IdempotencyManager::class),
+                    $idemHttpCfg,
+                    $app->getRouter(),
+                    $registry,
+                    $resolver,
+                ));
         }
 
-        // HTTP 重试中间件（薄壳层）：复用 Retry 原语（config/resilience.php 的 retry 段退避），
-        // 对安全方法（默认 GET/HEAD/PUT/DELETE/OPTIONS）的 502/503/504 或指定异常自动重试，
-        // 把上游瞬态抖动对调用方屏蔽。注册在幂等之后（更内层、贴近 handler），仅包裹真实执行。
-        if (!empty($this->config('resilience.retry.http.enabled', true))) {
-            /** @var Retry $retry */
-            $retry = $this->container->get(Retry::class);
-
-            $app->use(new RetryMiddleware(
-                $retry,
-                (array) $this->config('resilience.retry.http', []),
-                $app->getRouter(),
-                $registry,
-                $resolver,
-            ));
+        if (!empty($retryHttpCfg['enabled'] ?? true)) {
+            $this->container->singleton(RetryMiddleware::class, static fn(): RetryMiddleware =>
+                new RetryMiddleware(
+                    $container->get(Retry::class),
+                    $retryHttpCfg,
+                    $app->getRouter(),
+                    $registry,
+                    $resolver,
+                ));
         }
+
+        $cbMiddleware = $this->container->bound(CircuitBreakerMiddleware::class)
+            ? $this->container->get(CircuitBreakerMiddleware::class) : null;
+        $idemMiddleware = $this->container->bound(\Kode\Framework\Idempotency\IdempotencyMiddleware::class)
+            ? $this->container->get(\Kode\Framework\Idempotency\IdempotencyMiddleware::class) : null;
+        $retryMiddleware = $this->container->bound(RetryMiddleware::class)
+            ? $this->container->get(RetryMiddleware::class) : null;
 
         // 请求体 JSON 健壮性：声明 application/json 但 body 非法时显式 400（默认关闭）。
         if (!empty($this->config('http.json_strict', false))) {
@@ -309,15 +312,15 @@ final class HttpServiceProvider extends ServiceProvider
         }
 
         // 4c) 为显式路由（可反射 handler）补充 #[CircuitBreaker] / #[Retry] / #[Idempotency] 标记登记
-        //     （与限流 / CSRF 同范式）：属性路由已在扫描阶段登记，此处仅处理显式路由。
+        //     + 路由级中间件挂载（与属性路由同范式）：属性路由已在扫描阶段挂载，此处仅处理显式路由。
         if (!empty($this->config('resilience.breaker.http.enabled', true))) {
-            $this->scanExplicitCircuitBreakers($app, $registry);
+            $this->scanExplicitCircuitBreakers($app, $registry, $cbMiddleware);
         }
         if (!empty($this->config('resilience.retry.http.enabled', true))) {
-            $this->scanExplicitRetries($app, $registry);
+            $this->scanExplicitRetries($app, $registry, $retryMiddleware);
         }
         if (!empty($this->config('idempotency.http.enabled', true))) {
-            $this->scanExplicitIdempotencies($app, $registry);
+            $this->scanExplicitIdempotencies($app, $registry, $idemMiddleware);
         }
     }
 
@@ -498,8 +501,12 @@ final class HttpServiceProvider extends ServiceProvider
      * 与 scanExplicitCsrf / scanExplicitRateLimits / scanExplicitFeatures 同一范式：
      * 属性路由（ControllerScanner）已在扫描阶段登记，此处仅处理显式路由里可被反射的 handler。
      */
-    private function scanExplicitCircuitBreakers(App $app, RouteRegistry $registry): void
+    private function scanExplicitCircuitBreakers(App $app, RouteRegistry $registry, ?CircuitBreakerMiddleware $mw): void
     {
+        if ($mw === null) {
+            return;
+        }
+
         $reader = new CircuitBreakerAttributeReader();
 
         foreach ($app->getRouter()->getRoutes() as $route) {
@@ -514,6 +521,7 @@ final class HttpServiceProvider extends ServiceProvider
 
             if ($reader->isPresent($class, $method)) {
                 $registry->tagCircuitBreaker($route, true);
+                $route->middleware($mw);
             }
         }
     }
@@ -523,8 +531,12 @@ final class HttpServiceProvider extends ServiceProvider
      *
      * 同 scanExplicitCircuitBreakers 范式。
      */
-    private function scanExplicitRetries(App $app, RouteRegistry $registry): void
+    private function scanExplicitRetries(App $app, RouteRegistry $registry, ?RetryMiddleware $mw): void
     {
+        if ($mw === null) {
+            return;
+        }
+
         $reader = new RetryAttributeReader();
 
         foreach ($app->getRouter()->getRoutes() as $route) {
@@ -539,6 +551,7 @@ final class HttpServiceProvider extends ServiceProvider
 
             if ($reader->isPresent($class, $method)) {
                 $registry->tagRetry($route, true);
+                $route->middleware($mw);
             }
         }
     }
@@ -548,8 +561,12 @@ final class HttpServiceProvider extends ServiceProvider
      *
      * 同 scanExplicitCircuitBreakers 范式。
      */
-    private function scanExplicitIdempotencies(App $app, RouteRegistry $registry): void
+    private function scanExplicitIdempotencies(App $app, RouteRegistry $registry, ?\Kode\Framework\Idempotency\IdempotencyMiddleware $mw): void
     {
+        if ($mw === null) {
+            return;
+        }
+
         $reader = new IdempotencyAttributeReader();
 
         foreach ($app->getRouter()->getRoutes() as $route) {
@@ -564,6 +581,7 @@ final class HttpServiceProvider extends ServiceProvider
 
             if ($reader->isPresent($class, $method)) {
                 $registry->tagIdempotency($route, true);
+                $route->middleware($mw);
             }
         }
     }
@@ -605,7 +623,16 @@ final class HttpServiceProvider extends ServiceProvider
         $featureRegistry = $this->container->get(FeatureRegistry::class);
         /** @var FeatureAttributeReader $featureReader */
         $featureReader = $this->container->get(FeatureAttributeReader::class);
-        $scanner = new ControllerScanner($app, $reader, $registry, featureRegistry: $featureRegistry, featureReader: $featureReader);
+        $scanner = new ControllerScanner(
+            $app,
+            $reader,
+            $registry,
+            featureRegistry: $featureRegistry,
+            featureReader: $featureReader,
+            circuitBreakerMiddleware: $cbMiddleware,
+            retryMiddleware: $retryMiddleware,
+            idempotencyMiddleware: $idemMiddleware,
+        );
 
         /** @var array<string, string> $dirs */
         $dirs = (array) $this->config('routes.attributes.controllers', []);

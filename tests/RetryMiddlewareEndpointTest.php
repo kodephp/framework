@@ -45,7 +45,7 @@ final class RetryMiddlewareEndpointTest extends TestCase
             return Resp::json(['ok' => true]);
         });
 
-        // 重试中间件已改为「按路由属性 #[Retry] 按需挂载」，需显式标记这些路由（模拟属性扫描登记）。
+        // 重试中间件已改为「按路由属性 #[Retry] 按需挂载」，需显式标记并挂载到这些路由（模拟属性扫描登记）。
         $this->tagRetry('/retry-mw-test');
         $this->tagRetry('/retry-mw-test-post');
     }
@@ -59,6 +59,7 @@ final class RetryMiddlewareEndpointTest extends TestCase
         $matched = $app->getRouter()->match($method, $path);
         if ($matched->isFound() && $matched->route !== null) {
             resolve(RouteRegistry::class)->tagRetry($matched->route, true);
+            $matched->route->middleware(resolve(\Kode\Framework\Resilience\RetryMiddleware::class));
         }
     }
 

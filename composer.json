@@ -101,9 +101,6 @@
             },
             "kode/http": {
                 "Response::json 直构 + Swoole 发射走内部字符串体，削减常驻内存吞吐路径的每请求开销": "patches/kode-http-response-optimize.patch"
-            },
-            "kode/process": {
-                "ConnectionInterface 新增 sendResponse(PSR-7)：引擎专用响应写出（Swoole C 层 status/header/end、Workerman 原生 Http\\Response、Native 序列化）下沉到各 Driver，框架 src 不再点名任何引擎类": "patches/kode-process-connection-sendresponse.patch"
             }
         }
     },

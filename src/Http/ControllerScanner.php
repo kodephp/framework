@@ -14,8 +14,11 @@ use Kode\Framework\Http\Attributes\Controller;
 use Kode\Framework\Http\Attributes\Route;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
 use Kode\Framework\Idempotency\IdempotencyAttributeReader;
+use Kode\Framework\Idempotency\IdempotencyMiddleware;
 use Kode\Framework\Resilience\CircuitBreakerAttributeReader;
+use Kode\Framework\Resilience\CircuitBreakerMiddleware;
 use Kode\Framework\Resilience\RetryAttributeReader;
+use Kode\Framework\Resilience\RetryMiddleware;
 use Kode\Framework\Security\Csrf\CsrfAttributeReader;
 use Kode\Http\App;
 use ReflectionMethod;
@@ -46,6 +49,9 @@ final class ControllerScanner
         private readonly IdempotencyAttributeReader $idempotencyReader = new IdempotencyAttributeReader(),
         private readonly FeatureRegistry $featureRegistry = new FeatureRegistry(),
         private readonly FeatureAttributeReader $featureReader = new FeatureAttributeReader(),
+        private readonly ?CircuitBreakerMiddleware $circuitBreakerMiddleware = null,
+        private readonly ?RetryMiddleware $retryMiddleware = null,
+        private readonly ?IdempotencyMiddleware $idempotencyMiddleware = null,
     ) {
     }
 
@@ -143,6 +149,21 @@ final class ControllerScanner
         $middleware = array_values(array_unique([...$classMiddleware, ...$attr->middleware]));
         foreach ($middleware as $mw) {
             $route->middleware($mw);
+        }
+
+        // 路由级边缘韧性：仅对声明 #[CircuitBreaker]/#[Retry]/#[Idempotency] 的路由挂载对应中间件，
+        // 彻底移出全局管道（未声明路由的默认栈不再付出该中间件帧开销，§6 P2 深化）。
+        // 挂载顺序 breaker(外) → idempotency → retry(内)，与原全局管道嵌套一致；RouteRegistry 标记
+        // 仍保留，作为中间件内部 O(1) 早退门控的元数据来源。中间件实例由 HttpServiceProvider 注入，
+        // 禁用对应能力时传入 null（不挂载）。kode/http 的 $route->middleware() 支持直接传实例。
+        if ($this->circuitBreakerReader->isPresent($class, $method) && $this->circuitBreakerMiddleware !== null) {
+            $route->middleware($this->circuitBreakerMiddleware);
+        }
+        if ($this->idempotencyReader->isPresent($class, $method) && $this->idempotencyMiddleware !== null) {
+            $route->middleware($this->idempotencyMiddleware);
+        }
+        if ($this->retryReader->isPresent($class, $method) && $this->retryMiddleware !== null) {
+            $route->middleware($this->retryMiddleware);
         }
 
         // OpenAPI：捕获方法上的 #[OpenApi] 补充片段，供 ApiDoc 生成器读取。

@@ -108,7 +108,8 @@ final class HttpBridge
      * 内部决定最优写出策略（Swoole C 层 status()+header()+end($body) / Workerman 原生
      * Http\Response 对象式 / Native 序列化为整串）。框架层完全不点名任何引擎类，
      * 符合「框架只做薄封装」的架构红线——引擎专用写出逻辑全部下沉在 kode/process 各自的
-     * Driver 中（对应 patch：patches/kode-process-connection-sendresponse.patch）。
+     * Driver 中（kode/process >= 5.2.31 原生提供 ConnectionInterface::sendResponse，
+     * 引擎专用写出逻辑已随包交付，无需框架侧 patch）。
      *
      * gzip 自动压缩由运行时依据请求 Accept-Encoding 内部裁决，无需调用方传入。
      *
