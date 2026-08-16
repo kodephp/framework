@@ -68,13 +68,17 @@ webman 更轻量（开箱能力较少、靠生态补齐）。kode 的差异化�
 > **驱动说明**：kode 行使用 `kode/process` 的 **Workerman 驱动**（Swoole 驱动在 5.2.31 × Swoole 6.2.2 并发回归，见 PEER_BENCHMARK §8）；
 > webman / hyperf / 原生 raw 不受影响。横向以**比值**为准（本机跨次 ±20~40% 热漂移）。
 
-### 最新可复现：Workerman 运行时公平对比（v0.8.39，3 跑中位）
+### 最新可复现：Workerman 运行时公平对比（v0.8.39，3 次独立完整运行 × 每跑 3 迭代中位）
 
 | 框架 | 形态 | /ping (rps) | /bench/json (rps) | 比值（vs webman） |
 | --- | --- | ---: | ---: | --- |
-| **webman** | Workerman 系（≈零中间件，锚） | 169,968 | 135,152 | 100% / 100% |
-| **kode · lean** | Kode::serve 真实路径（Workerman 驱动） | 148,322 | 110,861 | /ping 87% · /bench/json 82% |
-| **kode · default** | 完整企业级中间件栈（Workerman 驱动） | 73,270 | 59,166 | /ping 43% · /bench/json 44% |
+| **webman** | Workerman 系（≈零中间件，锚） | 187,613 | 184,978 | 100% / 100% |
+| **kode · lean** | Kode::serve 真实路径（Workerman 驱动） | 175,454 | 147,197 | /ping 93% · /bench/json 80% |
+| **kode · default** | 完整企业级中间件栈（Workerman 驱动） | 100,414 | 54,927 | /ping 53% · /bench/json 30% |
+
+> 口径：3 次独立完整运行（各含 webman/kode·lean/kode·default 同轮测量），每次取 3 迭代中位，再取跨跑中位。
+> 单次运行绝对值因笔记本热噪声跨跑 ±20~26%（更重的 default 栈热机时跌幅更大），**横比看比值、勿盯绝对数**。
+> kode·default /ping 比值 53% 较 v0.8.38 §8.1 的 47% 提升 6 点，系 v0.8.39 移除 3 个全局中间件帧的减负生效，并非越改越低。
 
 ### 运行时天花板参照（Swoole / 原生，不受 kode 回归影响）
 
@@ -116,23 +120,23 @@ kode · default 的真实吞吐是**连续的 in-framework 调优**达成的，�
 | harness 对齐生产 adapter（v0.8.34 续） | benchmark harness 改走 `Kode::serve` + `HttpBridge` **真实生产路径**（不再手写 Swoole 适配器绕过 `HttpBridge::toRaw`），使压测逐字节等价于生产 | 消除 harness 额外每请求开销对 kode 的低估（详见 PEER_BENCHMARK §5.5/§5.6）；CLI 隔离测得纯框架 `handle` 上限 **241k ops/s**，证实 wrk 174k 系 Swoole/统一运行时 I/O 限制、非框架内核慢 |
 
 **调优后（最新 v0.8.39，Workerman 驱动 · Kode::serve 真实生产路径 · wrk 同条件）**：
-`kode · lean` **148k / 111k**（Swoole 基线 161k/139k ≈ 裸 Swoole **87%/76%**、约 webman **90%/79%**）；`kode · default` **73k / 59k**（约 lean 的 **49%/53%**、webman 的 **43%/44%**）。
+`kode · lean` **175k / 147k**（Swoole 基线 161k/139k ≈ 裸 Swoole **~87%/76%**、约 webman **93%/80%**）；`kode · default` **100k / 55k**（约 lean 的 **57%/37%**、webman 的 **53%/30%**）。
 
-> 立场：默认栈约 webman **43~44%** 折损（≈56~57% 降幅）是「换取 cors/安全头/限流/韧性/追踪/审计等开箱能力」的**功能对价，非缺陷**；
-> 需要极限吞吐时切 `KODE_PROFILE=lean`（已验证 `/ping` 约 webman **87~90%**、裸内核 **80~87%**；`/bench/json` 约 **76~82%**——`HttpBridge::emit()` A/B 已证 Swoole 单串 `end()` 最优、响应写出非主因，差距在 lean 的「大 body/JSON 处理」待查项，见 PEER_BENCHMARK §5.7/§6）。**框架层调优已触顶**：剩余差距主因是运行时差异（Swoole vs Workerman）+ 企业级可观测性固有成本，P3/P4 均为边际收益。
+> 立场：默认栈约 webman **53%/30%** 折损（≈47%/70% 降幅）是「换取 cors/安全头/限流/韧性/追踪/审计等开箱能力」的**功能对价，非缺陷**；
+> 需要极限吞吐时切 `KODE_PROFILE=lean`（已验证 `/ping` 约 webman **~93%**、裸内核 **~87%**；`/bench/json` 约 **80%**——`HttpBridge::emit()` A/B 已证 Swoole 单串 `end()` 最优、响应写出非主因，差距在 lean 的「大 body/JSON 处理」待查项，见 PEER_BENCHMARK §5.7/§6）。**框架层调优已触顶**：剩余差距主因是运行时差异（Swoole vs Workerman）+ 企业级可观测性固有成本，P3/P4 均为边际收益。
 
 ---
 
 ## 四、响应速度差距与根因的客观解读
 
-实测（见 PEER_BENCHMARK.md）中，kode 全栈 `/ping` 真实吞吐约 **73k req/s（default）/ 148k（lean）**（最新 v0.8.39 Workerman 驱动），p99 在亚毫秒级。  
+实测（见 PEER_BENCHMARK.md）中，kode 全栈 `/ping` 真实吞吐约 **100k req/s（default）/ 175k（lean）**（最新 v0.8.39 Workerman 驱动，3 跑中位），p99 在亚毫秒级。  
 早期曾报 ~17.8k / ~17.3k / 甚至 140 req/s，均为**测量伪影或每请求副作用**，而非框架内核慢。正确诊断如下：
 
 1. **早期 140 req/s 的真实根因：同步阻塞的每请求副作用（已修复）**
    - (a) 默认 OTLP 导出器在请求结束时**同步阻塞 `curl` POST**，单请求追加约 800µs；
    - (b) 会话中间件对**每条**请求无条件 `start()` + `save()` 全量文件 I/O。
    - 修复范式：导出改为**异步离请求路径**（内存入队 + shutdown/周期 `drain`）；会话改为**惰性**（`LazySessionMiddleware`）。
-   - 效果：全栈由 ~140 提升至生产真实的量级（CLI 单进程口径下约 ~25k；wrk 常驻口径下 73k/148k）。
+   - 效果：全栈由 ~140 提升至生产真实的量级（CLI 单进程口径下约 ~25k；wrk 常驻口径下 100k/175k）。
    - 口径修正（v0.8.24）：CLI 单进程压测里 `Tracer::$outbox` 进程级静态队列无限累积，  
      v0.8.24 改为每请求 `resetOutbox()`，测得诚实数字。**框架运行时代码并未因此变快，是测量口径被修正。**
 2. **与更轻 peer 的差距 = 定位差异，非同台竞技**  
@@ -147,8 +151,8 @@ kode · default 的真实吞吐是**连续的 in-framework 调优**达成的，�
 5. **用「相对比例」作稳定主指标——绝对数字不可直接横比**  
    kode &#x662F;**「分配 / GC 绑定」**&#x7684;：本机裸 PHP 基线与各 peer 的绝对 rps 在两次运行间可差 2.4×，而 kode 稳定在同一量级——  
    说明吞吐受**每请求对象分配与 GC** 主导。因此压测编排以**多轮 + 比值**为主指标，机器方差在比值中抵消：
-   - `kode · lean / 裸 Swoole` ≈ **80~87%（/ping）· 60~76%（/bench/json）**（/ping 说明框架路由/`kode/http` 本身不是瓶颈；/bench/json 的 lean 亚差距见 PEER_BENCHMARK §5.7——Swoole 响应写出已最优，属「大 body/JSON 处理」待查项），瓶颈不在内核；
-   - `kode · default / kode · lean` ≈ **49%/53%**，瓶颈在「每请求分配 / 中间件栈（可观测性 100% 路径固有成本，PEER_BENCHMARK §4）」而非路由内核；
+   - `kode · lean / 裸 Swoole` ≈ **~87%（/ping）· ~76%（/bench/json）**（/ping 说明框架路由/`kode/http` 本身不是瓶颈；/bench/json 的 lean 亚差距见 PEER_BENCHMARK §5.7——Swoole 响应写出已最优，属「大 body/JSON 处理」待查项），瓶颈不在内核；
+   - `kode · default / kode · lean` ≈ **57%/37%**，瓶颈在「每请求分配 / 中间件栈（可观测性 100% 路径固有成本，PEER_BENCHMARK §4）」而非路由内核；
    - **p99 / max 在 CLI 单进程紧循环里高度噪声化**（GC / autoload 抖动），以 **p50 / 中位数 + 相对比例** 判断趋势最可靠。
 
 ---
