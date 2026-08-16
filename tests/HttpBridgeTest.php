@@ -63,4 +63,29 @@ final class HttpBridgeTest extends TestCase
         // 旧客户端协商出 1.0 时，状态行应反映真实协议而非硬编码 1.1。
         self::assertStringStartsWith('HTTP/1.0 200', HttpBridge::toRaw($psr, '1.0'));
     }
+
+    public function testEmitDelegatesToConnectionSendResponse(): void
+    {
+        $response = Response::make('hi', 200)->withHeader('Content-Type', 'text/plain');
+        $conn = $this->createMock(\Kode\Process\Runtime\ConnectionInterface::class);
+
+        // 架构红线：框架层只做薄委托，引擎专用写出由 kode/process 各 Driver 负责。
+        $conn->expects(self::once())
+            ->method('sendResponse')
+            ->with($response, '1.1');
+
+        HttpBridge::emit($conn, $response);
+    }
+
+    public function testEmitDelegatesProtocol(): void
+    {
+        $response = Response::make('hi', 200);
+        $conn = $this->createMock(\Kode\Process\Runtime\ConnectionInterface::class);
+
+        $conn->expects(self::once())
+            ->method('sendResponse')
+            ->with($response, '1.0');
+
+        HttpBridge::emit($conn, $response, '1.0');
+    }
 }

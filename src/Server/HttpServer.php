@@ -11,7 +11,6 @@ use Kode\Http\App as HttpApp;
 use Kode\Http\Response;
 use Kode\Process\Http\Request as ProcessRequest;
 use Kode\Process\Kode;
-use Kode\Process\Protocol\HttpProtocol;
 use Kode\Process\Runtime\ConnectionInterface;
 use Psr\Http\Message\ResponseInterface;
 use function Kode\Process\cpu_count;
@@ -132,8 +131,7 @@ final class HttpServer
                 /** @var HttpApp $http */
                 $handler = static fn () => $http->handle($psr);
                 $response = $graceful instanceof GracefulShutdown ? $graceful->track($handler) : $handler();
-                $gzip = HttpProtocol::acceptsGzip((string) ($message->header('accept-encoding') ?? ''));
-                HttpBridge::emit($conn, $response, self::normalizeProtocol($message->protocol()), $gzip);
+                HttpBridge::emit($conn, $response, self::normalizeProtocol($message->protocol()));
             } catch (\Throwable $e) {
                 $debug = (bool) (Application::getInstance()?->config()->get('app.debug', false) ?? false);
                 HttpBridge::emit($conn, $this->errorResponse($e, $debug));

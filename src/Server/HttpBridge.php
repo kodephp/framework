@@ -102,98 +102,24 @@ final class HttpBridge
     }
 
     /**
-     * 以「C 层 header()/end()」写出响应（对齐 webman / Workerman 的 C 层序列化）。
+     * 写出一个 PSR-7 响应。
      *
-     * 关键修正（v0.8.37）：Swoole 走 C 层 `status()+header()+end($body)`，body 只在 C 层
-     * 拷贝一次；不再像 {@see self::toRaw} 那样在 PHP 侧把「headers + body」拼成整串
-     * （每请求一次 PHP 级大字符串分配 + 拷贝，开销随响应体线性放大——这是 kode·lean
-     * `/bench/json` 落后 webman 近 15% 的真实主因：webman 在 C 层直接写出，无此 PHP 拼接）。
-     * 测：kode·lean /bench/json 由 ~159k 升至 ~178k（≈ webman 183k 的 97%）。
+     * 委托给 kode/process 的 {@see ConnectionInterface::sendResponse()}，由各运行时驱动
+     * 内部决定最优写出策略（Swoole C 层 status()+header()+end($body) / Workerman 原生
+     * Http\Response 对象式 / Native 序列化为整串）。框架层完全不点名任何引擎类，
+     * 符合「框架只做薄封装」的架构红线——引擎专用写出逻辑全部下沉在 kode/process 各自的
+     * Driver 中（对应 patch：patches/kode-process-connection-sendresponse.patch）。
      *
-     * gzip：SwooleConnection 的 gzipAuto 自动压缩开启时退回 toRaw+send（保留压缩）；
-     * 框架当前不调用 setGzipAuto，故压测与生产默认均走 C 层直写路径。
+     * gzip 自动压缩由运行时依据请求 Accept-Encoding 内部裁决，无需调用方传入。
      *
-     * @param bool $gzip 调用方是否已依据请求 Accept-Encoding 决议允许压缩
+     * @param string $protocol HTTP 协议版本，默认 1.1
      */
     public static function emit(
         ConnectionInterface $conn,
         ResponseInterface $response,
         string $protocol = '1.1',
-        bool $gzip = false,
     ): void {
-        $native = $conn->native();
-
-        // Workerman：构造原生 Http\Response 交 TcpConnection 的 C 层「对象式」序列化
-        // （对齐 webman：一次 send 传响应对象，C 层遍历 header 数组写出，比纯 PHP 拼串快）。
-        if (
-            class_exists(\Workerman\Connection\TcpConnection::class, false)
-            && $native instanceof \Workerman\Connection\TcpConnection
-            && class_exists(\Workerman\Protocols\Http\Response::class, false)
-        ) {
-            self::emitWorkerman($native, $response);
-            return;
-        }
-
-        // Swoole（HTTP 模式，native 即 Swoole\Http\Response）：C 层 status()+header()+end($body)。
-        // body 仅在 C 层拷贝一次，彻底消除 toRaw 的 PHP 侧 headers+body 整串拼接（body 缩放开销）。
-        // gzip 自动压缩开启时退回 toRaw+send（保留压缩能力）。
-        if (
-            class_exists(\Swoole\Http\Response::class, false)
-            && $native instanceof \Swoole\Http\Response
-            && !$conn->isGzipAuto()
-        ) {
-            self::emitSwoole($native, $response, $protocol);
-            return;
-        }
-
-        // 回退：Native 后端，或 Swoole gzip 自动压缩开启时，走纯 PHP 序列化单串发送。
-        $conn->send(self::toRaw($response, $protocol), true);
-    }
-
-    /**
-     * Swoole：C 层 status()+header()+end($body) 写出，消除 PHP 侧 headers+body 整串拼接。
-     */
-    private static function emitSwoole(\Swoole\Http\Response $resp, ResponseInterface $response, string $protocol): void
-    {
-        $status = $response->getStatusCode();
-        $resp->status($status, $response->getReasonPhrase() ?: self::reasonPhrase($status));
-
-        $body = $response instanceof Response
-            ? $response->getBodyString()
-            : (string) $response->getBody();
-
-        $hasContentLength = false;
-        foreach ($response->getHeaders() as $name => $values) {
-            if (strtolower((string) $name) === 'content-length') {
-                $hasContentLength = true;
-            }
-            foreach ($values as $value) {
-                $resp->header((string) $name, (string) $value);
-            }
-        }
-
-        if (!$hasContentLength) {
-            $resp->header('Content-Length', (string) strlen($body));
-        }
-
-        $resp->end($body);
-    }
-
-    /**
-     * Workerman：构造原生 Http\Response 交 TcpConnection 的 C 层序列化。
-     */
-    private static function emitWorkerman(\Workerman\Connection\TcpConnection $conn, ResponseInterface $response): void
-    {
-        $body = $response instanceof Response
-            ? $response->getBodyString()
-            : (string) $response->getBody();
-
-        $wr = new \Workerman\Protocols\Http\Response(
-            $response->getStatusCode(),
-            $response->getHeaders(),
-            $body,
-        );
-        $conn->send($wr);
+        $conn->sendResponse($response, $protocol);
     }
 
     private static function normalizeVersion(string $protocol): string

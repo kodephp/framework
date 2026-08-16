@@ -247,6 +247,13 @@ wrk 实测数字即真实生产吞吐，不再被 harness 额外开销低估。�
 - 边界：`gzipAuto` 实际从未启用（`isGzipAuto()` 恒 false），故 C 层路径不丢失任何功能；`emit()` 后 HttpServer 不再
   `close()`，连接按请求作用域安全。
 
+> **v0.8.38 架构红线收尾**：上述引擎专用写出逻辑（Swoole C 层 `status()+header()+end($body)` /
+> Workerman 原生 `Http\Response` / Native 序列化）已**下沉到 `kode/process` 各 Driver**，并在
+> `ConnectionInterface` 新增 `sendResponse(ResponseInterface, protocol)`；框架 `src/HttpBridge::emit()`
+> 退化为纯薄委托 `$conn->sendResponse($response, $protocol)`，**完全不点名任何引擎类**（不再有任何
+> `class_exists(\Swoole\Http\Response)` / `class_exists(\Workerman\...)`）。该能力以 vendor patch
+>（`patches/kode-process-connection-sendresponse.patch`）固化，`composer install` 后自动应用、fresh clone 可复现。
+
 **B. harness 稳定化（治噪声，非粉饰）**
 
 - `run.sh`：WARMUP 3→8s、ITERS 3→5、COOLDOWN 15→20s；取 5 跑中位数抗噪。
@@ -265,7 +272,7 @@ wrk 实测数字即真实生产吞吐，不再被 harness 额外开销低估。�
 
 | 优先级 | 项 | 预期收益 | 改动性质 |
 |---|---|---|---|
-| **P0（本轮已落地）** | **响应写出（C 层，双引擎）**：`HttpBridge::emit()` 现已把 **Workerman 后端**路由到 C 层「对象式」序列化、**Swoole 后端**路由到 C 层 `status()+header()+end($body)`（v0.8.37 新增 `emitSwoole()`），二者均消除旧 `toRaw()` 的 PHP 级「headers+body」整串拼接（每请求少一次大字符串分配、降 GC 压力）。微基准铁证：框架响应路径**零 body 缩放开销**（§5.10C），故响应写出**不是** kode·lean `/bench/json` 仅裸 Swoole 76%/webman 79% 的主因（主因 = Swoole vs Workerman 运行时差异 + 本机热噪声，§3.2）。**待收尾（架构红线）**：`emit()` 内 `class_exists(\Swoole\Http\Response)` / `class_exists(\Workerman\...)` 仍让框架 `src/` 点名引擎，应下沉到 `kode/process` 的 `ConnectionInterface::emit(ResponseInterface)`（vendor patch），使框架完全不点名引擎。 | 已落地（双引擎 C 层写出） | 框架内 + 待 kode/process patch |
+| **P0（已落地）** | **响应写出（C 层，双引擎）+ 架构红线收尾**：`HttpBridge::emit()` 现已把 **Workerman 后端**路由到 C 层「对象式」序列化、**Swoole 后端**路由到 C 层 `status()+header()+end($body)`（v0.8.37 新增），二者均消除旧 `toRaw()` 的 PHP 级「headers+body」整串拼接（每请求少一次大字符串分配、降 GC 压力）。微基准铁证：框架响应路径**零 body 缩放开销**（§5.10C），故响应写出**不是** kode·lean `/bench/json` 仅裸 Swoole 76%/webman 79% 的主因（主因 = Swoole vs Workerman 运行时差异 + 本机热噪声，§3.2）。**v0.8.38 架构红线收尾**：引擎专用写出逻辑（Swoole C 层 / Workerman 原生 `Http\Response` / Native 序列化）已**下沉到 `kode/process` 各 Driver**，并在 `ConnectionInterface` 新增 `sendResponse(ResponseInterface, protocol)`；框架 `src/HttpBridge::emit()` 改为纯薄委托 `$conn->sendResponse($response, $protocol)`，**完全不点名任何引擎类**。该能力以 vendor patch（`patches/kode-process-connection-sendresponse.patch`）固化，`composer install` 后自动应用、fresh clone 可复现。 | 已落地（双引擎 C 层写出 + 红线收尾） | 框架内 + kode/process patch（已固化） |
 | **P1（已落地）** | **可观测性 100% 路径固有成本**（Trace `ensure()` ≈ 2.3µs/请求，含 Context 读写 + CSPRNG + 入向头解析 + syncServer；非克隆、非随机数）。这是 kode·default 与 webman 差距的主因，且**框架内不可消除**（webman 默认不自带 trace/metrics）。**已新增 `observability.tracing.attach_headers`（默认 true）开关**：置 false 时跳过 `responseHeaders()` + 3×`withHeader` 的响应头回写（本机微基准省 ~2.1µs/op、约占该切片 47%，`ensure()` 固有成本保留），供「不依赖 W3C 传播、仅内部可观测」的高吞吐部署选择（见 §5.9）。真实生产路径增益受其余固定管线限制（与 §4 ~0.77µs 可观测 delta 一致），需 `run.sh` 实测。 | 中（仅 attach_headers 开关）/ 无（接受为功能对价） | 配置开关（已实施，默认 true 保持向后兼容） |
 | P1 | 全局限流默认 `capacity=10/s` 过低（config/limiting.php），会**真实限流生产流量**；建议默认大幅提高或仅按 `#[RateLimit]` 生效 | 生产可用性（非压测） | 配置默认值 |
 | P2 | resilience 三件套（熔断/重试/幂等）目前**全局包裹每条请求**，应仿照 rate-limit/feature/csrf 改为「按路由属性 `#[Retry]`/`#[CircuitBreaker]`/`#[Idempotency]` 扫描后按需注册」 | 默认栈再降数 % | 架构（需评估 kode/http 是否支持路由级中间件） |

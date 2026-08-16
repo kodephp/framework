@@ -265,8 +265,7 @@ Kode::serve("http://127.0.0.1:$port", [
                 ? $graceful->track($handler)
                 : $handler();
             $protocol = preg_match('#HTTP/(\d+\.\d+)#i', $message->protocol(), $m) ? $m[1] : '1.1';
-            $gzip = \Kode\Process\Protocol\HttpProtocol::acceptsGzip((string) ($message->header('accept-encoding') ?? ''));
-            HttpBridge::emit($conn, $response, $protocol, $gzip);
+            HttpBridge::emit($conn, $response, $protocol);
         } catch (\Throwable $e) {
             HttpBridge::emit($conn, Resp::error('服务器内部错误', 500));
         }
