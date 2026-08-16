@@ -15,6 +15,7 @@ bench() {
   local name="$1" script="$2" port="$3" args="${4:-}" profile="${5:-}" runtime="${6:-}"
   echo "------------------------------------------------------------"
   echo "[$name] port=$port workers=$WORKERS profile=$profile runtime=${runtime:-auto} mem=$MEM args=[$args]"
+  pkill -f "$script" 2>/dev/null; sleep 1
   env BENCH_PORT="$port" BENCH_WORKERS="$WORKERS" ${profile:+KODE_PROFILE="$profile"} ${runtime:+KODE_RUNTIME="$runtime"} \
       php -d memory_limit=$MEM "$script" $args >"/tmp/bench_${name}.log" 2>&1 &
   local pid=$!
