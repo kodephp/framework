@@ -248,7 +248,7 @@ Kode::serve("http://127.0.0.1:$port", [
 
         $bootWorker();
         if ($http === null) {
-            $conn->send(HttpBridge::toRaw(Resp::error('服务尚未就绪', 503)), true);
+            HttpBridge::emit($conn, Resp::error('服务尚未就绪', 503));
 
             return;
         }
@@ -260,9 +260,10 @@ Kode::serve("http://127.0.0.1:$port", [
                 ? $graceful->track($handler)
                 : $handler();
             $protocol = preg_match('#HTTP/(\d+\.\d+)#i', $message->protocol(), $m) ? $m[1] : '1.1';
-            $conn->send(HttpBridge::toRaw($response, $protocol), true);
+            $gzip = \Kode\Process\Protocol\HttpProtocol::acceptsGzip((string) ($message->header('accept-encoding') ?? ''));
+            HttpBridge::emit($conn, $response, $protocol, $gzip);
         } catch (\Throwable $e) {
-            $conn->send(HttpBridge::toRaw(Resp::error('服务器内部错误', 500)), true);
+            HttpBridge::emit($conn, Resp::error('服务器内部错误', 500));
         }
     })
     ->start();

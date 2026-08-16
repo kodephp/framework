@@ -11,6 +11,7 @@ use Kode\Http\App as HttpApp;
 use Kode\Http\Response;
 use Kode\Process\Http\Request as ProcessRequest;
 use Kode\Process\Kode;
+use Kode\Process\Protocol\HttpProtocol;
 use Kode\Process\Runtime\ConnectionInterface;
 use Psr\Http\Message\ResponseInterface;
 use function Kode\Process\cpu_count;
@@ -122,7 +123,7 @@ final class HttpServer
 
             $bootWorker();
             if ($http === null) {
-                $conn->send(HttpBridge::toRaw(Resp::error('服务尚未就绪', 503)), true);
+                HttpBridge::emit($conn, Resp::error('服务尚未就绪', 503));
                 return;
             }
 
@@ -131,10 +132,11 @@ final class HttpServer
                 /** @var HttpApp $http */
                 $handler = static fn () => $http->handle($psr);
                 $response = $graceful instanceof GracefulShutdown ? $graceful->track($handler) : $handler();
-                $conn->send(HttpBridge::toRaw($response, self::normalizeProtocol($message->protocol())), true);
+                $gzip = HttpProtocol::acceptsGzip((string) ($message->header('accept-encoding') ?? ''));
+                HttpBridge::emit($conn, $response, self::normalizeProtocol($message->protocol()), $gzip);
             } catch (\Throwable $e) {
                 $debug = (bool) (Application::getInstance()?->config()->get('app.debug', false) ?? false);
-                $conn->send(HttpBridge::toRaw($this->errorResponse($e, $debug)), true);
+                HttpBridge::emit($conn, $this->errorResponse($e, $debug));
             }
         });
 

@@ -66,11 +66,17 @@ final class TraceContext
             }
         }
 
-        if ($traceId === null) {
-            $traceId = self::generateTraceId();
-        }
-        if ($spanId === null) {
-            $spanId = self::generateSpanId();
+        // 单次 CSPRNG 取 24 字节，切片出 trace_id(16) + span_id(8)，
+        // 避免两次 random_bytes 系统调用（每请求热路径）。generateTraceId/SpanId
+        // 仍保留为公开 API 供 Tracer / kode/context 等复用。
+        if ($traceId === null || $spanId === null) {
+            $rand = random_bytes(24);
+            if ($traceId === null) {
+                $traceId = bin2hex(substr($rand, 0, 16));
+            }
+            if ($spanId === null) {
+                $spanId = bin2hex(substr($rand, 16, 8));
+            }
         }
 
         Context::set(Context::TRACE_ID, $traceId);

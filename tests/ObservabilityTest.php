@@ -22,6 +22,8 @@ final class ObservabilityTest extends TestCase
         // 注意：生效的 env() 来自 kode/fibers，仅读 getenv()，故用 putenv 注入。
         putenv('OBS_METRICS_PROTECT=token');
         putenv('OBS_METRICS_TOKEN=test-token');
+        // 测试内强制全采样，避免 sample_ratio 让直方图时延序列出现概率性缺失。
+        putenv('OBS_METRICS_SAMPLE_RATIO=1.0');
         $this->bootApp(getcwd());
     }
 

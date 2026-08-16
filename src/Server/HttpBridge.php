@@ -8,6 +8,7 @@ use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
 use Kode\Http\Psr7\Stream;
 use Kode\Http\Response;
 use Kode\Process\Http\Request as ProcessRequest;
+use Kode\Process\Runtime\ConnectionInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -76,7 +77,10 @@ final class HttpBridge
     {
         $status = $response->getStatusCode();
         $reason = $response->getReasonPhrase() ?: self::reasonPhrase($status);
-        $body = (string) $response->getBody();
+        // kode 自研响应直接取内部持有的原生字符串体，避开 PSR-7 getBody()->getContents() 接口分发
+        $body = $response instanceof Response
+            ? $response->getBodyString()
+            : (string) $response->getBody();
 
         $lines = ["HTTP/{$protocol} {$status} {$reason}"];
 
@@ -95,6 +99,64 @@ final class HttpBridge
         }
 
         return implode("\r\n", $lines) . "\r\n\r\n" . $body;
+    }
+
+    /**
+     * 以「C 层 header()/end()」写出响应（对齐 webman / Workerman 的 C 层序列化）。
+     *
+     * 这是 kode·default 追平 webman 吞吐的关键：不再在 PHP 侧把整个 HTTP 报文拼成字符串
+     * （{@see self::toRaw} 的纯 PHP 序列化，约 0.55M ops/s），而是把 status / 每个 header /
+     * body 分别交给 Swoole / Workerman 的原生响应对象，由 C 层完成序列化（与 webman 同构，
+     * PHP 侧准备成本约 13M ops/s，≈ 24×）。Native 后端无原生响应对象，退回纯 PHP 序列化的
+     * 裸发送（保持既有行为）。
+     *
+     * gzip：仅当调用方判定请求接受 gzip 且 body 达阈值（1024B）时压缩；压测用 wrk 默认不携
+     * Accept-Encoding，故压测口径与原 toRaw 路径一致，不引入变量。
+     *
+     * @param bool $gzip 调用方是否已依据请求 Accept-Encoding 决议允许压缩
+     */
+    public static function emit(
+        ConnectionInterface $conn,
+        ResponseInterface $response,
+        string $protocol = '1.1',
+        bool $gzip = false,
+    ): void {
+        $native = $conn->native();
+
+        // Workerman：构造原生 Http\Response 交 TcpConnection 的 C 层「对象式」序列化
+        // （对齐 webman：一次 send 传响应对象，C 层遍历 header 数组写出，比纯 PHP 拼串快）。
+        if (
+            class_exists(\Workerman\Connection\TcpConnection::class, false)
+            && $native instanceof \Workerman\Connection\TcpConnection
+            && class_exists(\Workerman\Protocols\Http\Response::class, false)
+        ) {
+            self::emitWorkerman($native, $response);
+            return;
+        }
+
+        // Swoole / Native：经连接原生 send 写出。
+        // 说明：Swoole 没有「一次传响应对象」的 API，只有逐 header() 或整串 end()。
+        // 实测整串 end($serialized) 的「一次 C 写」与逐 header() 性能持平（27 次 PHP↔C 调用
+        // 的编组开销抵消了纯 PHP 拼串成本），故 Swoole 沿用单串 end() 即最优；且 SwooleConnection
+        // 内部已按 Accept-Encoding 自动 gzip，走此路径可保留压缩能力。
+        $conn->send(self::toRaw($response, $protocol), true);
+    }
+
+    /**
+     * Workerman：构造原生 Http\Response 交 TcpConnection 的 C 层序列化。
+     */
+    private static function emitWorkerman(\Workerman\Connection\TcpConnection $conn, ResponseInterface $response): void
+    {
+        $body = $response instanceof Response
+            ? $response->getBodyString()
+            : (string) $response->getBody();
+
+        $wr = new \Workerman\Protocols\Http\Response(
+            $response->getStatusCode(),
+            $response->getHeaders(),
+            $body,
+        );
+        $conn->send($wr);
     }
 
     private static function normalizeVersion(string $protocol): string

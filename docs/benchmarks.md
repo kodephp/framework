@@ -78,7 +78,7 @@ webman 更轻量（开箱能力较少、靠生态补齐）。kode 的差异化�
 >
 > - 上表为**本机 wrk 实测**（macOS · PHP 8.3 · 11 worker），跨次运行有 ±20~30% 热漂移，**横比看比值**。
 > - **kode · lean `/ping` 达裸 Swoole 天花板 96%、约 webman 92%、超 hyperf 14%**；但 **`/bench/json` 仅裸 Swoole 74%、webman 76%**，
->   明显低于 /ping——根因是 `HttpBridge::toRaw` 纯 PHP 序列化 + kode/process 统一运行时 I/O（详见 PEER_BENCHMARK §3 第 2 条）。
+>   明显低于 /ping——此前归因 `HttpBridge::toRaw` 纯 PHP 序列化，但 PEER_BENCHMARK §5.7 的 A/B 实测表明 Swoole 单串 `end()` 已最优、响应写出非主因；kode·default 与 webman 差距主因是可观测性 100% 路径固有成本（PEER_BENCHMARK §4）。
 >   **kode · default（完整企业栈）** 稳定双跑约 86-110k/59-68k，约为 lean 的 **50%/43%**、裸 Swoole 的 48%/32%——
 >   其为完整企业级中间件栈，属「换取 cors/安全头/限流/韧性/追踪/审计等开箱能力」的功能对价，非缺陷。
 > - ⚠️ 此前「kode · default 反超 hyperf（114k/122k）」系**旧 harness 未做 peer 间冷却**导致排第 6 的 hyperf
@@ -100,14 +100,15 @@ kode · default 的真实吞吐是**连续的 in-framework 调优**达成的，�
 | P2 韧性按需挂载 | 熔断/重试/幂等改为路由属性 `#[…]` 按需注册，未标记路由 O(1) 早退 | 默认栈移除未使用功能的每请求开销，旁路零成本 |
 | RouteResolver 去重 | 6 个路由感知中间件由各自 `router->match()` 改为首匹配缓存复用（**6→1 次/请求**） | 消除高路由数下的路由表全扫描 |
 | DB 层补丁（v0.8.33） | `kode/database` PdoConnection 去 `SELECT 1` 探活 + 预编译语句缓存 | kode 原生 MySQL `21.6k → 38.1k`(+77%)、pgsql `17.5k → 34.5k`(+98%)，追平 raw PDO / Doctrine |
-| kode/http 吞吐路径补丁（v0.8.34） | `kode/http` 的 `Response::json` 去 `body/withBody` 中间层直构 + `SwooleServerAdapter` 对自研 Response 走 `getBodyString()` 避开 PSR-7 接口分发；harness `/bench/json` handler 与 webman 同构；run.sh 加 `COOLDOWN=15` 消除 peer 间累积热降频 | `kode · lean` `/bench/json` 微优化真实生效（micro-bench tiny +30% / 50 条 +4%）；**Kode::serve 真实生产路径**下全链路 `kode · lean` **174k / 137k**（= 裸 Swoole **96%/74%**、约 webman **92%/76%**、/ping 超 hyperf 14%）；/bench/json 低于 /ping 的根因是 `HttpBridge::toRaw` 纯 PHP 序列化（见 §6） |
+| kode/http 吞吐路径补丁（v0.8.34） | `kode/http` 的 `Response::json` 去 `body/withBody` 中间层直构 + `SwooleServerAdapter` 对自研 Response 走 `getBodyString()` 避开 PSR-7 接口分发；harness `/bench/json` handler 与 webman 同构；run.sh 加 `COOLDOWN=15` 消除 peer 间累积热降频 | `kode · lean` `/bench/json` 微优化真实生效（micro-bench tiny +30% / 50 条 +4%）；**Kode::serve 真实生产路径**下全链路 `kode · lean` **174k / 137k**（= 裸 Swoole **96%/74%**、约 webman **92%/76%**、/ping 超 hyperf 14%）；/bench/json 低于 /ping 此前归因 `HttpBridge::toRaw` 序列化，现 §5.7 A/B 证伪（Swoole 单串 `end()` 已最优） |
+| **可观测性 100% 路径剖析（v0.8.35）** | 冷却 15s 边际成本扫描：逐项关中间件组定位；`HttpBridge::emit()` 把 Workerman 路由到 C 层对象式序列化（对齐 webman）、Swoole 保留单串 `end()`；Metrics 时延直方图按 `sample_ratio=0.1` 采样（计数 100%）；Trace `ensure()` 单次 `random_bytes(24)` 切片 | **可观测性是 kode·default 绝对主导成本**（/ping 关掉 +25k、/bench/json 关掉 +40k）；微基准证伪「不可变 withHeader 克隆是瓶颈」（3× 克隆仅 ~0.3µs），真实成本在 `TraceContext` Context 读写 + 头解析 + W3C 拼接（固有 ~0.77µs/请求）——属 webman 不自带的企业级可观测性**功能对价**，框架内不可消除 |
 | harness 对齐生产 adapter（v0.8.34 续） | benchmark harness 改走 `Kode::serve` + `HttpBridge` **真实生产路径**（不再手写 Swoole 适配器绕过 `HttpBridge::toRaw`），使压测逐字节等价于生产 | 消除 harness 额外每请求开销对 kode 的低估（详见 PEER_BENCHMARK §5.5/§5.6）；CLI 隔离测得纯框架 `handle` 上限 **241k ops/s**，证实 wrk 174k 系 Swoole/统一运行时 I/O 限制、非框架内核慢 |
 
 **调优后（v0.8.34，Kode::serve 真实生产路径 · wrk 同条件）**：
 `kode · lean` **174k / 137k**（= 裸 Swoole 天花板 **96%/74%**、约 webman **92%/76%**；/ping 超 hyperf 14%、/bench/json 超 hyperf 13%）；`kode · default` **86k / 59k**（稳定双跑约 86k/59k，约 lean 的 **50%/43%**、裸 Swoole 的 47%/32%）。
 
 > 立场：默认栈 ~30% 折损是「换取 cors/安全头/限流/韧性/追踪/审计等开箱能力」的**功能对价，非缺陷**；
-> 需要极限吞吐时切 `KODE_PROFILE=lean`（已验证 `/ping` 可达裸内核 96%、逼近 webman 92%；但 `/bench/json` 仅 74%/76%，瓶颈在 `HttpBridge::toRaw` 序列化 + 统一运行时 I/O，见 PEER_BENCHMARK.md 第 6 节）。后续优化按性价比排布：
+> 需要极限吞吐时切 `KODE_PROFILE=lean`（已验证 `/ping` 可达裸内核 96%、逼近 webman 92%；但 `/bench/json` 仅 74%/76%——`HttpBridge::emit()` A/B 已证 Swoole 单串 `end()` 最优、响应写出非主因，差距在 lean 的「大 body/JSON 处理」待查项，见 PEER_BENCHMARK §5.7/§6）。后续优化按性价比排布：
 > P3 AccessLog 异步格式化开销、P4 其余常驻中间件（RequestId/Cors/SecurityHeaders/Locale/Feature/Csrf）微开销聚合约 10~15%——均已属边际收益。
 
 ---
@@ -136,8 +137,8 @@ kode · default 的真实吞吐是**连续的 in-framework 调优**达成的，�
 5. **用「相对比例」作稳定主指标——绝对数字不可直接横比**  
    kode &#x662F;**「分配 / GC 绑定」**&#x7684;：本机裸 PHP 基线与各 peer 的绝对 rps 在两次运行间可差 2.4×，而 kode 稳定在同一量级——  
    说明吞吐受**每请求对象分配与 GC** 主导。因此压测编排以**多轮 + 比值**为主指标，机器方差在比值中抵消：
-   - `kode · lean / 裸 Swoole` ≈ **96%/74%**（/ping 说明框架路由/`kode/http` 本身不是瓶颈；/bench/json 受 `HttpBridge::toRaw` 序列化拖累，详见 §6/PEER_BENCHMARK §3），瓶颈不在内核而在桥接序列化层；
-   - `kode · default / kode · lean` ≈ **50%/43%**，瓶颈在「每请求分配 / 中间件栈 + `HttpBridge::toRaw` 序列化」而非路由内核；
+   - `kode · lean / 裸 Swoole` ≈ **96%/74%**（/ping 说明框架路由/`kode/http` 本身不是瓶颈；/bench/json 的 lean 亚差距见 PEER_BENCHMARK §5.7——Swoole 响应写出已最优，属「大 body/JSON 处理」待查项），瓶颈不在内核；
+   - `kode · default / kode · lean` ≈ **50%/43%**，瓶颈在「每请求分配 / 中间件栈（可观测性 100% 路径固有成本，PEER_BENCHMARK §4）」而非路由内核；
    - **p99 / max 在 CLI 单进程紧循环里高度噪声化**（GC / autoload 抖动），以 **p50 / 中位数 + 相对比例** 判断趋势最可靠。
 
 ---

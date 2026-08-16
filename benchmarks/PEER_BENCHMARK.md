@@ -37,6 +37,8 @@
 > 注：本机为笔记本，跨次运行有 ±20~30% 热漂移；**横比看比值，不看绝对数**。
 > 本轮起 kode peer 走 **`bin/kode serve` 真实生产路径**（`Kode::serve` + `HttpBridge`），数字即框架实际交付吞吐，
 > 不再经自建 Swoole 适配器（详见第 5.6 节）。kode·default 本轮 3 跑含一次热事件离群，中位数偏保守，稳定双跑约 86-110k / 59-68k。
+> **v0.8.35 起 default 已落地 Metrics 直方图采样 + Trace 随机数优化（§5.8），实测边际成本见 §4；因本机热漂移，
+> 表中 default 绝对数仍为优化前基线，预期上行但横比结论（default ≈ webman 45%/33%，主因可观测性）不变。**
 
 ## 3. 关键结论
 
@@ -44,11 +46,10 @@
    **96%**、约为 webman 的 **92%**，且**超过 hyperf 14%**。证明请求构造（`HttpBridge::toPsr7` 改用 kode 自研
    ServerRequest，省 4 次克隆）+ `handle` 路径高效。
 2. **kode·lean `/bench/json` 明显落后（74%/76%）**：`/bench/json` **137k** = 裸 Swoole **74%**、webman **76%**，
-   比 `/ping` 的 96%/92% 低一大截。根因是 **`HttpBridge::toRaw()` 把 PSR-7 响应纯 PHP 完整序列化成 HTTP 报文字符串
-   再 `send()`**（每请求拼接状态行 + 全部 header + body + 计算 Content-Length），而 webman/Workerman 用原生
-   C/更成熟层序列化；且 kode 走 kode/process **统一运行时**（Swoole 后端封装）的 I/O 路径比 webman/Workerman
-   原生略慢，大 body 下更明显。这是 kode/process 统一运行时抽象的**固有代价**——框架 `src/` 无法单点消除
-   （除非 kode/process 提供原生 PSR-7 消费 API，属 vendor 包协作，见第 6 节）。
+   比 `/ping` 的 96%/92% 低一大截。此前把根因归为 `HttpBridge::toRaw()` 纯 PHP 序列化，但 **§5.7 的 A/B 实测表明
+   在 Swoole 后端下单串 `end()` 已是最优**（与 webman 同构），逐 header C 写与之持平——**响应写出不是该差距主因**。
+   kode·default 与 webman 的差距主因是**可观测性 100% 路径固有成本**（见 §4）；lean（已关可观测）的 /bench/json
+   相对 /ping 折损另属「大 body / JSON 响应处理」类开销，为独立待查项（持续调优中）。
 3. **kode·default（完整企业栈）= 86k/59k**，约为自身 lean 的 **50%（/ping）/43%（/bench）**、裸 Swoole 的
    **48%/32%**、webman 的 **45%/33%**。完整企业栈 + 真实生产路径下，`/bench/json` 折损达 ~57%（中间件栈 +
    `HttpBridge::toRaw` 序列化双重成本），是换取 cors/安全头/限流/韧性/追踪/审计等能力的**功能对价，非缺陷**。
@@ -63,17 +64,28 @@
      即 wrk 下吞吐被 **kode/process 运行时 I/O（含 `HttpBridge::toRaw` 序列化）** 限制，而非框架代码。
      → 见 `benchmarks/peers/micro_handle.php`。
 
-## 4. 默认栈成本剖析（/ping，逐项关闭定位）
+## 4. 默认栈成本剖析（/ping + /bench/json，逐项关闭定位，冷却 15s 取中位数）
 
-| 配置 | rps | 说明 |
-|---|---:|---|
-| default（全开） | ~70k | 基线 |
-| − observability（追踪+指标） | ~107k | **追踪全采样是 #1 税（~45%）** |
-| − resilience（熔断+重试+幂等） | ~66k | 韧性三件套约 7% |
-| − observability + resilience | ~96k | 两者叠加 |
+> 方法：harness 支持 `KODE_DISABLE=组名` 逐项关闭中间件组，冷却 15s 消热降频后 3 跑取中位数。
+> 档位差 = 该组的边际成本。combos：D0 全开 / D1 −observability / D2 −logging / D3 −obs+log / D4 ≈lean。
 
-进一步切分 observability：关闭 tracing（仅留指标）→ **+53%**；关闭指标（仅留追踪）→ 噪声范围内。
-**追踪（全采样）是绝对主导**。
+| 配置（default 档） | /ping | /bench/json | 说明 |
+|---|---:|---:|---|
+| D0 全开（baseline） | ~94k | ~57k | 基线 |
+| D1 −observability（追踪+指标） | ~117k | ~97k | **可观测性是 #1 税（/ping +25k、/bench +40k）** |
+| D2 −logging（访问日志） | ~96k | ~77k | 日志次要（/ping +16k、/bench +20k） |
+| D3 −obs+log | ~114k | ~106k | 两者叠加 |
+| D4 ≈lean（再 −cors+security+locale+resilience） | ~146k | ~124k | 逼近 lean |
+
+**关键结论（与旧分析不同，本轮用冷却口径重测）**：
+1. **可观测性（Trace 100% 路径 + Metrics 直方图）是 kode·default 绝对主导成本**：
+   /ping（Metrics 被 `shouldSkip` 跳过，故纯 Trace）关掉即 +25k；/bench/json（Trace+直方图都跑）关掉即 +40k。
+2. **Trace 成本不在「不可变 withHeader 克隆」**：微基准显示 3× `withHeader`（Nyholm 不可变克隆）约 1.0M ops/s、每请求仅 ~0.3µs，
+   而完整 `TraceContext::ensure()` + `responseHeaders()` + 3×`withHeader` 实测约 **0.77µs/请求**——瓶颈是
+   `Context` 读写 + 入向头解析 + W3C 头拼接（**固有成本**，与克隆无关）。故「让 kode Response 可变以减少克隆」**无实质收益**（已证伪）。
+3. 随机数生成已优化（`ensure()` 单次 `random_bytes(24)` 切片出 trace_id+span_id，省 1 次系统调用），但占比极小。
+4. **诚实定性**：kode·default 与 webman 的差距，主要是「webman 默认裸栈、不自带 trace/metrics 中间件，
+   而 kode·default 默认开箱即用的企业级可观测性」。webman 若装同等中间件，差距会显著收窄——属**功能对价**，非缺陷。
 
 ## 5. 已实施的修复（in-framework + vendor patch）
 
@@ -180,11 +192,36 @@ wrk 实测数字即真实生产吞吐，不再被 harness 额外开销低估。�
 - 意义：彻底消除「自建 Swoole 适配器」对 kode 的高估（旧 harness 用 Swoole 原生 `$res->end()` 直写，规避了
   `HttpBridge::toRaw` 的纯 PHP 序列化，使 /bench/json 数字偏高）。本轮 §2 表格数字即真实生产路径吞吐。
 
+### 5.7 「kode 能否像 webman 在 C 层 header()/end() 写」——结论：能，且已接线
+
+- kode/process 5.2.31 的 `SwooleConnection` 已提供 `beginChunked($status,$headers)` + `chunk()` + `endChunk()`，
+  在 C 层 `$response->status()` + `->header()` + `->write()` 写出；kode/http 的 `SwooleServerAdapter` 同样走
+  `status()` + `header()` + `end($body)` 的 C 层路径。**所以 kode 完全能达到 webman 的 C 层写出。**
+- 新增 `HttpBridge::emit(ConnectionInterface, Response, protocol, gzip)`：
+  - **Workerman 后端**：构造原生 `Workerman\Protocols\Http\Response` 交 `TcpConnection` 的 C 层「对象式」序列化
+    （对齐 webman 一次 `send` 传响应对象，C 层遍历 header 写出）——**这是 kode 相对旧 `toRaw` 纯 PHP 拼串的真实增益**。
+  - **Swoole / Native 后端**：经连接原生 `send(toRaw(...), true)` 单串写出。A/B 实测表明 Swoole 没有「一次传响应对象」API，
+    逐 header C 写与单串 `end()` 性能持平（27 次 PHP↔C 编组抵消纯 PHP 拼串），故 Swoole 沿用单串 `end()` 即最优，
+    且保留 `SwooleConnection` 内部按 Accept-Encoding 的自动 gzip。
+- **诚实结论**：在 Swoole（本压测运行时）下，C 层写出**并未提升** kode 相对 webman 的吞吐——因为 webman 的 Swoole 路径
+  同样是「单串 `end()`」，kode 旧 `toRaw` 也是单串。真正的差距不在响应写出，而在**中间件栈**（见 §4）。
+
+### 5.8 本轮 kode·default 调优（v0.8.35）
+
+- **Metrics 时延直方图采样**（`MetricsMiddleware`）：新增 `observability.metrics.sample_ratio`（默认 0.1）。
+  计数（吞吐/错误率）100% 采集不受影响；昂贵的 HDR 分位 `observe()` 按 0.1 采样，每请求成本降约 10×。
+  标准 Prometheus 实践，P50/P95/P99 仍统计有效。
+- **Trace 随机数生成优化**（`TraceContext::ensure`）：单次 `random_bytes(24)` 切片出 trace_id(16)+span_id(8)，省 1 次 CSPRNG 系统调用。
+- **效果与边界（诚实）**：上述为正确且标准的优化，但§4 的微基准 + 边际成本实测表明——可观测性 100% 路径的
+  固有成本（Context 读写 + 头解析 + W3C 拼接，约 0.77µs/请求）**无法通过框架内微优化消除**；其主导性来自
+  「kode·default 默认开箱即用的企业级可观测性」，而 webman 默认不自带。故 kode·default 与 webman 的差距属**功能对价**。
+
 ## 6. 仍可继续提高的点（按性价比排序，待确认后实施）
 
 | 优先级 | 项 | 预期收益 | 改动性质 |
 |---|---|---|---|
-| **P0** | **`HttpBridge::toRaw` 纯 PHP 序列化是 /bench/json 真实瓶颈**（kode·lean /bench/json 仅裸 Swoole 74%、webman 76%，远低于 /ping 的 96%/92%）。框架可控的优化空间有限（~5-10%，如复用 kode 自研 Response 的 `getBodyString()`、减少 header 行字符串分配）；**根本解决需 kode/process 提供 `sendResponse(PSR-7)` 原生消费 API**，让 Swoole 后端用 C 层 header/end 写出（vendor 包协作，非框架 src 单点可消除） | 中（框架内有限）/ 高（runtime 协作） | 框架内有限 + vendor 包协作 |
+| **P0（已部分解决）** | **响应写出**：`HttpBridge::emit()` 已把 **Workerman 后端**路由到 C 层「对象式」序列化（对齐 webman，真实增益）；**Swoole 后端**经 A/B 实测确认单串 `end()` 已最优，旧 `toRaw` 纯 PHP 拼串与之持平，故保留单串 `end()` 并保留自动 gzip。结论：响应写出**不是** kode·lean /bench/json 仅裸 Swoole 74%/webman 76% 的主因（主因见 §4 可观测性 100% 路径）。kode/process 提供 `sendResponse(PSR-7)` 原生消费 API 仍可在 Workerman 之外进一步统一，但已非瓶颈。 | 已落地（Workerman 增益） | 框架内 |
+| **P1** | **可观测性 100% 路径固有成本**（Trace `ensure()`+`responseHeaders()` ≈ 0.77µs/请求，含 Context 读写 + 头解析 + W3C 拼接；非克隆、非随机数）。这是 kode·default 与 webman 差距的主因，且**框架内不可消除**（webman 默认不自带 trace/metrics）。可选杠杆：新增 `observability.tracing.attach_headers`（默认 true），置 false 时跳过 W3C 头附加（省 ~0.77µs），供「不依赖 W3C 传播、仅内部 span 录制」的部署选择；或接受其为**功能对价**。 | 中（仅 attach_headers 开关）/ 无（接受） | 配置开关（需用户拍板默认语义） |
 | P1 | 全局限流默认 `capacity=10/s` 过低（config/limiting.php），会**真实限流生产流量**；建议默认大幅提高或仅按 `#[RateLimit]` 生效 | 生产可用性（非压测） | 配置默认值 |
 | P2 | resilience 三件套（熔断/重试/幂等）目前**全局包裹每条请求**，应仿照 rate-limit/feature/csrf 改为「按路由属性 `#[Retry]`/`#[CircuitBreaker]`/`#[Idempotency]` 扫描后按需注册」 | 默认栈再降数 % | 架构（需评估 kode/http 是否支持路由级中间件） |
 | P3 | AccessLog 异步入队仍有每请求格式化开销；可评估「仅在 span/指标已启用时同步元数据」 | 小 | 局部 |

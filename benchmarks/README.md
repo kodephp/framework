@@ -45,7 +45,7 @@ benchmarks/
 
 **结果**：见 [`PEER_BENCHMARK.md`](PEER_BENCHMARK.md)。结论摘要：
 
-- `kode · lean`（仅路由+异常+连接收口）达裸 Swoole 天花板 **96%/74%**（174k/137k），约为 webman 的 **92%/76%**，/ping 超 hyperf **14%**；但 **`/bench/json` 仅 74%/76%**，明显低于 `/ping`——根因是 `HttpBridge::toRaw` 纯 PHP 序列化 + kode/process 统一运行时 I/O（详见 PEER_BENCHMARK §3/§6），这是 kode·lean 尚未超过 webman（/bench/json 137k < 179k）的真实主因；
+- `kode · lean`（仅路由+异常+连接收口）达裸 Swoole 天花板 **96%/74%**（174k/137k），约为 webman 的 **92%/76%**，/ping 超 hyperf **14%**；但 **`/bench/json` 仅 74%/76%**，明显低于 `/ping`——此前归因 `HttpBridge::toRaw` 序列化，PEER_BENCHMARK §5.7 的 A/B 已证 Swoole 单串 `end()` 最优、响应写出非主因；kode·default 与 webman 差距主因是可观测性 100% 路径固有成本（PEER_BENCHMARK §4）；
 - `kode · default`（完整企业栈）**86k/59k**，约为 lean 的 **50%/43%**（公平冷却口径下低于自带 DI 的 hyperf，属完整企业栈定位差异，非缺陷）；
 - 默认栈 ~30% 折损是**功能对价**（cors/安全头/限流/韧性/追踪/审计），其中链路追踪全采样是单项最大税（~45%，已通过采样默认 0.1 修复）。
 

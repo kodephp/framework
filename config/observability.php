@@ -35,6 +35,11 @@ return [
         'skip_paths' => [
             '/metrics', '/health', '/health/live', '/health/ready', '/ping',
         ],
+
+        // 时延直方图采样比例 0..1（1 = 全采；高流量生产务必调低，避免每请求都付出
+        // HDR 分位维护开销）。计数（吞吐/错误率）始终 100% 采集不受影响；采样后
+        // P50/P95/P99 仍统计有效（标准 Prometheus 实践）。默认 0.1。
+        'sample_ratio' => (float) env('OBS_METRICS_SAMPLE_RATIO', 0.1),
     ],
 
     // ------------------------------------------------------------------
