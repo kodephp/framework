@@ -37,6 +37,8 @@ final class MetricsMiddleware implements MiddlewareInterface
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        // 路径仅解析一次，供「跳过判定」与「路由标签」复用，避免热路径上重复 getUri()/getPath()
+        // （原实现在 shouldSkip 前解析一次、routeLabel 内再解析一次，每请求多一次 Uri 对象分配）。
         $path = $request->getUri()->getPath();
         if ($this->shouldSkip($path)) {
             return $handler->handle($request);
@@ -44,7 +46,7 @@ final class MetricsMiddleware implements MiddlewareInterface
 
         $start = microtime(true);
         $method = $request->getMethod();
-        $route = $this->routeLabel($request);
+        $route = $this->routeLabel($request, $path);
 
         try {
             $response = $handler->handle($request);
@@ -83,27 +85,33 @@ final class MetricsMiddleware implements MiddlewareInterface
 
     /**
      * 跳过基础设施端点（metrics / 健康检查 / ping）。
+     *
+     * 跳过列表在首次调用时按 config 物化一次（进程级缓存），避免每请求重建数组。
      */
     private function shouldSkip(string $path): bool
     {
-        $skip = (array) ($this->config['skip_paths'] ?? [
-            '/metrics', '/health', '/health/live', '/health/ready', '/ping',
-        ]);
+        static $skip = null;
+        if ($skip === null) {
+            $skip = (array) ($this->config['skip_paths'] ?? [
+                '/metrics', '/health', '/health/live', '/health/ready', '/ping',
+            ]);
+        }
 
         return in_array($path, $skip, true);
     }
 
     /**
      * 路由标签：优先用路由名，否则用「数字段归一化」后的路径，避免高基数爆炸。
+     *
+     * @param string $path process() 已解析并复用的请求路径（避免再次 getUri()）。
      */
-    private function routeLabel(ServerRequestInterface $request): string
+    private function routeLabel(ServerRequestInterface $request, string $path): string
     {
         $name = $request->getAttribute('route_name');
         if (is_string($name) && $name !== '') {
             return $name;
         }
 
-        $path = $request->getUri()->getPath();
         if ($path === '') {
             return '/';
         }

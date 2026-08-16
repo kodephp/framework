@@ -231,13 +231,18 @@ $bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCre
     $graceful = $app->core()->container->get(GracefulShutdown::class);
 };
 
-echo "kode peer server on :$port (workers=$workers, profile=$profile, runtime=auto)\n";
+// 运行时选择：默认 auto（Swoole 可用时优先）；可经 KODE_RUNTIME=swoole|workerman|native 强制，
+// 用于压测中做「同类运行时」对比（如 kode·lean@Workerman 对齐 webman@Workerman，隔离运行时差异）。
+$runtimeArg = $_SERVER['KODE_RUNTIME'] ?? 'auto';
+$runtimeArg = $runtimeArg === 'auto' ? null : $runtimeArg;
+
+echo "kode peer server on :$port (workers=$workers, profile=$profile, runtime=" . ($runtimeArg ?? 'auto') . ")\n";
 echo "routes: /ping /bench/json /bench/{raw,kode,eloquent,doctrine,think}/{mysql,pgsql}\n";
 
 Kode::serve("http://127.0.0.1:$port", [
     'workers' => $workers,
     'name'    => 'kode-http',
-])
+], $runtimeArg)
     ->on('workerStart', static function (int $workerId) use ($bootWorker): void {
         $bootWorker();
     })

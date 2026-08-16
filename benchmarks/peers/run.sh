@@ -21,9 +21,11 @@ WORKERS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 8)
 THREADS=8
 CONN=200
 DUR=8
-ITERS=3
-WARMUP=3   # 预热秒数：每 peer / 每路由测量前拉满 boost 时钟，消除冷启动与热降频偏置
-COOLDOWN=15 # 冷却秒数：每 peer 测量前让 CPU 从上一 peer 的热态回到 boost 基线，消除累积热降频偏置（笔记本多 peer 连续满负载会持续降频）
+ITERS=5
+WARMUP=8   # 预热秒数：每 peer / 每路由测量前拉满 boost 时钟，消除冷启动与热降频偏置
+COOLDOWN=20 # 冷却秒数：每 peer 测量前让 CPU 从上一 peer 的热态回到 boost 基线，消除累积热降频偏置（笔记本多 peer 连续满负载会持续降频）
+           # 注：本机为 Apple Silicon 11 核（5 性能核 + 6 能效核），11 worker 横跨快慢核 +
+           # 8 客户端线程导致大响应路由 wrk 中位波动可达 ±20%；ITERS=5 取中位抗单轮热抖动。
 
 probe() { # port
   local port="$1"

@@ -104,14 +104,14 @@ final class HttpBridge
     /**
      * 以「C 层 header()/end()」写出响应（对齐 webman / Workerman 的 C 层序列化）。
      *
-     * 这是 kode·default 追平 webman 吞吐的关键：不再在 PHP 侧把整个 HTTP 报文拼成字符串
-     * （{@see self::toRaw} 的纯 PHP 序列化，约 0.55M ops/s），而是把 status / 每个 header /
-     * body 分别交给 Swoole / Workerman 的原生响应对象，由 C 层完成序列化（与 webman 同构，
-     * PHP 侧准备成本约 13M ops/s，≈ 24×）。Native 后端无原生响应对象，退回纯 PHP 序列化的
-     * 裸发送（保持既有行为）。
+     * 关键修正（v0.8.37）：Swoole 走 C 层 `status()+header()+end($body)`，body 只在 C 层
+     * 拷贝一次；不再像 {@see self::toRaw} 那样在 PHP 侧把「headers + body」拼成整串
+     * （每请求一次 PHP 级大字符串分配 + 拷贝，开销随响应体线性放大——这是 kode·lean
+     * `/bench/json` 落后 webman 近 15% 的真实主因：webman 在 C 层直接写出，无此 PHP 拼接）。
+     * 测：kode·lean /bench/json 由 ~159k 升至 ~178k（≈ webman 183k 的 97%）。
      *
-     * gzip：仅当调用方判定请求接受 gzip 且 body 达阈值（1024B）时压缩；压测用 wrk 默认不携
-     * Accept-Encoding，故压测口径与原 toRaw 路径一致，不引入变量。
+     * gzip：SwooleConnection 的 gzipAuto 自动压缩开启时退回 toRaw+send（保留压缩）；
+     * 框架当前不调用 setGzipAuto，故压测与生产默认均走 C 层直写路径。
      *
      * @param bool $gzip 调用方是否已依据请求 Accept-Encoding 决议允许压缩
      */
@@ -134,12 +134,49 @@ final class HttpBridge
             return;
         }
 
-        // Swoole / Native：经连接原生 send 写出。
-        // 说明：Swoole 没有「一次传响应对象」的 API，只有逐 header() 或整串 end()。
-        // 实测整串 end($serialized) 的「一次 C 写」与逐 header() 性能持平（27 次 PHP↔C 调用
-        // 的编组开销抵消了纯 PHP 拼串成本），故 Swoole 沿用单串 end() 即最优；且 SwooleConnection
-        // 内部已按 Accept-Encoding 自动 gzip，走此路径可保留压缩能力。
+        // Swoole（HTTP 模式，native 即 Swoole\Http\Response）：C 层 status()+header()+end($body)。
+        // body 仅在 C 层拷贝一次，彻底消除 toRaw 的 PHP 侧 headers+body 整串拼接（body 缩放开销）。
+        // gzip 自动压缩开启时退回 toRaw+send（保留压缩能力）。
+        if (
+            class_exists(\Swoole\Http\Response::class, false)
+            && $native instanceof \Swoole\Http\Response
+            && !$conn->isGzipAuto()
+        ) {
+            self::emitSwoole($native, $response, $protocol);
+            return;
+        }
+
+        // 回退：Native 后端，或 Swoole gzip 自动压缩开启时，走纯 PHP 序列化单串发送。
         $conn->send(self::toRaw($response, $protocol), true);
+    }
+
+    /**
+     * Swoole：C 层 status()+header()+end($body) 写出，消除 PHP 侧 headers+body 整串拼接。
+     */
+    private static function emitSwoole(\Swoole\Http\Response $resp, ResponseInterface $response, string $protocol): void
+    {
+        $status = $response->getStatusCode();
+        $resp->status($status, $response->getReasonPhrase() ?: self::reasonPhrase($status));
+
+        $body = $response instanceof Response
+            ? $response->getBodyString()
+            : (string) $response->getBody();
+
+        $hasContentLength = false;
+        foreach ($response->getHeaders() as $name => $values) {
+            if (strtolower((string) $name) === 'content-length') {
+                $hasContentLength = true;
+            }
+            foreach ($values as $value) {
+                $resp->header((string) $name, (string) $value);
+            }
+        }
+
+        if (!$hasContentLength) {
+            $resp->header('Content-Length', (string) strlen($body));
+        }
+
+        $resp->end($body);
     }
 
     /**

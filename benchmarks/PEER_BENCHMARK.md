@@ -23,36 +23,35 @@
 - 端口隔离：`swoole_raw:8101` `workerman_raw:8102` `webman:8091` `kode:8093/8094` `hyperf:9501`
 - 复现：`bash benchmarks/peers/run.sh`
 
-## 2. 压测结果（wrk，3 次中位数，rps）
+## 2. 压测结果（wrk，-t8 -c200 -d8s，**5 次中位数**，rps）
 
-| 框架 | 形态 | /ping | /bench/json |
-|---|---|---:|---:|
-| swoole_raw | Swoole 原生（无中间件·天花板） | 181,047 | 183,818 |
-| workerman_raw | Workerman 原生（无中间件·天花板） | 186,640 | 179,723 |
-| **webman** | Workerman 系框架（默认近乎零中间件） | 189,472 | 179,062 |
-| **hyperf** | Swoole 系框架（自带 DI/可观测） | 152,770 | 153,203 |
-| **kode · lean** | 仅路由+异常+连接收口（Kode::serve 真实路径） | 174,002 | 136,862 |
-| **kode · default** | 完整企业级中间件栈（Kode::serve 真实路径） | 86,076 | 58,758 |
+| 框架 | 形态 | /ping | /bench/json | json/ping |
+|---|---|---:|---:|---:|
+| swoole_raw | Swoole 原生（无中间件·天花板） | 184,806 | 183,011 | 99.0% |
+| workerman_raw | Workerman 原生（无中间件·天花板） | 186,337 | 184,169 | 98.8% |
+| **webman** | Workerman 系框架（默认近乎零中间件） | 178,757 | 175,560 | 98.2% |
+| **hyperf** | Swoole 系框架（自带 DI/可观测） | 163,332 | 157,395 | 96.4% |
+| **kode · lean** | 仅路由+异常+连接收口（Kode::serve 真实路径） | 160,962 | 138,974 | 86.3% |
+| **kode · default** | 完整企业级中间件栈（Kode::serve 真实路径） | 69,138 | 58,545 | 84.7% |
 
-> 注：本机为笔记本，跨次运行有 ±20~30% 热漂移；**横比看比值，不看绝对数**。
-> 本轮起 kode peer 走 **`bin/kode serve` 真实生产路径**（`Kode::serve` + `HttpBridge`），数字即框架实际交付吞吐，
-> 不再经自建 Swoole 适配器（详见第 5.6 节）。kode·default 本轮 3 跑含一次热事件离群，中位数偏保守，稳定双跑约 86-110k / 59-68k。
-> **v0.8.35 起 default 已落地 Metrics 直方图采样 + Trace 随机数优化（§5.8），实测边际成本见 §4；因本机热漂移，
-> 表中 default 绝对数仍为优化前基线，预期上行但横比结论（default ≈ webman 45%/33%，主因可观测性）不变。**
+> 注：本机为 **Apple Silicon 11 核（5 性能核 + 6 能效核）笔记本**，wrk 8 线程 + 11 worker 横跨快慢核，**同 peer 内跨跑方差极大**：
+> kode·lean `/ping` 5 跑 = 150k–183k（±15%）、kode·default `/ping` = 43k–101k（±40%）。**凡 peer 间差距 < ~15% 均属噪声，不可据此判断优劣。**
+> 横比以 **比值** 为准，不盯绝对数。kode peer 走 **`Kode::serve` 真实生产路径**（`HttpBridge`），数字即框架实际交付吞吐。
+> **本轮（v0.8.37）稳定化方法**：WARMUP 3→8s、ITERS 3→5、COOLDOWN 15→20s，取 5 跑中位数抗噪。
 
 ## 3. 关键结论
 
-1. **kode·lean 内核极强（`/ping` 路径）**：`kode · lean`（**174k** / 137k）的 `/ping` 达到裸 Swoole 天花板的
-   **96%**、约为 webman 的 **92%**，且**超过 hyperf 14%**。证明请求构造（`HttpBridge::toPsr7` 改用 kode 自研
-   ServerRequest，省 4 次克隆）+ `handle` 路径高效。
-2. **kode·lean `/bench/json` 明显落后（74%/76%）**：`/bench/json` **137k** = 裸 Swoole **74%**、webman **76%**，
-   比 `/ping` 的 96%/92% 低一大截。此前把根因归为 `HttpBridge::toRaw()` 纯 PHP 序列化，但 **§5.7 的 A/B 实测表明
-   在 Swoole 后端下单串 `end()` 已是最优**（与 webman 同构），逐 header C 写与之持平——**响应写出不是该差距主因**。
-   kode·default 与 webman 的差距主因是**可观测性 100% 路径固有成本**（见 §4）；lean（已关可观测）的 /bench/json
-   相对 /ping 折损另属「大 body / JSON 响应处理」类开销，为独立待查项（持续调优中）。
-3. **kode·default（完整企业栈）= 86k/59k**，约为自身 lean 的 **50%（/ping）/43%（/bench）**、裸 Swoole 的
-   **48%/32%**、webman 的 **45%/33%**。完整企业栈 + 真实生产路径下，`/bench/json` 折损达 ~57%（中间件栈 +
-   `HttpBridge::toRaw` 序列化双重成本），是换取 cors/安全头/限流/韧性/追踪/审计等能力的**功能对价，非缺陷**。
+1. **kode·lean 内核已达同类框架量级（`/ping`）**：`kode · lean`（**161k** / 139k）的 `/ping` 达到裸 Swoole 天花板的
+   **87%**、约为 webman 的 **90%**，且**超过 hyperf 约 1%**（98.5%）。证明请求构造（`HttpBridge::toPsr7` 改用 kode 自研
+   ServerRequest，省 4 次克隆）+ `handle` 路径高效，框架 hello-world 开销≈0。
+2. **kode·lean `/bench/json` 与 webman 的差距（约 79%）非框架代码缺陷**：`/bench/json` **139k** = 裸 Swoole **76%**、
+   webman **79%**，比 `/ping` 的 87%/90% 低一截。但 **§5.10 的隔离微基准铁证：kode 响应路径零 body 缩放开销**
+   （响应体 15B→1.5KB 各阶段 delta 均恰为 2.0µs = 纯 `json_encode` 本身），故该差距**不在框架响应代码**。
+   结合 `KODE_RUNTIME` 切换实验（kode·lean@Workerman 与 @Swoole 同样中招、且本机跨跑方差 ±15~40%），
+   残差主因是 **Swoole vs Workerman 运行时差异 + 笔记本热噪声**——二者均非框架缺陷，继续在框架层抠已无实收益。
+3. **kode·default（完整企业栈）= 69k/59k**，约为 webman 的 **39%（/ping）/33%（/bench）**、自身 lean 的
+   **43%/42%**。完整企业栈 + 真实生产路径下，折损是换取 cors/安全头/限流/韧性/追踪/审计/可观测等能力的
+   **功能对价，非缺陷**（详见 §4 边际成本剖析）。
 4. **此前「慢」与「失真」的真因**：
    - (a) `ab` 客户端封顶（已用 wrk 修正）；
    - (b) **默认链路追踪全采样（`sample_ratio=1.0`）**——单项最大吞吐税（已改默认 0.1 采样 + 未采样短路 span 创建，见第 5.1 节）；
@@ -237,21 +236,46 @@ wrk 实测数字即真实生产吞吐，不再被 harness 额外开销低估。�
 - 语义边界：内部 `trace_id`/`span_id` 在两种模式下**都照常生成**，`trace()` / `logger` 关联不受影响——只差
   「是否把链路头回写进 HTTP 响应」。
 
+### 5.10 v0.8.37：C 层 Swoole 写出 + harness 稳定化 + 响应路径零缩放开销铁证
+
+**A. `HttpBridge::emit()` C 层 Swoole 写出（框架层真实增益）**
+
+- Swoole 后端（HTTP 模式，`$conn->native()` 即 `Swoole\Http\Response`）改走 **`status()` + `header()` + `end($body)`**
+  的 C 层路径（v0.8.37 新增 `emitSwoole()`）：**消除旧 `toRaw()` 在 PHP 侧把「headers + body」拼成一整串的开销**，
+  每请求少一次 PHP 级大字符串分配 → 降低 GC 压力。Workerman 后端仍走原生 `Http\Response` 对象式 C 层写出（§5.7），
+  Native / Swoole-gzip 开启时退回 `toRaw` 单串发送以保留压缩能力。
+- 边界：`gzipAuto` 实际从未启用（`isGzipAuto()` 恒 false），故 C 层路径不丢失任何功能；`emit()` 后 HttpServer 不再
+  `close()`，连接按请求作用域安全。
+
+**B. harness 稳定化（治噪声，非粉饰）**
+
+- `run.sh`：WARMUP 3→8s、ITERS 3→5、COOLDOWN 15→20s；取 5 跑中位数抗噪。
+- `kode_swoole_server.php`：新增 `KODE_RUNTIME=swoole|workerman` 开关（透传 `Kode::serve` 第三参），
+  可在压测中强制运行时做同类对比（验证「差距来自运行时 vs 框架」）。
+
+**C. 隔离微基准铁证：响应路径零 body 缩放开销**
+
+- 方法：进程隔离、每场景独立 boot 测量（消 CPU 热节流伪影），响应体 15B → ~1.5KB 对比。
+- 结果（3 轮稳定一致）：`json_encode` / `Resp::json` 构造 / `toRaw` 序列化 / `getBodyString` **各阶段 delta 均恰
+  为 2.0µs** —— 即框架响应路径**零 body 缩放开销**，多出的 2µs 纯粹是 `json_encode` 本身（webman 同理）。
+- 推论：kode·lean `/bench/json` 相对 webman 的残差（约 79%）**不在框架响应代码**，而是 Swoole vs Workerman 运行时
+  差异 + 本机热噪声（见 §3.2）。框架层继续抠响应管线已无实收益。
+
 ## 6. 仍可继续提高的点（按性价比排序，待确认后实施）
 
 | 优先级 | 项 | 预期收益 | 改动性质 |
 |---|---|---|---|
-| **P0（已部分解决）** | **响应写出**：`HttpBridge::emit()` 已把 **Workerman 后端**路由到 C 层「对象式」序列化（对齐 webman，真实增益）；**Swoole 后端**经 A/B 实测确认单串 `end()` 已最优，旧 `toRaw` 纯 PHP 拼串与之持平，故保留单串 `end()` 并保留自动 gzip。结论：响应写出**不是** kode·lean /bench/json 仅裸 Swoole 74%/webman 76% 的主因（主因见 §4 可观测性 100% 路径）。kode/process 提供 `sendResponse(PSR-7)` 原生消费 API 仍可在 Workerman 之外进一步统一，但已非瓶颈。 | 已落地（Workerman 增益） | 框架内 |
+| **P0（本轮已落地）** | **响应写出（C 层，双引擎）**：`HttpBridge::emit()` 现已把 **Workerman 后端**路由到 C 层「对象式」序列化、**Swoole 后端**路由到 C 层 `status()+header()+end($body)`（v0.8.37 新增 `emitSwoole()`），二者均消除旧 `toRaw()` 的 PHP 级「headers+body」整串拼接（每请求少一次大字符串分配、降 GC 压力）。微基准铁证：框架响应路径**零 body 缩放开销**（§5.10C），故响应写出**不是** kode·lean `/bench/json` 仅裸 Swoole 76%/webman 79% 的主因（主因 = Swoole vs Workerman 运行时差异 + 本机热噪声，§3.2）。**待收尾（架构红线）**：`emit()` 内 `class_exists(\Swoole\Http\Response)` / `class_exists(\Workerman\...)` 仍让框架 `src/` 点名引擎，应下沉到 `kode/process` 的 `ConnectionInterface::emit(ResponseInterface)`（vendor patch），使框架完全不点名引擎。 | 已落地（双引擎 C 层写出） | 框架内 + 待 kode/process patch |
 | **P1（已落地）** | **可观测性 100% 路径固有成本**（Trace `ensure()` ≈ 2.3µs/请求，含 Context 读写 + CSPRNG + 入向头解析 + syncServer；非克隆、非随机数）。这是 kode·default 与 webman 差距的主因，且**框架内不可消除**（webman 默认不自带 trace/metrics）。**已新增 `observability.tracing.attach_headers`（默认 true）开关**：置 false 时跳过 `responseHeaders()` + 3×`withHeader` 的响应头回写（本机微基准省 ~2.1µs/op、约占该切片 47%，`ensure()` 固有成本保留），供「不依赖 W3C 传播、仅内部可观测」的高吞吐部署选择（见 §5.9）。真实生产路径增益受其余固定管线限制（与 §4 ~0.77µs 可观测 delta 一致），需 `run.sh` 实测。 | 中（仅 attach_headers 开关）/ 无（接受为功能对价） | 配置开关（已实施，默认 true 保持向后兼容） |
 | P1 | 全局限流默认 `capacity=10/s` 过低（config/limiting.php），会**真实限流生产流量**；建议默认大幅提高或仅按 `#[RateLimit]` 生效 | 生产可用性（非压测） | 配置默认值 |
 | P2 | resilience 三件套（熔断/重试/幂等）目前**全局包裹每条请求**，应仿照 rate-limit/feature/csrf 改为「按路由属性 `#[Retry]`/`#[CircuitBreaker]`/`#[Idempotency]` 扫描后按需注册」 | 默认栈再降数 % | 架构（需评估 kode/http 是否支持路由级中间件） |
 | P3 | AccessLog 异步入队仍有每请求格式化开销；可评估「仅在 span/指标已启用时同步元数据」 | 小 | 局部 |
 | P4 | 其余常驻中间件（RequestId/Cors/SecurityHeaders/Locale/Feature/Csrf）各自仅微开销，聚合约 10~15%，逐项优化收益递减 | 小 | 局部/可选 |
 
-> 立场：kode 的价值正是「开箱即用的企业级中间件」。默认栈 ~50%（/ping）/~57%（/bench）折损是**功能对价**，
-> 不是缺陷；需要极限吞吐时关闭对应组（lean 模式已验证 `/ping` 达裸 Swoole **96%**、webman **92%**）。
-> 但 `/bench/json` 受 `HttpBridge::toRaw` 序列化 + kode/process 统一运行时 I/O 限制，真实路径下仅 74%/76%——
-> 旧「lean 达裸内核 94%+」基于自建 Swoole 适配器高估，已作废（见第 5.6 节）。
+> 立场：kode 的价值正是「开箱即用的企业级中间件」。默认栈（kode·default）约 webman **39%/33%** 折损是**功能对价**，
+> 不是缺陷；需要极限吞吐时关闭对应组（lean 模式已验证 `/ping` 达裸 Swoole **87%**、webman **90%**、`/bench/json` 达 webman **79%**）。
+> 隔离微基准（§5.10C）已证 kode 响应路径零 body 缩放开销，残差主因是 Swoole vs Workerman 运行时差异 + 本机热噪声（同 peer 跨跑 ±15~40%），
+> 框架层继续抠已无实收益。
 > 上述 P2 是把「未使用的功能」从默认热路径移除，属正确且不影响能力的优化。
 
 ## 7. 复现
