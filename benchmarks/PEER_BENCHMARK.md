@@ -83,6 +83,10 @@
 2. **Trace 成本不在「不可变 withHeader 克隆」**：微基准显示 3× `withHeader`（Nyholm 不可变克隆）约 1.0M ops/s、每请求仅 ~0.3µs，
    而完整 `TraceContext::ensure()` + `responseHeaders()` + 3×`withHeader` 实测约 **0.77µs/请求**——瓶颈是
    `Context` 读写 + 入向头解析 + W3C 头拼接（**固有成本**，与克隆无关）。故「让 kode Response 可变以减少克隆」**无实质收益**（已证伪）。
+   - 细化（v0.8.36）：上述「固有成本」实为 `ensure()` 内部（`Context` 读写 + `random_bytes` + 入向头解析 + `syncServer`），它**保留**；
+     而 `responseHeaders()`（W3C 拼接）+ 3×`withHeader`（Nyholm 克隆响应对象）属「**回写响应头**」切片，**已可通过
+     `observability.tracing.attach_headers=false` 移除**（见 §5.8 第 3 条 / §6 P1）。本机微基准：该切片约 2.1µs/op（占 trace
+     头处理切片约 47%），`ensure()` 固有 ~2.3µs/op 不受影响。绝对数值随机器/负载浮动，真实生产路径增益以 `run.sh` 实测为准。
 3. 随机数生成已优化（`ensure()` 单次 `random_bytes(24)` 切片出 trace_id+span_id，省 1 次系统调用），但占比极小。
 4. **诚实定性**：kode·default 与 webman 的差距，主要是「webman 默认裸栈、不自带 trace/metrics 中间件，
    而 kode·default 默认开箱即用的企业级可观测性」。webman 若装同等中间件，差距会显著收窄——属**功能对价**，非缺陷。
@@ -216,12 +220,29 @@ wrk 实测数字即真实生产吞吐，不再被 harness 额外开销低估。�
   固有成本（Context 读写 + 头解析 + W3C 拼接，约 0.77µs/请求）**无法通过框架内微优化消除**；其主导性来自
   「kode·default 默认开箱即用的企业级可观测性」，而 webman 默认不自带。故 kode·default 与 webman 的差距属**功能对价**。
 
+### 5.9 新增 `observability.tracing.attach_headers` 开关（v0.8.36）
+
+把「回写 W3C 链路头」与「建立内部 trace 上下文」解耦，提供部署级杠杆：
+
+- `observability.tracing.attach_headers`（默认 `true`，env `OBS_TRACING_ATTACH_HEADERS`）：
+  - `true`：每个响应都带 `traceparent` + `X-Trace-Id` + `X-Span-Id`（网关/日志/APM 可直接串联）。
+  - `false`：`TraceMiddleware` **仅**调用 `TraceContext::ensure()` 建立内部 trace 上下文（供 `logger` 关联、
+    `TraceContext::outgoingHeaders()` 下游串联、kode/exception 异常 tracer 桥接），**跳过 `responseHeaders()` +
+    3×`withHeader` 的响应头回写**——省去该切片每请求开销。
+- 实现：`TraceMiddleware` 构造器新增 `$config` 透传 `observability.tracing`，按 `attach_headers` 决定
+  `foreach (TraceContext::responseHeaders())` 是否执行；`ObservabilityServiceProvider` 已在挂载时传入配置。
+- 微基准（本机、进程隔离、5 轮中位数）：该切片约 **2.1µs/op（约占 trace 头处理切片 47%）**；`ensure()` 固有
+  ~2.3µs/op 保留。`attach_headers=false` 使 `TraceMiddleware` 每请求开销约减半（微基准口径），真实生产路径增益
+  受其余固定管线成本限制（与 §4 的 ~0.77µs 可观测 delta 一致），需以 `run.sh` 实测为准。
+- 语义边界：内部 `trace_id`/`span_id` 在两种模式下**都照常生成**，`trace()` / `logger` 关联不受影响——只差
+  「是否把链路头回写进 HTTP 响应」。
+
 ## 6. 仍可继续提高的点（按性价比排序，待确认后实施）
 
 | 优先级 | 项 | 预期收益 | 改动性质 |
 |---|---|---|---|
 | **P0（已部分解决）** | **响应写出**：`HttpBridge::emit()` 已把 **Workerman 后端**路由到 C 层「对象式」序列化（对齐 webman，真实增益）；**Swoole 后端**经 A/B 实测确认单串 `end()` 已最优，旧 `toRaw` 纯 PHP 拼串与之持平，故保留单串 `end()` 并保留自动 gzip。结论：响应写出**不是** kode·lean /bench/json 仅裸 Swoole 74%/webman 76% 的主因（主因见 §4 可观测性 100% 路径）。kode/process 提供 `sendResponse(PSR-7)` 原生消费 API 仍可在 Workerman 之外进一步统一，但已非瓶颈。 | 已落地（Workerman 增益） | 框架内 |
-| **P1** | **可观测性 100% 路径固有成本**（Trace `ensure()`+`responseHeaders()` ≈ 0.77µs/请求，含 Context 读写 + 头解析 + W3C 拼接；非克隆、非随机数）。这是 kode·default 与 webman 差距的主因，且**框架内不可消除**（webman 默认不自带 trace/metrics）。可选杠杆：新增 `observability.tracing.attach_headers`（默认 true），置 false 时跳过 W3C 头附加（省 ~0.77µs），供「不依赖 W3C 传播、仅内部 span 录制」的部署选择；或接受其为**功能对价**。 | 中（仅 attach_headers 开关）/ 无（接受） | 配置开关（需用户拍板默认语义） |
+| **P1（已落地）** | **可观测性 100% 路径固有成本**（Trace `ensure()` ≈ 2.3µs/请求，含 Context 读写 + CSPRNG + 入向头解析 + syncServer；非克隆、非随机数）。这是 kode·default 与 webman 差距的主因，且**框架内不可消除**（webman 默认不自带 trace/metrics）。**已新增 `observability.tracing.attach_headers`（默认 true）开关**：置 false 时跳过 `responseHeaders()` + 3×`withHeader` 的响应头回写（本机微基准省 ~2.1µs/op、约占该切片 47%，`ensure()` 固有成本保留），供「不依赖 W3C 传播、仅内部可观测」的高吞吐部署选择（见 §5.9）。真实生产路径增益受其余固定管线限制（与 §4 ~0.77µs 可观测 delta 一致），需 `run.sh` 实测。 | 中（仅 attach_headers 开关）/ 无（接受为功能对价） | 配置开关（已实施，默认 true 保持向后兼容） |
 | P1 | 全局限流默认 `capacity=10/s` 过低（config/limiting.php），会**真实限流生产流量**；建议默认大幅提高或仅按 `#[RateLimit]` 生效 | 生产可用性（非压测） | 配置默认值 |
 | P2 | resilience 三件套（熔断/重试/幂等）目前**全局包裹每条请求**，应仿照 rate-limit/feature/csrf 改为「按路由属性 `#[Retry]`/`#[CircuitBreaker]`/`#[Idempotency]` 扫描后按需注册」 | 默认栈再降数 % | 架构（需评估 kode/http 是否支持路由级中间件） |
 | P3 | AccessLog 异步入队仍有每请求格式化开销；可评估「仅在 span/指标已启用时同步元数据」 | 小 | 局部 |

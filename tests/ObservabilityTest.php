@@ -8,7 +8,9 @@ use Kode\Context\Context;
 use Kode\Framework\Observability\Metrics\MetricRegistry;
 use Kode\Framework\Observability\Trace\TraceContext;
 use Kode\Framework\Testing\TestCase;
+use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
+use Psr\Http\Server\RequestHandlerInterface;
 
 /**
  * 可观测性测试：指标注册表 + 链路上下文 + /metrics 端点（保护与内容）。
@@ -108,6 +110,52 @@ final class ObservabilityTest extends TestCase
         self::assertArrayHasKey('X-Trace-Id', $headers);
         self::assertArrayHasKey('X-Span-Id', $headers);
         self::assertMatchesRegularExpression('/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/', $headers['traceparent']);
+    }
+
+    /**
+     * 直接驱动 TraceMiddleware：attach_headers 默认 true 时响应带链路头。
+     */
+    public function testTraceMiddlewareAppendsHeadersByDefault(): void
+    {
+        Context::clear();
+        $mw = new \Kode\Framework\Observability\Middleware\TraceMiddleware(null, []);
+        $res = $mw->process(new ServerRequest('GET', '/x'), self::okHandler());
+
+        self::assertNotEmpty($res->getHeaderLine('traceparent'));
+        self::assertNotEmpty($res->getHeaderLine('X-Trace-Id'));
+        self::assertSame('ok', (string) $res->getBody());
+    }
+
+    /**
+     * attach_headers=false 时应跳过 W3C 响应头回写，但内部 trace 上下文仍建立、响应体不变。
+     */
+    public function testTraceMiddlewareOmitsHeadersWhenAttachDisabled(): void
+    {
+        Context::clear();
+        $mw = new \Kode\Framework\Observability\Middleware\TraceMiddleware(null, ['attach_headers' => false]);
+        $res = $mw->process(new ServerRequest('GET', '/x'), self::okHandler());
+
+        self::assertEmpty($res->getHeaderLine('traceparent'));
+        self::assertEmpty($res->getHeaderLine('X-Trace-Id'));
+        self::assertEmpty($res->getHeaderLine('X-Span-Id'));
+        // 内部 trace 上下文仍照常建立（供日志/异常 tracer 关联）。
+        self::assertNotNull(TraceContext::traceId());
+        // 业务响应体不受影响。
+        self::assertSame('ok', (string) $res->getBody());
+    }
+
+    /**
+     * 返回固定 200 'ok' 的 no-op 处理器，用于直接驱动中间件单元。
+     */
+    private static function okHandler(): RequestHandlerInterface
+    {
+        return new class implements RequestHandlerInterface {
+            #[\Override]
+            public function handle(\Psr\Http\Message\ServerRequestInterface $request): \Psr\Http\Message\ResponseInterface
+            {
+                return new Response(200, ['Content-Type' => 'text/plain'], 'ok');
+            }
+        };
     }
 
     // ------------------------------------------------------------------

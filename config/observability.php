@@ -67,6 +67,17 @@ return [
         // 请求（根 span）结束时自动 flush 缓冲 span（HTTP 场景推荐开启）
         'flush_on_request_end' => (bool) env('OBS_TRACING_FLUSH_ON_END', true),
 
+        /*
+         * 响应是否回写 W3C 链路头（traceparent + X-Trace-Id + X-Span-Id）。
+         *  - true（默认）：每个响应都带链路头，网关 / 日志 / APM 可直接串联；
+         *    代价是每请求多一次 W3C 字符串拼接 + 3× 响应头写入（约 0.77µs）。
+         *  - false：仅建立内部 trace 上下文（供日志关联、下游 outgoingHeaders 串联、
+         *    kode/exception 异常 tracer 桥接），不回写响应头——省去上述每请求开销，
+         *    适合「不依赖 W3C 传播、仅内部可观测」的高吞吐部署。
+         *    Note：内部 trace_id/span_id 仍照常生成，trace()/logger 关联不受影响。
+         */
+        'attach_headers' => (bool) env('OBS_TRACING_ATTACH_HEADERS', true),
+
         // 异步导出（默认开）：请求结束仅把 span 内存入队（µs 级），真实网络发送由
         // 定时器 / shutdown / 优雅停机钩子离请求路径批量执行——避免每请求同步阻塞
         // OTLP POST 拖垮吞吐（OTel BatchSpanProcessor 同范式）。关闭则退化为请求结束同步导出。

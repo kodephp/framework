@@ -11,6 +11,7 @@
 - 写入 `kode/context` 的 `TRACE_ID` / `SPAN_ID`，并**回写 `$_SERVER['HTTP_X_TRACE_ID']`**，使 kode/exception 的分布式追踪复用同一 traceId（异常响应与正常响应的 traceId 一致）；
 - 通过 `TraceContext::childSpan()` 衍生子 span；
 - 响应自动附带 `traceparent` + `X-Trace-Id` + `X-Span-Id`；向其它服务发起 HTTP 调用时用 `TraceContext::outgoingHeaders()` 注入实现跨服务串联。
+- **响应头回写开关** `observability.tracing.attach_headers`（默认 `true`）：置 `false` 时仅建立内部 trace 上下文（供日志关联、下游 `outgoingHeaders` 串联、kode/exception 异常 tracer 桥接），**不回写响应头**，省去每请求的 W3C 拼接 + 3× 响应头写入开销。适合「不依赖 W3C 传播、仅内部可观测」的高吞吐部署；内部 `trace_id`/`span_id` 仍照常生成，`trace()` / `logger` 关联不受影响。
 
 ```php
 use function Kode\Framework\Support\trace;
@@ -55,7 +56,11 @@ return [
         'token'    => env('OBS_METRICS_TOKEN', ''), // 留空则启动时随机生成并打印到 STDERR
         'skip_paths' => ['/metrics', '/health', '/health/ready', '/ping'],
     ],
-    'tracing' => ['enabled' => true],
+    'tracing' => [
+        'enabled' => true,
+        // 响应是否回写 W3C 链路头；false 时仅内部 trace，不回写响应头（省每请求开销）
+        'attach_headers' => env('OBS_TRACING_ATTACH_HEADERS', true),
+    ],
 ];
 ```
 

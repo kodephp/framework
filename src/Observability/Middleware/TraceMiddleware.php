@@ -23,6 +23,9 @@ use Psr\Http\Server\RequestHandlerInterface;
  *    其 span_id 与响应 traceparent 一致，子调用通过 tracer()->start() 自然嵌套。
  *  - 响应返回：为**每一个**响应（含异常响应）追加 W3C traceparent 与 X-Trace-Id /
  *    X-Span-Id 头，保证整条调用链在网关 / 日志 / APM 中可串联。
+ *   该行为由配置 `observability.tracing.attach_headers`（默认 true）控制：置 false 时
+ *   仅建立内部 trace 上下文（日志关联 / 下游串联 / 异常 tracer 桥接），不回写响应头，
+ *   省去每请求的 W3C 拼接 + 3× 响应头写入开销。
  *
  * 放在全局最外层（prepend），无论下游是否抛异常都能附加链路头。
  */
@@ -32,9 +35,12 @@ final class TraceMiddleware implements MiddlewareInterface
      * 链路追踪管理器（启动期注入一次，避免每请求 resolve() + 全局 app() 访问）。
      *
      * 为 null 或 {@see Tracer::isEnabled()} 为 false 时跳过 span 录制，仅做最廉价的链路头附加。
+     *
+     * @param array<string, mixed> $config 透传 `observability.tracing` 配置（含 attach_headers）
      */
     public function __construct(
         private readonly ?Tracer $tracer = null,
+        private readonly array $config = [],
     ) {
     }
 
@@ -83,12 +89,16 @@ final class TraceMiddleware implements MiddlewareInterface
         }
 
         // 尽力附加链路头；任一头构造失败只跳过该头，不影响主响应。
-        try {
-            foreach (TraceContext::responseHeaders() as $name => $value) {
-                $response = $response->withHeader($name, $value);
+        // attach_headers=false 时跳过（省去 W3C 拼接 + 3× 响应头写入的每请求开销）；
+        // 内部 trace 上下文（ensure 已建立）仍供日志关联 / 下游串联 / 异常 tracer 桥接使用。
+        if ((bool) ($this->config['attach_headers'] ?? true)) {
+            try {
+                foreach (TraceContext::responseHeaders() as $name => $value) {
+                    $response = $response->withHeader($name, $value);
+                }
+            } catch (\Throwable) {
+                // best-effort：链路头缺失不影响业务响应。
             }
-        } catch (\Throwable) {
-            // best-effort：链路头缺失不影响业务响应。
         }
 
         return $response;

@@ -41,7 +41,7 @@ final class ObservabilityServiceProvider extends ServiceProvider
             $tracer = $this->container->bound(Tracer::class)
                 ? $this->container->get(Tracer::class)
                 : null;
-            $app->getDispatcher()->prepend(new TraceMiddleware($tracer));
+            $app->getDispatcher()->prepend(new TraceMiddleware($tracer, (array) $this->config('observability.tracing', [])));
         }
 
         // ---- 自动请求指标 ----
