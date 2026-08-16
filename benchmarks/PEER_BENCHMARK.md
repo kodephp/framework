@@ -363,12 +363,14 @@ no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run_workerman_kode.sh
 | **kode·default @ Native** | **≈ 0**（connect 200） | **≈ 0** | 同上 |
 
 - 即使用 `-c20 -t2`（仅 20 并发）也已 `Socket errors: connect 20`、`read 16097`，吞吐仅 ~3.2k rps；`-c10` 同样 `connect 10`。**任何 ≥ 约 10 的并发即全面拒绝新连接**。
-- 单连接 `curl /ping` 稳定返回 `HTTP 200`，说明监听/首连接路径正常，**缺陷在事件循环的「后续 accept / 已建连读取」路径**。
-- server log / `error_log` **无任何 PHP fatal / 异常**（已开 `display_errors` + `error_log` 复测），worker 是**静默停止接受新连接**，非崩溃退出——典型 vendor 事件循环 accept 注册未续挂或 `stream_socket_accept` 消费了可读事件的 bug。
+- 单连接 `curl /ping` 稳定返回 `HTTP 200`，说明监听/首连接路径正常；**`workers=1` 单 worker 独占监听 socket 下同样复现**（c50 → connect 48/50）→ 排除「多 worker 共享 socket 惊群」，**缺陷在单 worker 的 accept 路径**。
+- server log / `error_log` **无任何 PHP fatal / 异常**（已开 `display_errors` + `error_log` 复测），**压测后 worker 进程仍存活**（非崩溃退出）→ 典型 vendor 事件循环对监听 socket 的 readable 语义问题：`NativeRuntime::accept()` 每次只 `stream_socket_accept` 一个连接，macOS 下 burst 中其余已排队连接被搁置。
+- **根因已定位、改法已写明**：见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) **F1** 节（`accept()` 改为循环 drain 直到 EAGAIN）。
 
 ### 9.2 处置与对「继续调优」的含义
 
-1. **Native 驱动缺陷属 kode/process（vendor，已 gitignore），框架侧无法以 patch 持久修复**；最小复现与怀疑点见
+1. **Native 驱动缺陷属 kode/process（vendor，已 gitignore），框架侧无法以 patch 持久修复**；最小复现、根因与改法见
+   [`benchmarks/kode-process-fix-directions.md`](./kode-process-fix-directions.md)（**F1** 节，已定位根因并给出 `accept()` 循环 drain 的具体代码）+ 配套报告
    [`benchmarks/kode-process-native-concurrency.md`](./kode-process-native-concurrency.md)（可交还上游，与 §8 Swoole 回归并列）。
 2. **「继续使用自研多进程是否更好」= 否（性能口径）**：自研 Native 当前不可用；即便修好，纯 PHP `stream_select` 事件循环的天花板也远低于 Workerman/Swoole 的 C 层 epoll/kqueue，
    属「零依赖兜底」定位，不应作为压测/调优的对比基线。
