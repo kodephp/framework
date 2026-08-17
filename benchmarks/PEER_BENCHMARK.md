@@ -235,7 +235,7 @@ kode 开启 `cors,security,logging`（= webman 的 CORS+安全头+Request-Id+访
 | --- | --- | --- | --- |
 | **P0（已落地）** | 响应写出（C 层双引擎）+ 架构红线收尾（`sendResponse` 薄委托，框架不点名引擎） | 已落地 | 框架内 + kode/process 原生 |
 | **P1（已落地）** | 可观测性 100% 路径固有成本 + `attach_headers` 开关 | 中/无（接受为功能对价） | 配置开关 |
-| P1 | 全局限流默认 `capacity=10/s` 过低，会真实限流生产流量；建议默认大幅提高或仅按 `#[RateLimit]` 生效 | 生产可用性 | 配置默认值 |
+| **P1（已落地）** | 全局兜底限流默认 `global.enabled=false`（限流只作用于 `#[RateLimit]` 标记的路由）+ 兜底 `capacity` 由 10/s 提至 1000，彻底消除「10/s 误杀生产流量」风险 | 已落地 | 配置默认值（`config/limiting.php`） |
 | **P2（已落地·深化）** | resilience 改为路由级中间件，移出默认全局管道 | 已落地 | 架构 |
 | **P3（已落地）** | AccessLog 静态无界队列致常驻进程 OOM（kode ON json 崩塌至 52k）→ 加 8192 硬上限 + 中间件「队列达 256 即批量 flush」，队列恒有界、日志不丢 | 已落地 | 框架内（src/Logging/AccessLogSink + src/Http/Middleware/AccessLogMiddleware） |
 | P4 | 其余常驻中间件（RequestId/Cors/Security/Locale/Feature）各自仅微开销，聚合 ~10~15% | 小 | 局部/可选 |

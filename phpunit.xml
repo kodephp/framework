@@ -37,6 +37,7 @@
              测试环境统一显式开启，使既有「能力启用」类测试维持绿；框架真实默认仍为零开销。 -->
         <env name="CORS_ENABLED" value="true"/>
         <env name="SECURITY_HEADERS_ENABLED" value="true"/>
+        <env name="SECURITY_REQUEST_ID" value="true"/>
         <env name="OBS_METRICS_ENABLED" value="true"/>
         <!-- 测试环境全采样，使直方图 TYPE 行稳定出现（生产默认 0.1，避免每请求 HDR 开销） -->
         <env name="OBS_METRICS_SAMPLE_RATIO" value="1.0"/>
