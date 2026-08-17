@@ -29,10 +29,20 @@ final class AccessLogSink
     private static array $queue = [];
 
     /**
+     * 队列硬上限（防御性）：即使下游 flush 因异常未触发，也保证内存有界，
+     * 不会在持续高并发下无限累积直至 worker OOM。达上限时丢弃最新条目
+     * （访问日志在极端过载下可丢弃，优于 OOM 致 worker 崩溃、整体不可用）。
+     */
+    private const MAX = 8192;
+
+    /**
      * 热路径入队：仅一次数组 push，无任何 I/O 与格式化开销。
      */
     public function emit(string $level, string $message, array $context): void
     {
+        if (count(self::$queue) >= self::MAX) {
+            return;
+        }
         self::$queue[] = [
             'level'   => $level,
             'message' => $message,

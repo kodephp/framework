@@ -104,6 +104,15 @@ final class AccessLogMiddleware implements MiddlewareInterface
     }
 
     /**
+     * 离路径批量落盘阈值：队列积压达到该条数即触发一次批量 flush。
+     * 这是修复「常驻进程下访问日志队列无限累积 → worker OOM」的关键——
+     * 旧实现只在优雅停机时 flush，持续高并发会把全部请求积压进内存直至内存耗尽；
+     * 现改为「阈值触发批量落盘」，队列长度恒有界（≤ BATCH），I/O 被均摊到每 BATCH 个请求，
+     * 既防 OOM 又不丢日志、热路径仅多一次计数比较。
+     */
+    private const BATCH = 256;
+
+    /**
      * 落盘：异步（sink 已注入且开启）时仅内存入队，离请求路径再批量写入；
      * 否则（无 sink 或 async=false）直接同步写 logger，保证向后兼容与审计强一致场景。
      */
@@ -111,6 +120,9 @@ final class AccessLogMiddleware implements MiddlewareInterface
     {
         if ($this->sink !== null && $this->async) {
             $this->sink->emit($level, 'access', $context);
+            if ($this->sink->pending() >= self::BATCH) {
+                $this->sink->flush($this->logger);
+            }
             return;
         }
 
