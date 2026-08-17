@@ -12,7 +12,7 @@
  */
 
 return [
-    'enabled' => true,
+    'enabled' => false,
     'default' => env('APP_LOCALE', 'zh-CN'),
     'available' => ['zh-CN', 'en'],
 ];

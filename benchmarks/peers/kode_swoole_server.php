@@ -20,7 +20,11 @@ declare(strict_types=1);
  *
  * 运行：php benchmarks/peers/kode_swoole_server.php
  * 端口：BENCH_PORT（默认 8093）；worker：BENCH_WORKERS（默认 8）
- * 档位：KODE_PROFILE=default|lean；KODE_DISABLE=组名(逗号) 追加关闭中间件（定位边际成本）。
+ * 档位（框架默认 opt-in：以下能力 config 默认全 false，开发者按需开启）：
+ *   KODE_PROFILE=off|default|lean -> 零跨切面中间件（最小内核，压测基线）
+ *   KODE_PROFILE=full             -> 全部开启（cors/security/locale/resilience/logging/observability/session/idempotency/feature）
+ *   KODE_ENABLE=组名(逗号)         -> 在 off 基础上增量开启指定组（定位每项边际成本）
+ *   KODE_DISABLE=组名(逗号)        -> 在 full/on 基础上强制关闭指定组
  */
 
 require __DIR__ . '/../../vendor/autoload.php';
@@ -42,18 +46,44 @@ use Kode\Framework\Server\GracefulShutdown;
 
 $repoRoot = dirname(__DIR__, 2);
 
-$profile = $_SERVER['KODE_PROFILE'] ?? 'default';
-$extraDisable = [];
-if (!empty($_SERVER['KODE_DISABLE'])) {
-    $extraDisable = array_filter(array_map('trim', explode(',', (string) $_SERVER['KODE_DISABLE'])));
+$profile = $_SERVER['KODE_PROFILE'] ?? 'off';   // off(default) | full | lean(alias off)
+$enableList = [];
+if (!empty($_SERVER['KODE_ENABLE'])) {
+    $enableList = array_filter(array_map('trim', explode(',', (string) $_SERVER['KODE_ENABLE'])));
 }
-$alwaysDisable = ['limiting'];
-$profileDisable = $profile === 'lean'
-    ? ['logging', 'session', 'idempotency', 'feature', 'cors', 'security', 'locale', 'resilience', 'observability']
-    : [];
-$disable = array_values(array_unique([...$alwaysDisable, ...$profileDisable, ...$extraDisable]));
-$keys = $disable;
-$tmp = sys_get_temp_dir() . '/kode-peer-' . substr(md5($repoRoot . '|' . $profile . '|' . implode(',', $keys)), 0, 10);
+$disableList = [];
+if (!empty($_SERVER['KODE_DISABLE'])) {
+    $disableList = array_filter(array_map('trim', explode(',', (string) $_SERVER['KODE_DISABLE'])));
+}
+
+// 全部可选跨切面能力组（框架 config 默认均为 false / opt-in）。
+$allGroups = [
+    'cors'          => "<?php return ['enabled' => true];\n",
+    'security'      => "<?php return ['enabled' => true, 'audit' => ['enabled' => true], 'request_id' => true];\n",
+    'locale'        => "<?php return ['enabled' => true];\n",
+    'resilience'    => "<?php return ['enabled' => true, 'breaker' => ['http' => ['enabled' => true]], 'retry' => ['http' => ['enabled' => true]]];\n",
+    'logging'       => "<?php return ['access_log' => ['enabled' => true]];\n",
+    'observability' => "<?php return ['metrics' => ['enabled' => true], 'tracing' => ['enabled' => true]];\n",
+    'session'       => "<?php return ['enabled' => true];\n",
+    'idempotency'   => "<?php return ['http' => ['enabled' => true]];\n",
+    'feature'       => "<?php return ['enabled' => true];\n",
+];
+
+// 决定哪些组「开」：off/lean/default/空 -> 全关；full -> 全开；否则取 KODE_ENABLE 并集。
+if ($profile === 'full') {
+    $onGroups = array_keys($allGroups);
+} elseif (in_array($profile, ['off', 'lean', 'default', ''], true)) {
+    $onGroups = [];
+} else {
+    $onGroups = [];
+}
+if ($enableList !== []) {
+    $onGroups = array_values(array_unique([...$onGroups, ...$enableList]));
+}
+$onGroups = array_values(array_diff($onGroups, $disableList));
+
+// limiting 在压测中恒关（需 redis 才显效，且非本对比项）。
+$tmp = sys_get_temp_dir() . '/kode-peer-' . substr(md5($repoRoot . '|' . $profile . '|' . implode(',', $onGroups)), 0, 10);
 if (!is_dir($tmp . '/config')) {
     mkdir($tmp . '/config', 0o777, true);
     foreach (glob($repoRoot . '/config/*.php') ?: [] as $file) {
@@ -61,23 +91,28 @@ if (!is_dir($tmp . '/config')) {
     }
     putenv('SESSION_DRIVER=array');
     $_ENV['SESSION_DRIVER'] = 'array';
-    foreach ($disable as $k) {
-        file_put_contents($tmp . '/config/' . $k . '.php', match ($k) {
-            'logging'        => "<?php return ['access_log' => ['enabled' => false]];\n",
-            'session'        => "<?php return ['enabled' => false];\n",
-            'idempotency'    => "<?php return ['http' => ['enabled' => false]];\n",
-            'feature'        => "<?php return ['enabled' => false];\n",
-            'cors'           => "<?php return ['enabled' => false];\n",
-            'security'       => "<?php return ['enabled' => false, 'audit' => ['enabled' => false], 'request_id' => false];\n",
-            'locale'         => "<?php return ['enabled' => false];\n",
-            'resilience'     => "<?php return ['breaker' => ['http' => ['enabled' => false]], 'retry' => ['http' => ['enabled' => false]]];\n",
-            'observability'  => "<?php return ['metrics' => ['enabled' => false], 'tracing' => ['enabled' => false]];\n",
-            'audit'          => "<?php return ['audit' => ['enabled' => false]];\n",
-            'tracing'        => "<?php return ['tracing' => ['enabled' => false]];\n",
-            default          => "<?php return ['enabled' => false];\n",
-        });
+    foreach ($allGroups as $g => $onSnippet) {
+        $enabled = in_array($g, $onGroups, true);
+        if ($enabled) {
+            file_put_contents($tmp . '/config/' . $g . '.php', $onSnippet);
+        } else {
+            file_put_contents($tmp . '/config/' . $g . '.php', match ($g) {
+                'logging'        => "<?php return ['access_log' => ['enabled' => false]];\n",
+                'session'        => "<?php return ['enabled' => false];\n",
+                'idempotency'    => "<?php return ['http' => ['enabled' => false]];\n",
+                'feature'        => "<?php return ['enabled' => false];\n",
+                'cors'           => "<?php return ['enabled' => false];\n",
+                'security'       => "<?php return ['enabled' => false, 'audit' => ['enabled' => false], 'request_id' => false];\n",
+                'locale'         => "<?php return ['enabled' => false];\n",
+                'resilience'     => "<?php return ['enabled' => false, 'breaker' => ['http' => ['enabled' => false]], 'retry' => ['http' => ['enabled' => false]]];\n",
+                'observability'  => "<?php return ['metrics' => ['enabled' => false], 'tracing' => ['enabled' => false]];\n",
+                default          => "<?php return ['enabled' => false];\n",
+            });
+        }
     }
+    file_put_contents($tmp . '/config/limiting.php', "<?php return ['enabled' => false];\n");
 }
+
 
 $port = (int) ($_SERVER['BENCH_PORT'] ?? 8093);
 $workers = (int) ($_SERVER['BENCH_WORKERS'] ?? 8);
@@ -236,7 +271,7 @@ $bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCre
 $runtimeArg = $_SERVER['KODE_RUNTIME'] ?? 'auto';
 $runtimeArg = $runtimeArg === 'auto' ? null : $runtimeArg;
 
-echo "kode peer server on :$port (workers=$workers, profile=$profile, runtime=" . ($runtimeArg ?? 'auto') . ")\n";
+echo "kode peer server on :$port (workers=$workers, profile=$profile, onGroups=[" . implode(',', $onGroups) . "], runtime=" . ($runtimeArg ?? 'auto') . ")\n";
 echo "routes: /ping /bench/json /bench/{raw,kode,eloquent,doctrine,think}/{mysql,pgsql}\n";
 
 Kode::serve("http://127.0.0.1:$port", [

@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 return [
     // 总开关：关闭后所有 #[Feature] 路由均放行（视为全开），feature() 仍按 flags 判定。
-    'enabled' => (bool) env('FEATURE_ENABLED', true),
+    'enabled' => (bool) env('FEATURE_ENABLED', false),
 
     // 未声明 flag 的默认判定（建议 false）。
     'default' => (bool) env('FEATURE_DEFAULT', false),

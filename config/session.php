@@ -14,7 +14,7 @@ declare(strict_types=1);
 
 return [
     // 是否启用会话中间件（关闭则 session() 返回 null，不启停会话）。
-    'enabled' => env('SESSION_ENABLED', true),
+    'enabled' => env('SESSION_ENABLED', false),
 
     // 默认驱动名（对应 drivers.* 的键）。
     'default' => env('SESSION_DRIVER', 'file'),

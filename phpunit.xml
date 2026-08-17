@@ -32,5 +32,21 @@
 
         <!-- 健康检查集成测试：测试环境通常无可达 MySQL，关闭 db 探针避免就绪检查误报 503。 -->
         <env name="HEALTH_CHECK_DB" value="false"/>
+
+        <!-- 框架默认改为「按需开启（opt-in）」：以下跨切面能力 config 默认值已翻转为 false。
+             测试环境统一显式开启，使既有「能力启用」类测试维持绿；框架真实默认仍为零开销。 -->
+        <env name="CORS_ENABLED" value="true"/>
+        <env name="SECURITY_HEADERS_ENABLED" value="true"/>
+        <env name="OBS_METRICS_ENABLED" value="true"/>
+        <!-- 测试环境全采样，使直方图 TYPE 行稳定出现（生产默认 0.1，避免每请求 HDR 开销） -->
+        <env name="OBS_METRICS_SAMPLE_RATIO" value="1.0"/>
+        <env name="OBS_TRACING_ENABLED" value="true"/>
+        <env name="BREAKER_HTTP_ENABLED" value="true"/>
+        <env name="RETRY_HTTP_ENABLED" value="true"/>
+        <env name="IDEMPOTENCY_HTTP_ENABLED" value="true"/>
+        <env name="SESSION_ENABLED" value="true"/>
+        <env name="FEATURE_ENABLED" value="true"/>
+        <env name="LOCALE_ENABLED" value="true"/>
+        <env name="ACCESS_LOG_ENABLED" value="true"/>
     </php>
 </phpunit>

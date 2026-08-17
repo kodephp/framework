@@ -32,7 +32,7 @@ return [
     // HTTP 幂等中间件（可选，默认开启；仅对携带幂等键的请求生效，缺头零开销放行）
     // ------------------------------------------------------------------
     'http' => [
-        'enabled' => (bool) env('IDEMPOTENCY_HTTP_ENABLED', true),
+        'enabled' => (bool) env('IDEMPOTENCY_HTTP_ENABLED', false),
 
         // 客户端携带的幂等键请求头（Stripe 风格）
         'header' => (string) env('IDEMPOTENCY_HEADER', 'Idempotency-Key'),

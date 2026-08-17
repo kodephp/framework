@@ -62,7 +62,7 @@ private function accept($serverSock, array $listener): void
 
 - macOS：`wrk -t4 -c50 -d6s` 与 `-c200` 下 `Socket errors: connect` = 0，rps 回到 ~170k（与 Workerman 同档）。
 - `workers=1` 单 worker 并发（c50）正常服务（此前 5.2.31 同样条件 `connect 48/50`）。
-- v0.8.41 三运行时压测：kode·lean @ Native = 166k/136k rps，与 @Workerman/@Swoole 同档。
+- v0.8.41 三运行时压测：kode L0（off）@ Native = 166,971/132,693 rps，与 @Workerman/@Swoole 同档（详见 PEER_BENCHMARK §4 频谱）。
 
 ---
 
@@ -99,7 +99,7 @@ $conn->reset();   // 重置 $responded + 释放上一请求 stale 响应对象
 
 - `wrk -t8 -c200 -d8s` 在 Swoole 驱动下 `connect=0`、rps 回到 ~161k（与 Workerman 同档）、worker 不再静默重启。
 - 单 keep-alive 串发 300 次仍全 200。
-- v0.8.41 三运行时压测：kode·lean @ Swoole = 161k/130k rps，与 @Native/@Workerman 同档。
+- v0.8.41 三运行时压测：kode L0（off）@ Swoole = 161k/130k rps，与 @Native/@Workerman 同档。
 
 ---
 

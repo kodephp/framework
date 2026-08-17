@@ -11,7 +11,7 @@
  */
 
 return [
-    'enabled' => true,
+    'enabled' => false,
     'failure_threshold' => (int) env('BREAKER_FAILURE_THRESHOLD', 5),
     'recovery_timeout' => (float) env('BREAKER_RECOVERY_TIMEOUT', 30.0),
     'half_open_max_calls' => (int) env('BREAKER_HALF_OPEN_CALLS', 1),
@@ -30,7 +30,7 @@ return [
      *   exclude              : 跳过熔断的路径前缀（健康 / 指标 / 静态资源）
      */
     'breaker.http' => [
-        'enabled' => (bool) env('BREAKER_HTTP_ENABLED', true),
+        'enabled' => (bool) env('BREAKER_HTTP_ENABLED', false),
         'service_name' => env('BREAKER_HTTP_SERVICE'),
         'derive_from' => (string) env('BREAKER_HTTP_DERIVE', 'path'),
         'status_threshold' => (int) env('BREAKER_HTTP_STATUS_THRESHOLD', 500),
@@ -69,7 +69,7 @@ return [
      *   retry_on_exception : 命中这些异常类即重试（如自定义 UpstreamUnavailableException）
      */
     'retry.http' => [
-        'enabled' => (bool) env('RETRY_HTTP_ENABLED', true),
+        'enabled' => (bool) env('RETRY_HTTP_ENABLED', false),
         'methods' => explode(',', (string) env('RETRY_HTTP_METHODS', 'GET,HEAD,PUT,DELETE,OPTIONS')),
         'attempts' => (int) env('RETRY_HTTP_ATTEMPTS', 3),
         'timeout' => env('RETRY_HTTP_TIMEOUT') === null ? null : (float) env('RETRY_HTTP_TIMEOUT'),

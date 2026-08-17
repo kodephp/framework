@@ -12,7 +12,7 @@
 
 return [
     // 是否启用 CORS（开发期默认开，生产按需关或收敛来源）
-    'enabled' => (bool) env('CORS_ENABLED', true),
+    'enabled' => (bool) env('CORS_ENABLED', false),
 
     // 允许的来源：'*' 表示任意；或指定数组 ['https://a.com', 'https://b.com']
     'allowed_origins' => env('CORS_ALLOWED_ORIGINS', '*'),

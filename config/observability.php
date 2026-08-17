@@ -15,7 +15,7 @@ return [
     // ------------------------------------------------------------------
     'metrics' => [
         // 是否启用 /metrics 端点与自动请求指标采集
-        'enabled' => (bool) env('OBS_METRICS_ENABLED', true),
+        'enabled' => (bool) env('OBS_METRICS_ENABLED', false),
 
         // 端点路径
         'path' => env('OBS_METRICS_PATH', '/metrics'),
@@ -54,7 +54,7 @@ return [
     // SpanExporter 注入即可零改动接入。采样、导出时机、端点交给配置。
     'tracing' => [
         // 是否启用 span 录制（关闭后 tracer() 返回 no-op，不产生任何 span）
-        'enabled' => (bool) env('OBS_TRACING_ENABLED', true),
+        'enabled' => (bool) env('OBS_TRACING_ENABLED', false),
 
         // 写入 OTLP resource.service.name 的服务标识
         'service_name' => env('APP_NAME', 'kode-app'),

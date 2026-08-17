@@ -9,7 +9,7 @@
 
 return [
     // 是否启用安全响应头
-    'enabled' => (bool) env('SECURITY_HEADERS_ENABLED', true),
+    'enabled' => (bool) env('SECURITY_HEADERS_ENABLED', false),
 
     // X-Content-Type-Options: nosniff
     'nosniff' => true,
