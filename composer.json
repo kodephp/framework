@@ -48,7 +48,7 @@
         "kode/messaging": "^3.3",
         "kode/middleware": "*",
         "kode/parallel": "*",
-        "kode/process": "*",
+        "kode/process": "~5.2.36",
         "kode/queue": "^2.2",
         "kode/router": "*",
         "kode/runtime": "*",

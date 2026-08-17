@@ -28,21 +28,33 @@
 > **驱动说明**：kode 行使用 `kode/process` 的 **Workerman 驱动**（Swoole 驱动在 5.2.31 × Swoole 6.2.2 下并发回归、bug 已上报，见 §8）；
 > webman / hyperf / 原生 raw 不受该回归影响，作稳定运行时参照。**横向以比值而非绝对数判断**（本机 Apple Silicon 11 核跨跑 ±20~40% 热漂移，见 §2 注脚）。
 
-### 2.1 最新可复现：同机器 Workerman 运行时公平对比（v0.8.39，3 次独立完整运行 × 每次 3 迭代中位）
+### 2.1 最新可复现：三运行时公平对比（v0.8.41 + kode/process 5.2.36，11 worker，wrk -t8 -c200 -d8s，每端点 3 迭代中位）
 
-| 运行 | webman /ping（锚） | kode·lean /ping | lean 比值 | kode·default /ping | default 比值 |
-|---|---:|---:|---:|---:|---:|
-| run1（原 §2.1 单次报数） | 169,968 | 148,322 | 87.3% | 73,270 | 43.1% |
-| run2 | 187,613 | 187,402 | 99.9% | 109,711 | 58.5% |
-| run3 | 187,956 | 175,454 | 93.3% | 100,414 | 53.4% |
-| **三跑中位（诚实口径）** | **187,613** | **175,454** | **93.3%** | **100,414** | **53.4%** |
+> **kode/process 5.2.36 已修复两大运行时缺陷**（见 §8/§9，均已在 5.2.36 落地）：
+> **F1** Native 驱动 `accept()` 改为循环 drain 至 EAGAIN（此前并发即拒绝连接）；
+> **F2** Swoole 驱动 `onRequest()` 每次请求 `$conn->reset()`（此前并发 keep-alive 静默崩溃）。
+> 故 Swoole / Native / Workerman **三运行时现在全部可用且同档**——框架是运行时无关薄封装，本表即证。
 
-> run1 为热机/负载偏高的离群运行——其 webman 锚本身也比 run2/3 低 ~10%（自洽），故绝对值偏低；run2/3 为常态空闲态。
-> **横比以比值（同轮内 webman 锚归一）为准**，绝对值因笔记本热噪声跨跑 ±20~26%，不可直比。三跑中位即 v0.8.39 在 Workerman 驱动下的最稳健估计。
+| 框架 / 运行时 | 形态 | /ping | /bench/json | vs webman /ping | vs webman /bench/json |
+|---|---|---:|---:|---:|---:|
+| **webman**（锚） | Workerman 系框架（≈零中间件） | 180,820 | 180,037 | 100% | 100% |
+| **kode·lean @ Swoole** | Kode::serve 真实路径 | 161,106 | 129,682 | 89% | 72% |
+| **kode·lean @ Native** | 自研纯 PHP 多进程（零扩展依赖） | 165,831 | 135,874 | 92% | 75% |
+| **kode·lean @ Workerman** | Kode::serve 真实路径 | 157,829 | 132,028 | 87% | 73% |
+| **kode·default @ Swoole** | 完整企业级中间件栈 | 106,175 | 79,951 | 59% | 44% |
+| **kode·default @ Native** | 完整企业级中间件栈 | 98,029 | 77,187 | 54% | 43% |
+| **kode·default @ Workerman** | 完整企业级中间件栈 | 99,549 | 80,036 | 55% | 44% |
 
-**/bench/json（同源 3 跑中位）**：webman 184,978 · kode·lean 147,197（**79.6%**）· kode·default 54,927（**29.7%**）。
+**核心结论（数据驱动，非推测）**：
+1. **三运行时同档**：kode·lean 在 Swoole / Native / Workerman 下 `/ping` = 161k / 166k / 158k（相差 < 5%，纯噪声）；
+   `/bench/json` = 130k / 136k / 132k（同样 < 5%）。**「自研多进程(Native)是否更好」的答案是：否**——
+   Native 与 Workerman/Swoole 统计持平，价值仅在**零扩展依赖的可移植性**，不在性能。
+2. **框架层调优已触顶（诚实结论）**：同运行时（Workerman）下 kode·lean `/bench/json` = webman 的 **73%**，
+   差距是 kode/http PSR-7 管线 + 中间件 + DI 的**架构对价**，非 bug；继续在框架层抠已无实收益。
+3. **kode·default 完整企业栈** ≈ webman 的 54~59%（/ping）/ 43~44%（/bench/json），为换取
+   cors/安全头/限流/韧性/追踪/审计/可观测等开箱能力的**功能对价，非缺陷**。
 
-### 2.2 运行时天花板参照（Swoole / 原生，不受 kode 回归影响）
+### 2.2 运行时天花板参照（裸引擎 / 同类框架，不受 kode 回归影响）
 
 | 框架 | 形态 | /ping | /bench/json |
 |---|---|---:|---:|
@@ -50,12 +62,13 @@
 | workerman_raw | Workerman 原生（无中间件·天花板） | 186,337 | 184,169 |
 | **hyperf** | Swoole 系（自带 DI/可观测） | 163,332 | 157,395 |
 
-> kode 在 Swoole 驱动修复后，预期回到 v0.8.37 基线（kode·lean 161k/139k ≈ 裸 Swoole **87%/76%**、webman **90%/79%**）。
-> **框架层调优已触顶**：剩余差距主因是运行时差异（Swoole vs Workerman）+ 企业级可观测性固有成本，非内核缺陷。
+> kode/process 5.2.36 的 Swoole 驱动修复后，kode·lean @ Swoole（161k/130k）已回到 v0.8.37 基线量级
+> （裸 Swoole 87%/71%、webman 89%/72%），与 Native/Workerman 三足鼎立。
+> **框架层调优已触顶**：剩余差距主因是 kode/http PSR-7 管线 + 企业级可观测性固有成本，非内核缺陷。
 
 > 注：本机为 **Apple Silicon 11 核（5 性能核 + 6 能效核）笔记本**，wrk 8 线程 + 11 worker 横跨快慢核，**同 peer 内跨跑方差极大**：
-> kode·lean `/ping` 5 跑 = 150k–183k（±15%）、kode·default `/ping` = 43k–101k（±40%）。**凡 peer 间差距 < ~15% 均属噪声，不可据此判断优劣。**
-> 横比以 **比值** 为准，不盯绝对数。kode peer 走 **`Kode::serve` 真实生产路径**（`HttpBridge`），数字即框架实际交付吞吐。
+> kode·lean `/ping` 3 跑 = 144k–170k（±8%）、kode·default `/ping` = 98k–110k（±6%）。**凡 peer 间差距 < ~15% 均属噪声，不可据此判断优劣。**
+> 横比以 **比值（同轮内 webman 锚归一）** 为准，不盯绝对数。kode peer 走 **`Kode::serve` 真实生产路径**（`HttpBridge`），数字即框架实际交付吞吐。
 > 稳定化方法：WARMUP 8s、ITERS 3、COOLDOWN 15s，取中位数抗噪。
 
 ## 3. 关键结论
@@ -310,17 +323,19 @@ wrk 实测数字即真实生产吞吐，不再被 harness 额外开销低估。�
 ## 7. 复现
 
 ```bash
-# 清理可能残留的 kode 临时配置缓存
+# 清理可能残留的 kode 临时配置缓存与同名进程
 find /tmp -maxdepth 1 -name 'kode-peer-*' -type d -exec rm -rf {} + 2>/dev/null
+pkill -f kode_swoole_server.php 2>/dev/null; pkill -f "webman/kode_server.php" 2>/dev/null
 
-# 当前可复现路径：Workerman 驱动（kode/process Swoole 驱动在 5.2.31×Swoole6.2.2 并发回归，见 §8）
-no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run_workerman_kode.sh
+# 三运行时对等压测（webman 锚 + kode·lean/default 各跑 Swoole/Native/Workerman，3 迭代中位）
+no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run_three_runtimes.sh
 ```
 
 > 环境要点（压测必看）：
 > - 必须 `no_proxy='*' NO_PROXY='*'`：本机若设了 HTTP 透明代理，curl 探活会走代理返 502 导致 harness 卡死。
 > - kode peer 需 `-d memory_limit=512M`：`/bench/json` 全 ORM boot 会触默认 128M 上限崩溃。
-> - `run.sh` 中的 kode·default / kode·lean（Swoole 驱动）在 5.2.31 下不可用，待 Swoole 回归解除后恢复。
+> - webman peer 需 `start` 子命令（`php kode_server.php start`），其事件循环走 Swoole；kode peer 经 `KODE_RUNTIME=swoole|workerman|native` 选驱动。
+> - 每 peer 间 `COOLDOWN=15s` 防 CPU 热降频；`WARMUP=8s` + `ITERS=3` 取中位抗噪。
 
 各 peer 位置：
 - `benchmarks/peers/swoole_raw/server.php`
@@ -329,52 +344,43 @@ no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run_workerman_kode.sh
 - `benchmarks/peers/hyperf/`（标准骨架 + config/routes.php 两条路由）
 - `benchmarks/peers/kode_swoole_server.php`（`KODE_PROFILE=default|lean`、`KODE_RUNTIME=swoole|workerman`、`KODE_DISABLE=` 可调）
 
-## 8. 已知问题：kode/process 5.2.31 Swoole 驱动并发回归
+## 8. 历史问题（已修复）：kode/process 5.2.31 Swoole 驱动并发回归
 
-> **状态**：kode/process 升级到 **5.2.31** 后，其 **Swoole 驱动**（`SwooleRuntime`/`SwooleConnection`）在 **Swoole 6.2.2**
-> 下并发 keep-alive 出现 **worker 静默崩溃重启** 的回归，导致 kode·default / kode·lean 的 Swoole 压测不可用
-> （`wrk -t8 -c200 /ping` 塌至 ~2k rps、`Socket errors: connect 200 / read 16000+`）。**框架侧无辜**
-> （20+ 对照实验穷尽排除 sendResponse / handle / gzip / status 参数 / responded 守卫 / 运行模式 / 协程 / 应用异常 / Request 构造，
-> 全部复现崩溃；server log 无任何 PHP fatal 或 Swoole 错误）。修复路径只能是**上游修 kode/process 或回滚版本**（vendor 已 gitignore，无法以 patch 持久修）。
->
-> **关键隔离**：`webman` peer 实际跑 **Workerman**（非 kode/process），故其健康不代表 kode/process 无恙。但 kode/process 的
-> **Workerman 驱动健康**——已作为当前默认对标运行时（驱动无关，结论对 Swoole 同样有效）。
-> 最新可复现数据见 §2.1（`run_workerman_kode.sh`），完整最小复现与怀疑点见
-> [`benchmarks/kode-process-swoole-regression.md`](./kode-process-swoole-regression.md)（可交还上游）。
+> **状态**：✅ **已在 kode/process 5.2.36 修复**（详见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) **F2**）。
+> 5.2.31 的 Swoole 驱动（`SwooleRuntime`/`SwooleConnection`）在 Swoole 6.2.2 下并发 keep-alive 出现 worker 静默崩溃；
+> 5.2.36 在 `SwooleRuntime::onRequest()` 中对每个新请求调用 `$conn->reset()`（重置 `$responded` 守卫，防跨请求 stale 响应对象），
+> 复测 `wrk -t8 -c200 /ping` 已稳定 **161k rps**（见 §2.1 kode·lean @ Swoole），无崩溃、无 `Socket errors`。
+> 原始最小复现与怀疑点保留于 [`benchmarks/kode-process-swoole-regression.md`](./kode-process-swoole-regression.md)（已交还上游，标记为 resolved）。
 
-**处置（已拍板）**：维持 **kode/process 5.2.31 + Workerman 驱动** 继续框架层调优/增强（用户决策）；Swoole 驱动待上游修复后恢复压测。
-框架侧清理已就位：5.2.31 原生提供 `ConnectionInterface::sendResponse`，故 v0.8.38 的 `kode-process` patch 已删除，`composer.json` `extra.patches` 仅留 `kode/database` 与 `kode/http`；`composer install` + 全量测试通过。
-
-## 9. 自研多进程（Native 驱动）评估结论：非性能路径，仅作零依赖兜底
+## 9. 自研多进程（Native 驱动）评估结论：可用、但与 Workerman/Swoole 同档，**非性能更优**
 
 > **用户问题**：kode/process 的「自研多进程」（`RuntimeType::Native`，纯 PHP `pcntl`/`posix` master-worker + 可插拔事件循环）是否更好？
 >
-> **结论**：**对吞吐 / 并发而言，不是更好，反而不可用**。Native 是 kode/process 的**默认运行时（零扩展依赖）**，其价值在**可移植性**（任意 PHP 8.3+ CLI 直接跑，无需 Swoole/Workerman），**不是性能**。
-> 当前在本机（macOS，无 ext-event/ext-ev → `stream_select` 兜底）下，Native 驱动**首连接正常、并发即崩**——压测结果见下。
+> **结论（v0.8.41 + 5.2.36 实测）**：**对吞吐 / 并发而言，不是更好，而是与本机其他运行时统计持平**。
+> Native 是 kode/process 的**默认运行时（零扩展依赖）**，其价值在**可移植性**（任意 PHP 8.3+ CLI 直接跑，无需 Swoole/Workerman），**不是性能**。
+> 5.2.36 修复了 F1（accept 循环 drain，此前并发即拒绝连接）后，Native 驱动已**全面可用**且性能与 Workerman/Swoole 同档。
 
-### 9.1 同等条件对比（v0.8.39，11 worker，wrk -t8 -c200 -d8s，3 跑中位）
+### 9.1 同等条件对比（v0.8.41 + kode/process 5.2.36，11 worker，wrk -t8 -c200 -d8s，3 跑中位）
 
-| 框架 / 驱动 | /ping | /bench/json | 备注 |
+| 框架 / 驱动 | /ping | /bench/json | vs webman |
 |---|---:|---:|---|
-| webman（Workerman 锚） | 182,460 | 177,139 | 100% / 100% |
-| **kode·lean @ Workerman** | 157,359 | 125,048 | ≈ webman 86% / 71% |
-| **kode·lean @ Native** | **≈ 3,188**（connect 200） | **≈ 0** | 首连接 OK，后续全部 `Socket errors: connect` |
-| **kode·default @ Workerman** | 83,502 | 51,013 | ≈ webman 46% / 29% |
-| **kode·default @ Native** | **≈ 0**（connect 200） | **≈ 0** | 同上 |
+| webman（Workerman 锚） | 180,820 | 180,037 | 100% / 100% |
+| **kode·lean @ Native** | 165,831 | 135,874 | ≈ webman 92% / 75% |
+| **kode·lean @ Swoole** | 161,106 | 129,682 | ≈ webman 89% / 72% |
+| **kode·lean @ Workerman** | 157,829 | 132,028 | ≈ webman 87% / 73% |
+| **kode·default @ Native** | 98,029 | 77,187 | ≈ webman 54% / 43% |
+| **kode·default @ Workerman** | 99,549 | 80,036 | ≈ webman 55% / 44% |
+| **kode·default @ Swoole** | 106,175 | 79,951 | ≈ webman 59% / 44% |
 
-- 即使用 `-c20 -t2`（仅 20 并发）也已 `Socket errors: connect 20`、`read 16097`，吞吐仅 ~3.2k rps；`-c10` 同样 `connect 10`。**任何 ≥ 约 10 的并发即全面拒绝新连接**。
-- 单连接 `curl /ping` 稳定返回 `HTTP 200`，说明监听/首连接路径正常；**`workers=1` 单 worker 独占监听 socket 下同样复现**（c50 → connect 48/50）→ 排除「多 worker 共享 socket 惊群」，**缺陷在单 worker 的 accept 路径**。
-- server log / `error_log` **无任何 PHP fatal / 异常**（已开 `display_errors` + `error_log` 复测），**压测后 worker 进程仍存活**（非崩溃退出）→ 典型 vendor 事件循环对监听 socket 的 readable 语义问题：`NativeRuntime::accept()` 每次只 `stream_socket_accept` 一个连接，macOS 下 burst 中其余已排队连接被搁置。
-- **根因已定位、改法已写明**：见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) **F1** 节（`accept()` 改为循环 drain 直到 EAGAIN）。
+- kode·lean 三运行时 `/ping` = 166k / 161k / 158k（相差 < 5%，纯噪声）；`/bench/json` = 136k / 130k / 132k（同样 < 5%）。
+- **F1 已修复证据**：`workers=1` 单 worker 并发下（c50）已正常服务（此前 5.2.31 同样条件 `connect 48/50`）；根因与改法见
+  [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) **F1**（`accept()` 改为循环 drain 直到 EAGAIN，5.2.36 原样落地）。
 
 ### 9.2 处置与对「继续调优」的含义
 
-1. **Native 驱动缺陷属 kode/process（vendor，已 gitignore），框架侧无法以 patch 持久修复**；最小复现、根因与改法见
-   [`benchmarks/kode-process-fix-directions.md`](./kode-process-fix-directions.md)（**F1** 节，已定位根因并给出 `accept()` 循环 drain 的具体代码）+ 配套报告
-   [`benchmarks/kode-process-native-concurrency.md`](./kode-process-native-concurrency.md)（可交还上游，与 §8 Swoole 回归并列）。
-2. **「继续使用自研多进程是否更好」= 否（性能口径）**：自研 Native 当前不可用；即便修好，纯 PHP `stream_select` 事件循环的天花板也远低于 Workerman/Swoole 的 C 层 epoll/kqueue，
-   属「零依赖兜底」定位，不应作为压测/调优的对比基线。
-3. **框架继续调优的「同等条件」= Workerman vs Workerman（webman 锚）**：Swoole 驱动回归（§8）与 Native 驱动缺陷（本节）都已隔离为**上游运行时问题**，
-   框架是**运行时无关**的薄封装，调优目标应锁定 `HttpBridge` + 中间件管线 + 路由内核这些**对所有运行时生效**的公共热路径（如 §6 P2 路由级 resilience 改造）。
-4. 复现脚本：`bash benchmarks/peers/run_native_vs_workerman.sh`（webman 锚 + kode·lean/default 各跑 Workerman/Native）。
+1. **三运行时现已全部可用且同档**：Swoole 回归（§8）与 Native 缺陷（本节）均在 kode/process 5.2.36 修复；框架是**运行时无关**薄封装，
+   调优目标锁定 `HttpBridge` + 中间件管线 + 路由内核这些**对所有运行时生效**的公共热路径。
+2. **「使用自研多进程是否更好」= 否（性能口径）**：Native 与 Workerman/Swoole 统计持平，纯 PHP `stream_select` 事件循环的天花板略低于
+   C 层 epoll/kqueue，但本机实测差距 < 5%（属噪声）；其定位是**零依赖兜底**，不是更快的路径。
+3. 复现脚本：`bash benchmarks/peers/run_three_runtimes.sh`（webman 锚 + kode·lean/default 各跑 Swoole/Native/Workerman，含 3 次迭代中位）。
 

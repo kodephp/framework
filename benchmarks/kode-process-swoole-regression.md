@@ -1,8 +1,12 @@
 # kode/process 5.2.31 — Swoole 驱动并发 keep-alive 静默崩溃回归
 
+> ✅ **状态：已在 kode/process 5.2.36 修复**（见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) **F2**）。
+> 5.2.36 的 `SwooleRuntime::onRequest()` 对每个新请求调用 `$conn->reset()`（重置 `$responded` 守卫，防跨请求 stale 响应对象），
+> 复测 `wrk -t8 -c200 /ping` 已稳定 ~161k rps、无 `Socket errors`、worker 不再静默重启。本报告保留作回归证据。
+
 > 用于转发 kode/process 上游维护者。框架侧（kode framework）已确认无辜、无法以 patch 持久修复（vendor 已 gitignore）。
-> 临时兜底：改用 kode/process 的 **Workerman 驱动**（`KODE_RUNTIME=workerman`）压测/运行正常。
-> **调整方向（具体改法）**：见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) 的 **F2** 节——需先开 `SWOOLE_LOG_TRACE` + core_dump 取 C 层崩溃栈，再按「跨请求 stale 响应对象」或「Swoole 6.2.2 自身 bug」二选一修复。
+> 临时兜底（已不再需要）：此前改用 kode/process 的 **Workerman 驱动**（`KODE_RUNTIME=workerman`）压测/运行正常。
+> **调整方向（具体改法）**：见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) 的 **F2** 节。
 
 ## 环境
 

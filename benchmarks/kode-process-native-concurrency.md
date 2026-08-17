@@ -1,11 +1,16 @@
 # kode/process Native 驱动并发连接缺陷（上游 bug 报告）
 
+> ✅ **状态：已在 kode/process 5.2.36 修复**（见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) **F1**）。
+> 5.2.36 的 `NativeRuntime::accept()` 已改为循环 drain 直到 EAGAIN（原文下方 §4 根因即此），复测 `workers=1` 单 worker 并发下（c50）
+> 已正常服务（此前 5.2.31 同样条件 `connect 48/50`）；v0.8.41 三运行时压测中 kode·lean @ Native 达 166k/136k rps，与 Workerman/Swoole 同档。
+> 本报告保留作回归证据。
+
 - **组件**：`kode/process`（vendor，gitignore，非框架仓库）
 - **运行时**：`RuntimeType::Native`（自研纯 PHP `pcntl`/`posix` master-worker + 可插拔事件循环）
 - **环境**：macOS（Apple Silicon，11 核），PHP 8.3.33，无 `ext-event`/`ext-ev` → 事件循环走 `stream_select` 兜底
-- **严重度**：🔴 高（并发下服务不可用，非性能降级而是连接被全面拒绝）
-- **框架侧是否无辜**：是。缺陷在 kode/process 的 Native 驱动，与框架业务代码无关（同一份 `Kode::serve` 路径在 Workerman 驱动下 157k rps 健康）。
-- **调整方向（具体改法）**：见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) 的 **F1** 节——根因已定位为 `NativeRuntime::accept()` 单次只 `stream_socket_accept` 一个连接，macOS 下监听 socket 突发连接被搁置；修法为改为循环 drain 直到 EAGAIN。
+- **严重度**：🔴 高（并发下服务不可用，非性能降级而是连接被全面拒绝）——**5.2.36 已修复**
+- **框架侧是否无辜**：是。缺陷在 kode/process 的 Native 驱动，与框架业务代码无关（同一份 `Kode::serve` 路径在 Workerman 驱动下健康）。
+- **调整方向（具体改法）**：见 [`kode-process-fix-directions.md`](./kode-process-fix-directions.md) 的 **F1** 节。
 
 ## 1. 现象
 

@@ -51,13 +51,18 @@ final class HttpBridge
 
         // 复用 kode/http 自研 ServerRequest（v3.4 起可变消息：with* 原地修改零拷贝），
         // 取代 Nyholm 不可变 ServerRequest 每请求 4 次克隆的开销。
+        // 协议版本由驱动自身持有（SwooleConnection / Http2Stream / WorkermanConnection /
+        // NativeConnection 各自已知其协议），此处仅从请求头形态（"HTTP/1.1"）提取 "1.1"。
+        $protocol = $request->protocol();
+        $protocolVersion = preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m) ? $m[1] : '1.1';
+
         return (new KodeServerRequest(
             method: $request->method(),
             uri: $uri,
             serverParams: $serverParams,
             headers: $request->headers(),
             body: Stream::create($request->body()),
-            protocolVersion: self::normalizeVersion($request->protocol()),
+            protocolVersion: $protocolVersion,
         ))
             ->withQueryParams($request->get())
             ->withParsedBody($request->post())
@@ -111,25 +116,15 @@ final class HttpBridge
      * Driver 中（kode/process >= 5.2.31 原生提供 ConnectionInterface::sendResponse，
      * 引擎专用写出逻辑已随包交付，无需框架侧 patch）。
      *
-     * gzip 自动压缩由运行时依据请求 Accept-Encoding 内部裁决，无需调用方传入。
-     *
-     * @param string $protocol HTTP 协议版本，默认 1.1
+     * 协议版本由驱动自身持有（SwooleConnection / Http2Stream / WorkermanConnection /
+     * NativeConnection 各自已知其协议），gzip 自动压缩由驱动依据请求 Accept-Encoding
+     * 内部裁决（autoGzip 默认 true）——均无需调用方传入，故 emit() 只透传响应对象。
      */
     public static function emit(
         ConnectionInterface $conn,
         ResponseInterface $response,
-        string $protocol = '1.1',
     ): void {
-        $conn->sendResponse($response, $protocol);
-    }
-
-    private static function normalizeVersion(string $protocol): string
-    {
-        if (preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m)) {
-            return $m[1];
-        }
-
-        return '1.1';
+        $conn->sendResponse($response);
     }
 
     /**

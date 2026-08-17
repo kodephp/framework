@@ -65,20 +65,26 @@ webman 更轻量（开箱能力较少、靠生态补齐）。kode 的差异化�
 
 下表为**同机器、同 11 worker（= `swoole_cpu_num()`）、同 wrk 参数**下的真实压测（完整方法见 PEER_BENCHMARK.md），代表**常驻内存框架同台竞技**。
 
-> **驱动说明**：kode 行使用 `kode/process` 的 **Workerman 驱动**（Swoole 驱动在 5.2.31 × Swoole 6.2.2 并发回归，见 PEER_BENCHMARK §8）；
-> webman / hyperf / 原生 raw 不受影响。横向以**比值**为准（本机跨次 ±20~40% 热漂移）。
+> **驱动说明**：kode/process 5.2.36 已修复 Swoole 驱动并发崩溃（§8）与 Native 驱动并发拒绝连接（§9）两大缺陷，
+> 故 **Swoole / Native / Workerman 三运行时现在全部可用且同档**。下表中 kode 行给出三运行时实测，其余 peer 不受影响。
+> 横向以**比值**（同轮内 webman 锚归一）为准（本机跨次 ±20~40% 热漂移）。
 
-### 最新可复现：Workerman 运行时公平对比（v0.8.39，3 次独立完整运行 × 每跑 3 迭代中位）
+### 最新可复现：三运行时公平对比（v0.8.41 + kode/process 5.2.36，11 worker，wrk -t8 -c200 -d8s，3 迭代中位）
 
-| 框架 | 形态 | /ping (rps) | /bench/json (rps) | 比值（vs webman） |
+| 框架 / 运行时 | 形态 | /ping (rps) | /bench/json (rps) | 比值（vs webman） |
 | --- | --- | ---: | ---: | --- |
-| **webman** | Workerman 系（≈零中间件，锚） | 187,613 | 184,978 | 100% / 100% |
-| **kode · lean** | Kode::serve 真实路径（Workerman 驱动） | 175,454 | 147,197 | /ping 93% · /bench/json 80% |
-| **kode · default** | 完整企业级中间件栈（Workerman 驱动） | 100,414 | 54,927 | /ping 53% · /bench/json 30% |
+| **webman** | Workerman 系（≈零中间件，锚） | 180,820 | 180,037 | 100% / 100% |
+| **kode · lean @ Swoole** | Kode::serve 真实路径 | 161,106 | 129,682 | /ping 89% · /bench/json 72% |
+| **kode · lean @ Native** | 自研纯 PHP 多进程（零依赖） | 165,831 | 135,874 | /ping 92% · /bench/json 75% |
+| **kode · lean @ Workerman** | Kode::serve 真实路径 | 157,829 | 132,028 | /ping 87% · /bench/json 73% |
+| **kode · default @ Swoole** | 完整企业级中间件栈 | 106,175 | 79,951 | /ping 59% · /bench/json 44% |
+| **kode · default @ Native** | 完整企业级中间件栈 | 98,029 | 77,187 | /ping 54% · /bench/json 43% |
+| **kode · default @ Workerman** | 完整企业级中间件栈 | 99,549 | 80,036 | /ping 55% · /bench/json 44% |
 
-> 口径：3 次独立完整运行（各含 webman/kode·lean/kode·default 同轮测量），每次取 3 迭代中位，再取跨跑中位。
-> 单次运行绝对值因笔记本热噪声跨跑 ±20~26%（更重的 default 栈热机时跌幅更大），**横比看比值、勿盯绝对数**。
-> kode·default /ping 比值 53% 较 v0.8.38 §8.1 的 47% 提升 6 点，系 v0.8.39 移除 3 个全局中间件帧的减负生效，并非越改越低。
+> 口径：每 peer 3 迭代中位（wrk -t8 -c200 -d8s），每 peer 间 COOLDOWN=15s 防热降频。kode·lean 三运行时 `/ping` = 161k/166k/158k（相差 < 5%，纯噪声）；
+> **「自研多进程(Native)是否更好」= 否**——与 Workerman/Swoole 统计持平，其价值在零扩展依赖的可移植性，不在性能。
+> kode·default 完整栈 ≈ webman 54~59%（/ping）/ 43~44%（/bench/json），为换取企业级开箱能力的**功能对价，非缺陷**。
+> 框架层调优已触顶：同运行时下 kode·lean `/bench/json` 约 webman 73%，差距是 kode/http PSR-7 管线 + 中间件的架构对价。
 
 ### 运行时天花板参照（Swoole / 原生，不受 kode 回归影响）
 

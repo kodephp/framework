@@ -131,7 +131,7 @@ final class HttpServer
                 /** @var HttpApp $http */
                 $handler = static fn () => $http->handle($psr);
                 $response = $graceful instanceof GracefulShutdown ? $graceful->track($handler) : $handler();
-                HttpBridge::emit($conn, $response, self::normalizeProtocol($message->protocol()));
+                HttpBridge::emit($conn, $response);
             } catch (\Throwable $e) {
                 $debug = (bool) (Application::getInstance()?->config()->get('app.debug', false) ?? false);
                 HttpBridge::emit($conn, $this->errorResponse($e, $debug));
@@ -139,18 +139,6 @@ final class HttpServer
         });
 
         $runtime->start();
-    }
-
-    /**
-     * 从请求协议头（如 "HTTP/1.1"）提取版本号（"1.1"）。
-     */
-    private static function normalizeProtocol(string $protocol): string
-    {
-        if (preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m)) {
-            return $m[1];
-        }
-
-        return '1.1';
     }
 
     private function defaultWorkers(): int
