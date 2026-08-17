@@ -162,26 +162,32 @@ DB 端点前**预热 MySQL buffer pool**（800 次 SELECT，否则首测 peer �
 
 ### 4.1.2 同类型中间件（ON）同条件（冷却式 + DB 完整性校验 · 端口级强杀防残留）
 
-kode 开启 `cors,security,logging`（= webman 的 CORS+安全头+Request-Id+访问日志 同构集合）；webman 经
-`WEBMAN_MW=on` 挂 4 个同构中间件。hyperf ON 因 **peer harness 缺陷**（`app/Middleware/CorsMiddleware.php`
-实现 `Hyperf\HttpServer\Contract\MiddlewareInterface`，该接口在所用 hyperf 版本不存在 → DI 反射失败、所有请求 500）
-**本轮无法对标，已排除**；属 hyperf 脚手架问题，非 kode 范畴。
+**能力集精确对齐（本轮回应的核心诉求）**：webman `WEBMAN_MW=on` 仅挂 **4 个**跨切面中间件
+（CORS + Security头 + 链路ID + 访问日志），**不含审计**；kode 此前 ON 用的 `security` 组默认还带
+`audit`（kode 审计默认 `enabled=true`、`AuditMiddleware` 被 pipe 进管线，且 `/bench/json`、`/bench/db`
+不在 `ignore_paths` 内 → 真跑了审计中间件）。为做到「**开启的一模一样**」，本轮 kode ON 经
+`KODE_AUDIT=off` 显式禁用审计，使 kode ON 的能力集**精确等于** webman ON 的 4 中间件：
+`cors`(CORS) + `security`(Security头 + 链路ID) + `logging`(访问日志)。hyperf ON 因 **peer harness 缺陷**
+（`app/Middleware/CorsMiddleware.php` 实现不存在的 `Hyperf\HttpServer\Contract\MiddlewareInterface` → 启动即 fatal）
+**本轮不纳入对标**，属 hyperf 脚手架问题，非 kode 范畴。
 
 > **📌 kode ON 重大修复（v0.8.41 续三 · 真实调优收益）**：初测 kode ON 的 `/bench/json` 崩塌至 52k
 > （runs 118k/52k/37k）且 worker 频繁 OOM。根因：**访问日志 `AccessLogSink` 是静态无界队列，仅「优雅停机」时 flush**，
 > 常驻进程下持续高并发把全部请求积压进内存直至 512MB 耗尽 → worker 崩溃重启 → 吞吐崩塌。已修复：
 > `AccessLogSink` 加 8192 硬上限（达限丢最新），且 `AccessLogMiddleware` 改为「队列达 256 即批量 flush」——
-> 队列恒有界、I/O 均摊、日志不丢。修复后 kode ON json 回到 **107k（稳定，0 OOM）**。这是本轮最重要的框架层调优。
+> 队列恒有界、I/O 均摊、日志不丢。修复后 kode ON 稳定 107k、0 OOM。
 
 | 框架 / 配置 | /ping (rps) | /bench/json (rps) | DB 报告 (rps) | **DB 真实 MySQL qps** | 完整性 |
 | --- | ---: | ---: | ---: | ---: | :---: |
-| webman ON | 151,251 | 137,025 | 115,443 | **7,368** | ❌ 95% 跳查 |
-| **kode ON（同类型，OOM 已修）** | 128,418 | 107,470 | 56,373 | **56,373** ✅ | ✅ 1:1 |
-| hyperf ON | — | — | — | — | 排除（harness 缺陷） |
+| webman ON（4 中间件） | 143,172 | 123,491 | 110,664 | **6,903** | ❌ 94% 跳查 |
+| **kode ON（同类型·audit 已关·4 中间件）** | 119,327 | 106,970 | 57,570 | **57,933** ✅ | ✅ 1:1 |
 
-> webman ON 的 DB 报告 115k 但真实仅 7.4k qps（95% 跳查），与 OFF 同构；kode ON DB 56k 报告 ≈ 56k 真实（1:1 诚实）。
-> 开启同类型中间件后：**kode ON /bench/json = 107k = webman ON 137k 的 78%**（OFF 时为 84%，中间件使差距略扩大，
-> 因 kode 的 cors+security+logging 三件套成本占比更高）；DB 业务 kode 仍以真实 56k qps 远超 webman 7.4k（诚实 7.6×）。
+> webman ON 的 DB 报告 110k 但真实仅 **6.9k** qps（94% 跳查，与 OFF 同构的协程共享 PDO 问题）；
+> kode ON DB 57.6k 报告 ≈ 57.9k 真实（1:1 诚实）。
+> 开启同类型 4 中间件后：**kode ON /bench/json = 106,970 = webman ON 123,491 的 86.6%**；/ping = 119,327 = 143,172 的 83.3%。
+> 与 OFF 档（84%）基本持平——中间件使两者同比例下降（webman json 183k→123k 降 33%；kode 153k→107k 降 30%），
+> 差距始终稳定在 ~83~87%，即 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价，非缺陷。
+> DB 业务 kode 仍以真实 57.9k qps 远超 webman 6.9k（诚实 8.4×）。
 
 ### 4.1.3 公平对标结论（用户最关心的两点）
 
@@ -193,9 +199,11 @@ kode 开启 `cors,security,logging`（= webman 的 CORS+安全头+Request-Id+访
    webman/hyperf 的 DB 端点并发下**跳过查询**（真实 MySQL qps 仅 12.6k/22k），报告数字虚高；以真实 qps 计
    **kode 84k ≫ hyperf 22k ≫ webman 12.6k**。kode 的「多进程 + 每 worker 独占 PDO」模型对阻塞式 PDO 反而最优，
    这是它默认选 Workerman/多进程而非裸 Swoole 协程的隐性收益。
-3. **开启同类型中间件后**（§4.1.2 同类型 ON 档，已用冷却式 + 端口强杀 + DB 完整性复测）：kode ON /bench/json = 107k = webman ON 137k 的
-   **78%**（OFF 时为 84%，中间件使差距略扩大，因 kode 的 cors+security+logging 三件套成本占比更高）；DB 业务 kode 仍以真实 56k qps
-   远超 webman 7.4k（诚实 7.6×）。初测 kode ON json 曾崩塌至 52k——根因是访问日志队列无界导致 worker OOM（**已修复**，见 §7/§8）。
+3. **开启同类型中间件后**（§4.1.2 同类型 ON 档，已用冷却式 + 端口强杀 + DB 完整性复测，且 kode ON 经 `KODE_AUDIT=off`
+   精确对齐 webman 的 4 中间件）：kode ON /bench/json = 106,970 = webman ON 123,491 的 **86.6%**，/ping = 119,327 = 143,172 的
+   **83.3%**；与 OFF 档（84%）基本持平，中间件使两者同比例下降（webman json 183k→123k 降 33%；kode 153k→107k 降 30%），
+   差距始终稳定在 ~83~87%。DB 业务 kode 仍以真实 57.9k qps 远超 webman 6.9k（诚实 8.4×）。初测 kode ON json 曾崩塌至 52k——
+   根因是访问日志队列无界导致 worker OOM（**已修复**，见 §7/§8）。
 
 ## 5. 关键结论
 
@@ -226,6 +234,7 @@ kode 开启 `cors,security,logging`（= webman 的 CORS+安全头+Request-Id+访
 | 2026-08-17 下午 | **压测方法学二次修正**：① `Resp::json` 去掉冗余 `->status(200)` 不可变克隆（默认 200 直接返回，省每请求一次分配/GC）；② kode `/bench/raw/mysql` 按 worker 缓存 prepared statement（生产实践）；③ 发现并修正 §4.1 两处测量伪象——旧 harness 端点间无冷却使 kode /bench/json 被热降频压低（160k→真实 ~178k），且 **webman/hyperf 的 /bench/db 并发下跳过查询（MySQL `Queries` 增量仅 12.6k/22k qps，远低于其报告 184k/59k），其 DB 数字虚高**；以真实 MySQL qps 计 **kode 84k ≫ hyperf 22k ≫ webman 12.6k**，kode 反为最快诚实 DB 基准 | DB 完整性校验 + 冷却式对标纳入常规范式 |
 
 | 2026-08-17 夜间 | **压测方法学三次修正 + kode 真实调优**：① 发现并根绝**残留服务器污染**（旧 harness `pkill` 模式匹配不到真实进程 cmdline，peer 残留在端口，新服务器 bind 失败、probe 误判就绪）→ 改用 `lsof + kill -9` 端口级强杀（`bench_{off,on}_cooled.sh`），复测 §4.1.1/§4.1.2；② 据此**修正偏乐观结论**：kode OFF /ping 与 webman 持平（184k vs 185k）、/bench/json = webman 的 84%（非此前声称 94%），用户「kode json 低」直觉成立；③ **修复 kode 访问日志 OOM**：`AccessLogSink` 静态无界队列仅停机时 flush，常驻进程持续高并发积压至 512MB 致 worker 崩溃、kode ON json 崩塌至 52k → 加 8192 硬上限 + 中间件「队列达 256 即批量 flush」，修复后 kode ON json 回到 107k（0 OOM） | 残留污染根绝 + 真实框架层调优一笔 |
+| 2026-08-17 深夜 | **ON 档能力集精确对齐（回应「开启的一模一样」）**：webman `WEBMAN_MW=on` 仅挂 **4 中间件**（CORS+Security头+链路ID+访问日志），**无审计**；kode 此前 `security` 组默认带 `audit`（`config/audit.php` 默认 `enabled=true`、`AuditMiddleware` 被 pipe 进管线，且 `/bench/json`、`/bench/db` 不在 `ignore_paths` → 真跑审计），致 kode ON 比 webman ON「多一个中间件」。给 kode harness 加 `KODE_AUDIT` 开关、ON 档传 `off` 把 `config/audit.php` 覆写为禁用，使 kode ON 能力集**精确等于** webman ON。复测（端口强杀+冷却+DB 完整性，修复 harness 浮点比较标志 bug）：**kode ON /bench/json 106,970 = webman ON 123,491 的 86.6%**、/ping 119,327 = 143,172 的 83.3%，与 OFF（84%）持平；DB 仍 kode 57.9k 真实 qps ≫ webman 6.9k（诚实 8.4×）。另修 `bench_{off,on}_cooled.sh` 完整性标志用 awk 比浮点（原 `[ -gt ]` 比不了小数恒假绿） | 能力集严格同口径 + 完整性标志不再假绿 |
 
 详见 [`kode-process-issues.md`](./kode-process-issues.md)（F1/F2 根因与修复，已 resolved）。
 

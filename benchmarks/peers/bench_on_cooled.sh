@@ -88,7 +88,9 @@ bench_on() {
   local after; after=$(mysql_queries)
   local real; real=$(( (after - before) / (DUR * ITERS) ))
   local flag="✅1:1"
-  [ "${dm:-0}" -gt "$((real*2))" ] 2>/dev/null && flag="❌跳查"
+  # dm 可能为浮点（wrk 输出带小数），bash [ -gt ] 比不了浮点会直接报错导致标志假绿，
+  # 改用 awk 做浮点比较：报告 rps > 真实 qps×2 即判定「并发跳查」（虚高）。
+  awk "BEGIN{exit !(${dm:-0} > ${real:-0}*2)}" && flag="❌跳查"
   printf "  /$db  median=%-12s runs:%s | MySQL真实qps≈%s %s\n" "$dm" "$dv" "$real" "$flag"
 
   echo "$name ping=$pm json=$jm db_reported=$dm db_real=$real" >>"$OUT"
@@ -104,12 +106,15 @@ bench_on "webman_ON" \
   8091 "bench/db"
 
 bench_on "kode_ON_sameType" \
-  "cd $PEERS && KODE_PROFILE=off KODE_ENABLE=cors,security,logging KODE_RUNTIME=workerman BENCH_PORT=8201 BENCH_WORKERS=$WORKERS php -d memory_limit=512M kode_swoole_server.php" \
+  "cd $PEERS && KODE_PROFILE=off KODE_ENABLE=cors,security,logging KODE_AUDIT=off KODE_RUNTIME=workerman BENCH_PORT=8201 BENCH_WORKERS=$WORKERS php -d memory_limit=512M kode_swoole_server.php" \
   8201 "bench/raw/mysql"
 
-bench_on "hyperf_ON" \
-  "cd $PEERS/hyperf && HYPERF_MW=on php bin/hyperf.php start" \
-  9501 "bench/db"
+# hyperf_ON 脚手架缺陷（app/middleware/CorsMiddleware 引用不存在的
+# Hyperf\HttpServer\Contract\MiddlewareInterface），启动即 fatal，非 kode 范畴，
+# 本轮 kode↔webman 同口径对比不依赖它，注释跳过以免污染汇总。
+# bench_on "hyperf_ON" \
+#   "cd $PEERS/hyperf && HYPERF_MW=on php bin/hyperf.php start" \
+#   9501 "bench/db"
 
 echo "================ ON 档汇总 ================"
 cat "$OUT"

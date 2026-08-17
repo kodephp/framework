@@ -113,6 +113,17 @@ if (!is_dir($tmp . '/config')) {
     file_put_contents($tmp . '/config/limiting.php', "<?php return ['enabled' => false];\n");
 }
 
+// 对标 parity（重要）：webman WEBMAN_MW=on 仅挂 4 个跨切面中间件
+// （CORS + Security头 + 链路ID + 访问日志），**不含审计**。kode 的 audit 默认开启
+// 且 AuditMiddleware 会被 pipe 进管线（/ping 在 ignore_paths 内跳过，但 /bench/json、
+// /bench/db 不跳过），故 kode ON 若带 audit 即比 webman ON「多一个中间件」，能力集不对等。
+// KODE_AUDIT=off 时把 config/audit.php 覆写为禁用，使 kode ON 的能力集精确等于 webman ON，
+// 做到「开启的一模一样」。（不影响 run.sh 能力梯度：梯度 harness 不传此变量，audit 走仓库默认。）
+$auditOff = (($_SERVER['KODE_AUDIT'] ?? getenv('KODE_AUDIT') ?? 'on') === 'off');
+if ($auditOff) {
+    file_put_contents($tmp . '/config/audit.php', "<?php return ['enabled' => false];\n");
+}
+
 
 $port = (int) ($_SERVER['BENCH_PORT'] ?? 8093);
 $workers = (int) ($_SERVER['BENCH_WORKERS'] ?? 8);

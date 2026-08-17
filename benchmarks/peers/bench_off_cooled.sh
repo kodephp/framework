@@ -70,7 +70,9 @@ bench_off() {
   local after; after=$(mysql_queries)
   local real; real=$(( (after - before) / (DUR * ITERS) ))
   local flag="✅1:1"
-  [ "${dm:-0}" -gt "$((real*2))" ] 2>/dev/null && flag="❌跳查"
+  # dm 可能为浮点（wrk 输出带小数），bash [ -gt ] 比不了浮点会直接报错导致标志假绿，
+  # 改用 awk 做浮点比较：报告 rps > 真实 qps×2 即判定「并发跳查」（虚高）。
+  awk "BEGIN{exit !(${dm:-0} > ${real:-0}*2)}" && flag="❌跳查"
   printf "  /$db  median=%-12s runs:%s | MySQL真实qps≈%s %s\n" "$dm" "$dv" "$real" "$flag"
   echo "$name ping=$pm json=$jm db_reported=$dm db_real=$real" >>"$OUT"
   kill_port "$port"; sleep 1
