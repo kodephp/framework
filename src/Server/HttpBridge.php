@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Server;
 
-use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
 use Kode\Http\Psr7\Stream;
 use Kode\Http\Response;
 use Kode\Process\Http\Request as ProcessRequest;
@@ -49,25 +48,24 @@ final class HttpBridge
             'HTTPS'                => $request->isSecure() ? 'on' : 'off',
         ];
 
-        // 复用 kode/http 自研 ServerRequest（v3.4 起可变消息：with* 原地修改零拷贝），
-        // 取代 Nyholm 不可变 ServerRequest 每请求 4 次克隆的开销。
         // 协议版本由驱动自身持有（SwooleConnection / Http2Stream / WorkermanConnection /
         // NativeConnection 各自已知其协议），此处仅从请求头形态（"HTTP/1.1"）提取 "1.1"。
         $protocol = $request->protocol();
         $protocolVersion = preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m) ? $m[1] : '1.1';
 
-        return (new KodeServerRequest(
+        // 不再急切调用 withQueryParams / withParsedBody / withCookieParams / withUploadedFiles：
+        // 这四类解析对路由匹配（只消费 method + path 两个字符串）完全无用，且多数热路径
+        // handler 根本不读它们（如 /bench/json）。改由 LazyServerRequest 在首次访问时才从
+        // 原生 ProcessRequest 解析并缓存，使热路径零解析成本。契约不变（仍是 ServerRequestInterface）。
+        return new LazyServerRequest(
+            native: $request,
             method: $request->method(),
             uri: $uri,
             serverParams: $serverParams,
             headers: $request->headers(),
             body: Stream::create($request->body()),
             protocolVersion: $protocolVersion,
-        ))
-            ->withQueryParams($request->get())
-            ->withParsedBody($request->post())
-            ->withCookieParams($request->cookies())
-            ->withUploadedFiles(self::normalizeFiles($request->files()));
+        );
     }
 
     /**
@@ -125,20 +123,6 @@ final class HttpBridge
         ResponseInterface $response,
     ): void {
         $conn->sendResponse($response);
-    }
-
-    /**
-     * @param array<string, mixed> $files
-     * @return array<string, \Psr\Http\Message\UploadedFileInterface>
-     */
-    private static function normalizeFiles(array $files): array
-    {
-        if ($files === []) {
-            return [];
-        }
-
-        // 仅透传 Swoole/Workerman 原生的 UploadedFile，原生报文下通常为空。
-        return array_filter($files, static fn($f) => $f instanceof \Psr\Http\Message\UploadedFileInterface);
     }
 
     private static function reasonPhrase(int $code): string
