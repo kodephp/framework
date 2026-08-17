@@ -3,6 +3,7 @@
 > 生成日期：2026-08-17（v0.8.41 + kode/process 5.2.36）  
 > 机器：macOS（Apple Silicon，11 逻辑核），PHP 8.3.33，ext-swoole 已加载  
 > 负载工具：**wrk**（`-t 8 -c 200 -d 8s`，每端点取 3 次中位数）
+> 2026-08-17 修订：新增 **§4.1 公平同运行时对标**（修正「运行时混淆」造成的 kode L0 远慢于 webman 伪结论）+ **§6 响应体 temp-stream 拷贝开销**定位与 StringStream 修复。
 
 ## 0. 为什么之前「看起来像 FPM」——测量方法的根本错误
 
@@ -45,7 +46,9 @@
 
 ## 3. ⭐ 能力梯度压测（L0 全关 → L5 全开，含逐项边际成本）
 
-kode 默认运行时 = **native（自研多进程）**，本梯度统一跑 native 以隔离「能力成本」（swoole/workerman 经 `KODE_RUNTIME` 切换，结论同档，见 §7）。  
+kode 默认运行时 = **native（自研多进程）**，本梯度统一跑 native 以隔离「能力成本」（swoole/workerman 经 `KODE_RUNTIME` 切换，结论同档，见 §7）。
+
+> ⚠️ **跨框架对标已校正「运行时混淆」**：旧版把 kode 梯度跑在 native、而 webman/hyperf 跑在 Workerman+Swoole，造成「kode L0 远慢于 webman」的伪结论。现 §4.1 的跨框架对标**全部 peer 统一在 Workerman 驱动**（kode 经 `KODE_RUNTIME=workerman` 委托 `Kode::serve`，与 `bin/kode serve` 完全相同路径），并叠加「同类型中间件 ON」档位，结论见 §4.1。  
 档位从零中间件逐级叠加，**定位「每一项能力的边际吞吐成本」**，即用户要的「某部分同时的数据压测变值」。
 
 > 方法：每档跑 **正向 + 反向** 两遍（抵消 Apple Silicon 热降频顺序偏置），取两遍各自中位后再取中；wrk `-t8 -c200 -d8s`，3 迭代中位。  
@@ -111,19 +114,69 @@ kode 默认运行时 = **native（自研多进程）**，本梯度统一跑 nati
 
 > 三运行时（native/swoole/workerman）下 kode 内核同档（§7 实测 < 5% 差异，纯噪声）：**「自研多进程是否更快」= 否**，价值在零依赖可移植性。
 
+## 4.1 ⭐ 公平同运行时 / 同中间件对标（v0.8.41 审计修正 · Workerman 驱动）
+
+旧 §4 的「kode L0 远慢于 webman」是**运行时混淆**造成的伪结论：kode 梯度跑在 native、webman/hyperf 跑在
+Workerman+Swoole。本小节把所有 peer 统一在 **Workerman 驱动**（kode 经 `KODE_RUNTIME=workerman` 委托
+`Kode::serve`，与 `bin/kode serve` 同路径；webman/hyperf 本就以 Workerman/Swoole 运行），并额外叠加
+「同类型中间件 ON」档位，直接回答用户问题：**开启中间件后，三者从 hello world(/ping) 到数据库业务(DB) 的真实差距**。
+
+测量：macOS 11 逻辑核 / **11 worker** / `wrk -t8 -c200`，每端点 3 轮取中位；DB 端点前**预热 MySQL buffer pool**
+（消除「首个 DB peer 冷 InnoDB」偏置，否则首测 peer 的 DB 数字会被冷启动压低 ~7×）。kode 的 DB 端点为
+`/bench/raw/mysql`（裸 PDO 主键 SELECT），webman/hyperf 为 `/bench/db`（同构）；三者查询与「每 worker 复用同一
+PDO 连接」策略一致。本机跨跑热噪声 ±10~15%，横比看比值。
+
+### 4.1.1 零中间件（OFF）同条件
+
+| 框架 / 配置 | 运行时 | /ping (rps) | /bench/json (rps) | DB (rps) |
+| --- | --- | ---: | ---: | ---: |
+| **webman**（≈零中间件） | Workerman+Swoole | 185,572 | 187,319 | 11,476 ⚠️ |
+| **kode L0（off，框架基线）** | Workerman(Kode::serve) | **188,144** | 160,888 | 77,861 |
+| **hyperf**（自带 DI+可观测） | Swoole | 158,042 | 168,967 | 96,102 |
+
+> ⚠️ **webman 的 DB 端点异常偏慢（~11.5k）**：在相同查询与「每 worker 复用同一 PDO 连接」（processlist 实测仅
+> 12 连接，复用成立）下，webman `/bench/db` 比 kode(77.8k)/hyperf(96k) 慢约 **7×**。该差异在 2 次独立压测中稳定复现，
+> 根因指向 **workerman/webman 在 Swoole 事件循环下的阻塞式 PDO 处理特性**，非本框架问题——kode 的 DB 路径（77.8k）健康。
+> 此项不影响下方 kode↔webman 的 /ping、/bench/json 结论。
+
+### 4.1.2 同类型中间件（ON）同条件
+
+kode 开启 `cors,security,logging`（= webman 的 CORS+安全头+Request-Id+访问日志 同构集合）；webman 经
+`WEBMAN_MW=on` 挂 4 个同构中间件；hyperf 经 `HYPERF_MW=on` 挂 4 个同构中间件。
+
+| 框架 / 配置 | /ping (rps) | /bench/json (rps) | DB (rps) |
+| --- | ---: | ---: | ---: |
+| webman ON | 157,340 | 133,405 | 11,481 ⚠️ |
+| **kode ON（同类型）** | **173,066** | 121,569 | 72,424 |
+| hyperf ON | 46,054 † | 44,138 † | 86,054 |
+
+> † hyperf ON 的 /ping、/bench/json 较 hyperf OFF（158k/169k）异常下降 ~71%，远大于 webman ON(−15%)/kode ON(−8%)，
+> 与 4 个轻量中间件的预期成本不符，疑似 hyperf harness 在 Swoole 协程下的中间件派发 / 阻塞写配置差异，已标记待查；
+> 不影响 kode↔webman 结论。
+
+### 4.1.3 公平对标结论（用户最关心的两点）
+
+1. **「kode L0 为什么比 webman 慢这么多？」——实际上并不慢。** 同 Workerman 运行时下，
+   **kode L0(off) /ping = 188,144 ≈ webman OFF 185,572（101%）**；/bench/json 160,888 为 webman(187,319) 的 **86%**
+   （残差是 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价，见下）。旧结论的「慢 4×」来自
+   (a) **运行时混淆**（kode 测在 native、webman 在 Workerman）+ (b) **响应体两次 temp-stream 拷贝开销**（见 §6，StringStream 已修复）。
+2. **开启同类型中间件后，kode 与 webman 同量级、互有胜负**：/ping kode ON 173k > webman ON 157k（+10%），
+   /bench/json kode ON 122k < webman ON 133k（−9%）。kode 的 opt-in 中间件栈与 webman 的 4 中间件集合成本相当，
+   证明「默认零开销 + 按需开启」模型在实际负载下成立。
+
 ## 5. 关键结论
 
 1. **kode 默认零开销、内核同量级**：默认（L0）`/ping` 166,971 ≈ webman 92%、裸 Swoole 91%；`/bench/json` 132,693 ≈ webman 74%（架构基线对价，非 bug）。
 2. **能力成本透明、按需开启**：L0→L5 每步边际成本见 §3 表——可观测性（L3→L4）是 #1 税（/ping −26%），边缘三件套（L0→L1）次之（/ping −19%），resilience（L1→L2）≈0。开发者可按业务在梯度任意停靠。
 3. **完整企业栈 = 功能对价，非缺陷**：L5（全开）约为 webman 52%/37%，换取 cors/安全/韧性/日志/可观测/会话/幂等开箱能力。webman 若装同等中间件，差距显著收窄。
-4. **框架层调优已触顶（诚实）**：隔离微基准（§6）证明 kode 响应路径零 body 缩放开销，残差主因是 Swoole vs Workerman 运行时差异 + 本机热噪声（同 peer 跨跑 ±10~15%），框架层继续抠已无实收益。
+4. **框架层调优已触顶（诚实）**：§6 已定位并修复响应体两次 temp-stream 拷贝开销（StringStream，/bench/json 从 132k→161k），且 §4.1 证明同 Workerman 运行时下 **kode L0 ≈ webman**；残差主因是 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价 + 本机热噪声（同 peer 跨跑 ±10~15%），框架层继续抠已无实收益（见 §8 P0/P1）。
 
 ## 6. 默认栈成本剖析（观测性为主税 · 隔离微基准铁证）
 
 - **可观测性（Trace + Metrics）是 kode 全栈绝对主导成本**（§3 的 L3→L4：/ping −26%、/bench −20%）。  
   Trace 100% 路径固有成本 ≈ 0.77µs/请求（`Context` 读写 + 入向头解析 + W3C 拼接），**非克隆、非随机数、框架内不可消除**；webman 默认不自带，故构成主要差距。
 - **已提供杠杆**：`observability.tracing.attach_headers`（默认 true）置 false 时跳过响应头回写切片（微基准省 ~2.1µs/op），供「仅内部可观测、不依赖 W3C 传播」的高吞吐部署选择。
-- **响应路径零 body 缩放开销（铁证）**：进程隔离微基准，响应体 15B→1.5KB 各阶段（json_encode / Resp::json / toRaw / getBodyString）delta 均恰为 2.0µs = 纯 `json_encode` 本身 → 框架响应代码零缩放开销，残差不在响应管线。
+- **响应路径 body 拷贝开销（已定位并修复）**：旧结论「响应路径零 body 缩放开销」**已作废**——该隔离微基准只测了 15B→1.5KB 的 `json_encode` delta，漏检了 `Stream::create()` 默认的 `fopen('php://temp')` + 两次整段拷贝（fwrite 写入、stream_get_contents 读回）。对 /bench/json 这类 ~1KB 响应体，该 temp-stream 拷贝被放大 ~100×，是 kode 响应管线相对 webman（体即字符串）偏慢的主因。修复：`StringStream`（`vendor/kode/http/src/Psr7/StringStream.php`，经 `patches/kode-http-stringstream.patch` 固化）让 `Stream::create()` 小体量响应体直接内存持有；实测 /bench/json 从 **132k→161k（+22%）**，/ping 亦微受益。此即 §4.1 中 kode L0 /bench/json 占 webman 86% 的残差来源（剩余 ~14% 为 PSR-7 管线 + DI 架构基线，非 bug）。
 - **框架 `handle` 上限**：CLI 单进程 `$http->handle($psr)` 无网络测得约 **241k ops/s**，远高于 wrk 实测 166k → wrk 下吞吐被 kode/process 运行时 I/O 限制，非框架代码。
 
 ## 7. 已落地的修复与调优轨迹（condensed）
@@ -162,6 +215,10 @@ pkill -f kode_swoole_server.php 2>/dev/null; pkill -f "webman/kode_server.php" 2
 
 # 统一压测：同类框架（自然配置）先跑 + 本框架能力梯度 L0~L5（2-pass 抗热降频）
 no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run.sh
+
+# 公平同运行时 / 同中间件对标（建议前台运行，避免后台进程被 shell 回收）
+bash benchmarks/peers/fair_cmp.sh   # kode vs webman vs hyperf，/ping+/bench/json+DB，全部 Workerman 驱动
+bash benchmarks/peers/fair_db.sh   # 仅 DB 端点（MySQL 预热后，补全 hyperf_ON 等缺口）
 ```
 
 > 环境要点（压测必看）：

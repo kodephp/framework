@@ -100,15 +100,6 @@ webman 更轻量（开箱能力较少、靠生态补齐）。kode 的差异化�
 > \* L2 环比回升为测量噪声（未标记路由 resilience O(1) 早退，理论≈0）；Apple Silicon 11 核跨跑 ±10~15% 噪声内，L1→L2 视为持平。  
 > \** L5 反向启动竞态未就绪，为单遍实测；与其余两遍中位档位同口径展示，误差在噪声带内。完整方法学与逐项解读见 `benchmarks/PEER_BENCHMARK.md` §2–§4。
 
-> **关于「webman 为什么比 workerman 快？」——结论：并没有。** 分层自上而下是
-> `workerman_raw 180k` ≥ `webman 181k` ≈ `swoole_raw 184k` ≥ `kode L0(off) 167k`：webman 站在 Workerman 之上、仅多出极薄框架层，
-> 故**略低于裸 workerman_raw（≈其 99%）**，从未更快；kode L0 又低一档是 kode/http PSR-7 管线 + 中间件 + DI 的架构对价。
-> 同理 hyperf（Swoole 系，自带 DI+可观测）151k 低于裸 swoole_raw 184k，落在 kode L2~L3 量级。所有「框架 > 裸引擎」的观感都是单轮热噪声，横向请看上表比值。
->
-> 口径：每 peer 3 迭代中位（wrk -t8 -c200 -d8s），每 peer 间 COOLDOWN=15s 防热降频；kode 梯度每档跑正向+反向两遍取中。kode L0 三运行时 `/ping` ≈ 167k（native/swoole/workerman 相差 < 5%，纯噪声）；
-> **「自研多进程(Native)是否更好」= 否**——与 Workerman/Swoole 统计持平，其价值在零扩展依赖的可移植性，不在性能。
-> kode L5 全开栈 ≈ webman 52%（/ping）/ 37%（/bench/json），为换取企业级开箱能力的**功能对价，非缺陷**。
-
 > 口径说明：
 >
 > - 上表为**本机 wrk 实测**（macOS · PHP 8.3 · 11 worker），跨次运行有 ±8~15% 热漂移，**横比看比值**。

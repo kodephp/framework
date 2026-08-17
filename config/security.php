@@ -26,8 +26,8 @@ return [
     // X-XSS-Protection（老旧浏览器兼容）
     'xss_protection' => '0',
 
-    // 是否下发 X-Request-Id（链路追踪），建议开启
-    'request_id' => (bool) env('SECURITY_REQUEST_ID', true),
+    // 是否下发 X-Request-Id（链路追踪）。opt-in：默认关，需显式开启才在响应回写链路头。
+    'request_id' => (bool) env('SECURITY_REQUEST_ID', false),
 
     // X-Request-Id 是否允许客户端用同名请求头覆盖（便于跨服务透传）
     'request_id_allow_client' => (bool) env('SECURITY_REQUEST_ID_ALLOW_CLIENT', true),

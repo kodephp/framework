@@ -11,10 +11,10 @@
 #        - 引擎天花板：swoole_raw / workerman_raw（裸引擎，零中间件）
 #        - Workerman 系框架：webman（≈零中间件）
 #        - Swoole 系框架：hyperf（自带 DI / 可观测）
-#        - 本框架：能力梯度 off → full（默认运行时 = native 自研多进程）
+#        - 本框架：能力梯度 off → full（默认运行时 = workerman，与 webman/hyperf 同运行时，保证公平）
 #            框架默认 opt-in：cors/security/locale/resilience/logging/observability 等
 #            全部 config 默认 false，开发者按需开启。本运行器逐级叠加，定位每项成本。
-#            经 KODE_RUNTIME 可切换为 swoole / workerman（梯度统一跑 native 以隔离「能力成本」）。
+#            经 KODE_RUNTIME 可覆盖为 swoole / native（native 隔离「能力成本」但非公平口径）。
 #   4. kode/process 5.2.31 的 Native（F1）/ Swoole（F2）并发缺陷已在 5.2.36 修复，
 #      故三运行时均可正常压测（详见 benchmarks/kode-process-issues.md）。
 #
@@ -87,7 +87,7 @@ bench "webman"        "php $PEERS/webman/kode_server.php start" 8091
 bench "hyperf"        "php $PEERS/hyperf/bin/hyperf.php start"  9501
 
 # =====================================================================
-# 二、本框架「能力梯度」压测（默认运行时 = native 自研多进程）
+# 二、本框架「能力梯度」压测（默认运行时 = workerman，与 webman/hyperf 同运行时，公平对标）
 #   框架默认 opt-in：以下能力 config 默认全 false。本梯度从零中间件(off) 逐级叠加，
 #   定位「每项能力的边际吞吐成本」，给开发者最直观的取舍数据。
 #   档位：L0 全关 → L1 边缘(cors+security+locale) → L2 +resilience
@@ -99,8 +99,8 @@ mkdir -p /tmp/kode_grad
 bench_kode() { # label profile enable port
   local label="$1" profile="$2" enable="$3" port="$4"
   echo "------------------------------------------------------------"
-  echo "[$label] profile=$profile enable='$enable' port=$port workers=$WORKERS runtime=native"
-  env BENCH_PORT="$port" BENCH_WORKERS="$WORKERS" KODE_PROFILE="$profile" KODE_RUNTIME=native \
+  echo "[$label] profile=$profile enable='$enable' port=$port workers=$WORKERS runtime=${KODE_RUNTIME:-workerman}"
+  env BENCH_PORT="$port" BENCH_WORKERS="$WORKERS" KODE_PROFILE="$profile" KODE_RUNTIME=${KODE_RUNTIME:-workerman} \
       ${enable:+KODE_ENABLE="$enable"} no_proxy='*' NO_PROXY='*' \
       php -d memory_limit=$MEM "$PEERS/kode_swoole_server.php" >"/tmp/bench_${label}.log" 2>&1 &
   local pid=$!
