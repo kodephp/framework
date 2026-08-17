@@ -47,6 +47,7 @@ use Kode\Framework\Server\GracefulShutdown;
 $repoRoot = dirname(__DIR__, 2);
 
 $profile = $_SERVER['KODE_PROFILE'] ?? 'off';   // off(default) | full | lean(alias off)
+$lean = ($_SERVER['KODE_LEAN'] ?? '0') === '1';   // 1=绕过 PSR-7 内核路径（toPsr7+handle+emit），直发 raw，定位「桥接」边际成本
 $enableList = [];
 if (!empty($_SERVER['KODE_ENABLE'])) {
     $enableList = array_filter(array_map('trim', explode(',', (string) $_SERVER['KODE_ENABLE'])));
@@ -284,7 +285,21 @@ $bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCre
 $runtimeArg = $_SERVER['KODE_RUNTIME'] ?? 'auto';
 $runtimeArg = $runtimeArg === 'auto' ? null : $runtimeArg;
 
-echo "kode peer server on :$port (workers=$workers, profile=$profile, onGroups=[" . implode(',', $onGroups) . "], runtime=" . ($runtimeArg ?? 'auto') . ")\n";
+// KODE_LEAN=1：绕过 PSR-7 内核路径的 raw 直发路由表（与内核注册的同构 handler，仅去掉 PSR-7 包装）。
+// 用于量化「桥接层（HttpBridge::toPsr7 + kode/http App::handle + HttpBridge::emit）」的边际成本。
+$leanRoutes = $lean ? [
+    '/ping' => static fn () => ['status' => 'ok'],
+    '/bench/json' => static function () {
+        $items = array_map(
+            static fn (int $i) => ['id' => $i, 'name' => 'item-' . $i],
+            range(1, 50)
+        );
+
+        return ['framework' => 'kode', 'now' => date('c'), 'items' => $items];
+    },
+] : [];
+
+echo "kode peer server on :$port (workers=$workers, profile=$profile, onGroups=[" . implode(',', $onGroups) . "], runtime=" . ($runtimeArg ?? 'auto') . ($lean ? ', LEAN' : '') . ")\n";
 echo "routes: /ping /bench/json /bench/{raw,kode,eloquent,doctrine,think}/{mysql,pgsql}\n";
 
 Kode::serve("http://127.0.0.1:$port", [
@@ -294,7 +309,7 @@ Kode::serve("http://127.0.0.1:$port", [
     ->on('workerStart', static function (int $workerId) use ($bootWorker): void {
         $bootWorker();
     })
-    ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, &$graceful, $bootWorker): void {
+    ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, &$graceful, $bootWorker, $lean, $leanRoutes): void {
         if (!$message instanceof ProcessRequest) {
             return;
         }
@@ -302,6 +317,20 @@ Kode::serve("http://127.0.0.1:$port", [
         $bootWorker();
         if ($http === null) {
             HttpBridge::emit($conn, Resp::error('服务尚未就绪', 503));
+
+            return;
+        }
+
+        // 绕过 PSR-7 内核路径：直发 raw（定位「桥接层」边际成本）。
+        if ($lean && isset($leanRoutes[$path = $message->path()])) {
+            $data = $leanRoutes[$path]();
+            $body = is_string($data) ? $data : json_encode($data, JSON_UNESCAPED_UNICODE);
+            $body = (string) $body;
+            $raw = "HTTP/1.1 200 OK\r\n"
+                . "Content-Type: application/json; charset=utf-8\r\n"
+                . "Content-Length: " . strlen($body) . "\r\n"
+                . "Connection: keep-alive\r\n\r\n" . $body;
+            $conn->send($raw, true);
 
             return;
         }

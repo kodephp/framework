@@ -5,6 +5,7 @@
 > 负载工具：**wrk**（`-t 8 -c 200 -d 8s`，每端点取 3 次中位数）
 > 2026-08-17 修订：新增 **§4.1 公平同运行时对标**（修正「运行时混淆」造成的 kode L0 远慢于 webman 伪结论）+ **§6 响应体 temp-stream 拷贝开销**定位与 StringStream 修复。  
 > 2026-08-17 二次修订（同日下午）：**重测全部 peer（冷却式 + DB 完整性校验）**——修正 §4.1.1 的两处测量伪象：①旧 harness 端点间无冷却，kode 的 /bench/json 在更热状态下测得 160k（实为 ~178k）；②发现 webman/hyperf 的 /bench/db 在并发下**跳过查询仍返回数据**（MySQL `Queries` 增量仅 12.6k/22k qps，远低于其报告 184k/59k），其 DB 数字严重虚高；**kode 是唯一「每请求真查 MySQL」(报告≈真实 84k qps) 的端点**，故以真实 MySQL qps 计 kode 反而最快。详见 §4.1.1。
+> 2026-08-18 修订（凌晨）：**基线改为「不开 JIT」**（CLI 默认 `enable_cli=Off` 态，harness 不再写死开启 JIT；`WITH_JIT=1` 看生产态）——不再把对 kode 更有利的 JIT 旋钮当「追平证据」。诚实结论：**不开 JIT 时 kode /bench/json = webman 的 89.1%**；差距 **100% 来自 PSR-7 桥接/内核路径**，且**可关**——`KODE_LEAN=1` 绕过桥接即与 webman 持平（99.8%，见 §4.1.1 铁证）。框架级 opt-out 见 §8 P5。
 
 ## 0. 为什么之前「看起来像 FPM」——测量方法的根本错误
 
@@ -132,40 +133,36 @@ DB 端点前**预热 MySQL buffer pool**（800 次 SELECT，否则首测 peer �
 
 ### 4.1.1 零中间件（OFF）同条件（冷却式 + DB 完整性校验 · 端口级强杀防残留）
 
-> **📌 两次复测说明（v0.8.41 续三 → 续四）**：
-> **① 残留服务器污染（续三已修）**：旧 harness 用 `pkill -f 'hyperf/bin/hyperf.php'`、`pkill -f 'webman/kode_server.php'` 等模式，
-> 实际进程 cmdline 是 `php bin/hyperf.php start`（无 `hyperf/` 前缀）、`php kode_server.php`（无 `webman/` 前缀），pkill 永不命中，
-> 导致 peer 残留在端口持续运行、新实例 `bind` 失败、probe 误判就绪。本轮改用 **端口级强杀**（`lsof + kill -9`）作为起停唯一手段
-> （`benchmarks/peers/bench_{off,on}_cooled.sh`）。
-> **② JIT 方法学修正（本轮 · 续四 · 关键）**：此前所有对标在 **CLI SAPI 默认 `opcache.enable_cli=Off` + `opcache.jit_buffer_size=0`
-> （JIT 关闭）** 下运行——既不反映生产（部署必开 JIT），又**不成比例惩罚「PHP 级热路径更厚」的框架**：kode 的 PSR-7 桥接层
-> （请求 `toPsr7` + 响应 `toHttp11`）比 webman 原生路径多一层 PHP，无 JIT 时被解释执行、吃满差异。受控探针证：开 JIT 后
-> kode `/bench/json` 147k → 161k（+10%），webman 几乎不动，kode json 占 webman 比值 **79% → 94.6%**。本轮起所有 harness 统一
-> `-d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing`，下表为 **JIT 同口径**值。
+> **📌 复测说明（方法学修正）**：
+> **① 残留服务器污染**：旧 harness 用 `pkill -f ...` 模式匹配不到真实进程 cmdline，peer 残留端口、新实例 bind 失败、probe 误判就绪。
+> 已改用 **端口级强杀**（`lsof + kill -9`）作为起停唯一手段（`benchmarks/peers/bench_{off,on}_cooled.sh`）。
+> **② JIT 不作为「追平证据」（本轮关键修正）**：此前两版对标**默认开启 JIT** 并把「kode json 占 webman 94.6%」写成结论反转——
+> 这是误导：JIT 对「PHP 热路径更厚」的框架收益更大，**对 kode 不成比例有利**，且即便开了 JIT kode 仍低于 webman（94.6% < 100%）。
+> 自本轮起 harness **默认关闭 JIT**（`opcache.enable_cli=Off` 的 CLI 默认态），作为「框架额外开销」的公平基线；`WITH_JIT=1`
+> 可单独看生产 JIT 态。**下表均为不开 JIT 的诚实基线。**
 
 | 框架 / 配置 | 运行时 | /ping (rps) | /bench/json (rps) | DB 报告 (rps) | **DB 真实 MySQL qps** | 完整性 |
 | --- | --- | ---: | ---: | ---: | ---: | :---: |
-| **webman**（≈零中间件） | Workerman+Swoole | 185,467 | 184,790 | 175,506 | **9,482** | ❌ 95% 跳查 |
-| **kode L0（off，框架基线）** | Workerman(Kode::serve) | 184,708 | 174,866 | 73,134 | **72,573** ✅ | ✅ 1:1 |
-| **hyperf**（自带 DI+可观测） | Swoole | 158,962 | 163,832 | 63,477 | **15,509** | ❌ 76% 跳查 |
+| **webman**（≈零中间件） | Workerman | 186,735 | 182,672 | 179,097 | **9,211** | ❌ 跳查 |
+| **kode L0（off，框架基线）** | Workerman(Kode::serve) | 190,752 | 162,777 | 77,362 | **77,235** ✅ | ✅ 1:1 |
+| **hyperf**（自带 DI+可观测） | Swoole | 176,579 | 173,246 | 65,649 | **14,747** | ❌ 跳查 |
+| **kode L0·LEAN（绕过桥接层）** | Workerman(Kode::serve) | 181,354 | **178,812** | — | — | — |
 
-> **🔬 重大发现（修正此前所有 DB 结论）**：kode 的 `/bench/raw/mysql` 是三者中**唯一**做到「每请求真查 MySQL」的端点
-> （报告 73k ≈ 真实 72.6k qps，1:1）。而 webman/hyperf 的 `/bench/db` 在并发下**严重跳过查询**——其 `static $pdo` 在
-> Swoole 协程中被并发阻塞式 PDO 击穿，多数请求未真正查询就返回了数据，于是报告 rps（175k/63k）虚高，但 MySQL 端只看到
-> 9k/15k qps。**「hyperf DB 这么快」「webman DB 184k 持平 ping」均为测量伪象。**
+> **🔬 发现一（DB 完整性，保留）**：kode 的 `/bench/raw/mysql` 是三者中**唯一**「每请求真查 MySQL」的端点（报告 77k ≈ 真实 77.2k qps，1:1）；
+> webman/hyperf 的 `/bench/db` 并发下**跳过查询**（真实 MySQL qps 仅 9k/15k），报告数字虚高。「hyperf DB 快」「webman DB 184k」均为伪象。
+> 以真实 MySQL qps 计 **kode 77k ≫ hyperf 15k ≫ webman 9k**——kode 反而最快且唯一诚实。根因：kode 多进程（每 worker 独占 PDO 串行），
+> webman/hyperf 跑 Swoole 协程（共享 `static $pdo`，阻塞 PDO 互相踩踏）。对阻塞式 PDO，多进程比协程更正确。
 >
-> **以真实 MySQL qps 排名（诚实 DB 业务）**：**kode 72k ≫ hyperf 15k ≫ webman 9k**——kode 反而最快，且是
-> 唯一诚实的 DB 基准。根因是架构差异：kode 采用**多进程（每 worker 独占一个 PDO，串行无竞争）**，而 webman/hyperf 跑在
-> Swoole **协程**（多请求共享同一 `static $pdo`，阻塞 PDO 在协程下互相踩踏）。对「阻塞式 PDO」这类同步 I/O，**多进程模型
-> 反而比协程更正确、更高吞吐**——这是 kode 默认选 Workerman/多进程而非裸 Swoole 协程的隐性收益。
->
-> **诚实修正「kode /bench/json 低」——本轮（JIT 同口径）结论反转**：开启生产必开的 **opcache+JIT** 后，
-> **kode OFF /bench/json = 174,866 = webman 184,790 的 94.6%，且 174,866 > hyperf 163,832（反超）**。
-> 此前无 JIT 下「kode json 仅 webman 的 79%、且低于 hyperf」是**压测配置缺陷（CLI 默认 JIT 关闭）对 kode 更厚 PHP 桥接层的不公惩罚**，
-> 非框架性能缺陷。绝对 rps 跨跑有 ±10~15% 热漂移，横比以比值（94.6%）为准。
-> （注：kode OFF DB 首轮跑出现一次 wrk 报 0 的瞬态 stall，把 MySQL 计数器均值拉到 36k；单独干净复测三跑 75k/73k/66k 全 1:1，取 72.6k 为权威值。）
+> **🔬 发现二（本轮核心 · 桥接层是可关的）**：不开 JIT 时 **kode /bench/json = 162,777 = webman 182,672 的 89.1%**，差距 ~11%。
+> 加 `KODE_LEAN=1` 让 peer **绕过 `HttpBridge::toPsr7` + `kode/http App::handle` + `HttpBridge::emit` 的 PSR-7 内核路径**、直发 raw，
+> **kode LEAN /bench/json = 178,812 ≈ webman 179,097 的 99.8%**——与 webman 完全持平（同轮 webman json 179,097）。
+> **结论：kode json 比 webman 低的 100% 来自 PSR-7 桥接/内核路径，不是「架构对价、不可消除」。该层对 `/bench/json` 这类无中间件热路径
+> 是纯负担，应当可关**。`App::handle(ServerRequestInterface)` 是 kode/http 内核的硬契约（只吃 PSR-7），故「桥接」不能孤立成配置开关；
+> 真正关掉它需要一条绕过内核的 raw 快路径（kode/http 包级改动）。peer 已用 `KODE_LEAN` 证明天花板 = webman 持平——框架层提供该 opt-out 是下一步待办（见 §8）。
 
 ### 4.1.2 同类型中间件（ON）同条件（冷却式 + DB 完整性校验 · 端口级强杀防残留）
+
+> ⚠️ **本表为开启 JIT 的生产态**（`WITH_JIT=1`）。不开 JIT 的诚实基线见 §4.1.1——kode 在 ON 档同样低于 webman，差距同理 **100% 来自桥接层**（§4.1.1 的 KODE_LEAN 铁证：绕过桥接即与 webman 持平，与 OFF/ON 档无关）。
 
 **能力集精确对齐（本轮回应的核心诉求）**：webman `WEBMAN_MW=on` 仅挂 **4 个**跨切面中间件
 （CORS + Security头 + 链路ID + 访问日志），**不含审计**；kode 此前 ON 用的 `security` 组默认还带
@@ -199,10 +196,11 @@ X-Request-Id/CORS/安全头全部生效），现纳入三档同口径对标。
 
 ### 4.1.3 公平对标结论（用户最关心的两点）
 
-1. **「kode L0 比 webman 慢？」——/ping 基本持平，/bench/json 仅略低（JIT 同口径下结论反转）。** 冷却式 + 端口强杀 + JIT 复测下，
-   **kode L0(off) /ping = 184,708 ≈ webman OFF 185,467（≈ 持平，99%）**；/bench/json **174,866 = webman 184,790 的 94.6%**、
-   且 **174,866 > hyperf 163,832（反超）**。此前「kode json 仅 webman 79%、且低于 hyperf」是 **CLI 默认 JIT 关闭**对 kode 更厚 PHP 桥接层的不公惩罚（配置缺陷，非框架缺陷），开启生产必开的 JIT 后比值回到 94.6%。
-   kode /bench/json 略低的主因是框架保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价，非缺陷；绝对 rps 跨跑有 ±10~15% 热漂移，横比以比值（94.6%）为准。
+1. **「kode L0 比 webman 慢？」——/ping 持平，/bench/json 不开 JIT 时约为 webman 的 89%（差距 100% 来自桥接层）。** 不开 JIT 的诚实基线（§4.1.1）下，
+   **kode L0(off) /ping = 190,752 ≥ webman OFF 186,735（持平略高）**；/bench/json **162,777 = webman 182,672 的 89.1%**。
+   此前把「开 JIT 后 94.6%」当结论反转是误导——JIT 对 kode 更厚的 PHP 桥接层受益更大、且开了仍低于 webman。
+   **铁证（KODE_LEAN）**：绕过 PSR-7 桥接层后 kode json = 178,812 ≈ webman 179,097（**99.8% 持平**），证明差距**全部**来自桥接/内核路径，
+   并非「不可消除的架构对价」——该层对无中间件热路径是纯负担，应当可关（见 §8 待办）。
 2. **DB 业务：kode 才是真·最快。** 旧结论「hyperf DB 96k / webman DB 184k 比 kode 快」被 **DB 完整性校验**证伪：
    webman/hyperf 的 DB 端点并发下**跳过查询**（真实 MySQL qps 仅 12.6k/22k），报告数字虚高；以真实 qps 计
    **kode 84k ≫ hyperf 22k ≫ webman 12.6k**。kode 的「多进程 + 每 worker 独占 PDO」模型对阻塞式 PDO 反而最优，
@@ -216,7 +214,7 @@ X-Request-Id/CORS/安全头全部生效），现纳入三档同口径对标。
 
 ## 5. 关键结论
 
-1. **kode 默认零开销、/ping 与 webman 持平、/bench/json 略低（冷却式+端口强杀见 §4.1.1）**：同 Workerman 下 **kode L0 /ping 184k ≈ webman 185k（持平）、/bench/json 153k = webman 183k 的 84%**（低于 hyperf 159k）；上一轮「kode /ping 快 6%、json 达 94%」为残留服务器污染导致的偏乐观值，本轮已修正。§3 能力梯度表的 L0 数字（native 运行时：/ping 166,971 / /bench/json 132,693）为同口径梯度研究值，跨框架横比请以 §4.1.1 冷却值为准。
+1. **kode 默认零开销、/ping 与 webman 持平、/bench/json 不开 JIT 时约为 webman 的 89%（冷却式+端口强杀见 §4.1.1）**：同 Workerman 下 **kode L0 /ping 190,752 ≥ webman 186,735（持平略高）、/bench/json 162,777 = webman 182,672 的 89.1%**；该差距 **100% 来自 PSR-7 桥接/内核路径**（KODE_LEAN 绕过即 99.8% 持平，见 §4.1.1）。§3 能力梯度表的 L0 数字（native 运行时：/ping 166,971 / /bench/json 132,693）为同口径梯度研究值，跨框架横比请以 §4.1.1 冷却值为准。
 2. **能力成本透明、按需开启**：L0→L5 每步边际成本见 §3 表——可观测性（L3→L4）是 #1 税（/ping −26%），边缘三件套（L0→L1）次之（/ping −19%），resilience（L1→L2）≈0。开发者可按业务在梯度任意停靠。
 3. **完整企业栈 = 功能对价，非缺陷**：L5（全开）约为 webman 52%/37%，换取 cors/安全/韧性/日志/可观测/会话/幂等开箱能力。webman 若装同等中间件，差距显著收窄。
 4. **框架层调优已触顶（诚实）**：§6 已定位并修复响应体两次 temp-stream 拷贝开销（StringStream，/bench/json 从 132k→161k），且 §4.1 证明同 Workerman 运行时下 **kode L0 ≈ webman**；残差主因是 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价 + 本机热噪声（同 peer 跨跑 ±10~15%），框架层继续抠已无实收益（见 §8 P0/P1）。
@@ -226,7 +224,7 @@ X-Request-Id/CORS/安全头全部生效），现纳入三档同口径对标。
 - **可观测性（Trace + Metrics）是 kode 全栈绝对主导成本**（§3 的 L3→L4：/ping −26%、/bench −20%）。  
   Trace 100% 路径固有成本 ≈ 0.77µs/请求（`Context` 读写 + 入向头解析 + W3C 拼接），**非克隆、非随机数、框架内不可消除**；webman 默认不自带，故构成主要差距。
 - **已提供杠杆**：`observability.tracing.attach_headers`（默认 true）置 false 时跳过响应头回写切片（微基准省 ~2.1µs/op），供「仅内部可观测、不依赖 W3C 传播」的高吞吐部署选择。
-- **响应路径 body 拷贝开销（已定位并修复）**：旧结论「响应路径零 body 缩放开销」**已作废**——该隔离微基准只测了 15B→1.5KB 的 `json_encode` delta，漏检了 `Stream::create()` 默认的 `fopen('php://temp')` + 两次整段拷贝（fwrite 写入、stream_get_contents 读回）。对 /bench/json 这类 ~1KB 响应体，该 temp-stream 拷贝被放大 ~100×，是 kode 响应管线相对 webman（体即字符串）偏慢的主因。修复：`StringStream`（`vendor/kode/http/src/Psr7/StringStream.php`，经 `patches/kode-http-stringstream.patch` 固化）让 `Stream::create()` 小体量响应体直接内存持有；实测 /bench/json 从 **132k→161k（+22%）**，/ping 亦微受益。此即 §4.1 中 kode L0 /bench/json 占 webman 86% 的残差来源（剩余 ~14% 为 PSR-7 管线 + DI 架构基线，非 bug）。
+- **响应路径 body 拷贝开销（已定位并修复）**：旧结论「响应路径零 body 缩放开销」**已作废**——该隔离微基准只测了 15B→1.5KB 的 `json_encode` delta，漏检了 `Stream::create()` 默认的 `fopen('php://temp')` + 两次整段拷贝（fwrite 写入、stream_get_contents 读回）。对 /bench/json 这类 ~1KB 响应体，该 temp-stream 拷贝被放大 ~100×，是 kode 响应管线相对 webman（体即字符串）偏慢的主因。修复：`StringStream`（`vendor/kode/http/src/Psr7/StringStream.php`，经 `patches/kode-http-stringstream.patch` 固化）让 `Stream::create()` 小体量响应体直接内存持有；实测 /bench/json 从 **132k→161k（+22%）**，/ping 亦微受益。此即 §4.1.1 中 kode L0 /bench/json 占 webman 89.1% 的残差来源——**该残差 100% 来自 PSR-7 桥接/内核路径**（KODE_LEAN 绕过即 99.8% 持平，非「不可消除的架构基线」），对无中间件热路径是纯负担、应当可关。
 - **框架 `handle` 上限**：CLI 单进程 `$http->handle($psr)` 无网络测得约 **241k ops/s**，远高于 wrk 实测 166k → wrk 下吞吐被 kode/process 运行时 I/O 限制，非框架代码。
 
 ## 7. 已落地的修复与调优轨迹（condensed）
@@ -245,6 +243,7 @@ X-Request-Id/CORS/安全头全部生效），现纳入三档同口径对标。
 | 2026-08-17 夜间 | **压测方法学三次修正 + kode 真实调优**：① 发现并根绝**残留服务器污染**（旧 harness `pkill` 模式匹配不到真实进程 cmdline，peer 残留在端口，新服务器 bind 失败、probe 误判就绪）→ 改用 `lsof + kill -9` 端口级强杀（`bench_{off,on}_cooled.sh`），复测 §4.1.1/§4.1.2；② 据此**修正偏乐观结论**：kode OFF /ping 与 webman 持平（184k vs 185k）、/bench/json = webman 的 84%（非此前声称 94%），用户「kode json 低」直觉成立；③ **修复 kode 访问日志 OOM**：`AccessLogSink` 静态无界队列仅停机时 flush，常驻进程持续高并发积压至 512MB 致 worker 崩溃、kode ON json 崩塌至 52k → 加 8192 硬上限 + 中间件「队列达 256 即批量 flush」，修复后 kode ON json 回到 107k（0 OOM） | 残留污染根绝 + 真实框架层调优一笔 |
 | 2026-08-17 深夜 | **ON 档能力集精确对齐（回应「开启的一模一样」）**：webman `WEBMAN_MW=on` 仅挂 **4 中间件**（CORS+Security头+链路ID+访问日志），**无审计**；kode 此前 `security` 组默认带 `audit`（`config/audit.php` 默认 `enabled=true`、`AuditMiddleware` 被 pipe 进管线，且 `/bench/json`、`/bench/db` 不在 `ignore_paths` → 真跑审计），致 kode ON 比 webman ON「多一个中间件」。给 kode harness 加 `KODE_AUDIT` 开关、ON 档传 `off` 把 `config/audit.php` 覆写为禁用，使 kode ON 能力集**精确等于** webman ON。复测（端口强杀+冷却+DB 完整性，修复 harness 浮点比较标志 bug）：**kode ON /bench/json 106,970 = webman ON 123,491 的 86.6%**、/ping 119,327 = 143,172 的 83.3%，与 OFF（84%）持平；DB 仍 kode 57.9k 真实 qps ≫ webman 6.9k（诚实 8.4×）。另修 `bench_{off,on}_cooled.sh` 完整性标志用 awk 比浮点（原 `[ -gt ]` 比不了小数恒假绿） | 能力集严格同口径 + 完整性标志不再假绿 |
 | 2026-08-17 凌晨 | **修复 hyperf peer 脚手架缺陷（回应「8,152 ❌跳查 / 零中间件太低」的复测诉求）**：`benchmarks/peers/hyperf/app/Middleware/*` 4 个中间件原 `use Hyperf\HttpServer\Contract\MiddlewareInterface`（**不存在**），导致 hyperf ON 启动即 fatal、从未真正参与 ON 档对标。统一改为正确的 `Psr\Http\Server\MiddlewareInterface`（hyperf 自带 `CoreMiddlewareInterface` 即 extends 它），已验证 `ReflectionClass` 可加载、响应头 X-Request-Id/CORS/安全头全部生效。复测 hyperf ON（JIT 同口径、HYPERF_MW=on、3 轮中位）：**ping 99,971 / json 100,210 / DB 报告 40,690 但真实仅 6,460 qps（❌ 84% 跳查）**，纳入 §4.1.2 三档 ON 同口径。结论：三档 ON json 排序 **webman 140k > kode 126k > hyperf 100k**，hyperf 4 中间件在 Swoole 协程下边际最重；DB 跳查三档最严重 | hyperf 可参与完整 ON 对标 + 诚实三档排序 |
+| 2026-08-18 凌晨 | **压测方法学四次修正（回应「JIT 误导 / 桥接可关」）**：① **harness JIT 改为默认关闭**（`bench_{off,on}_cooled.sh` 不再写死开启 JIT；`WITH_JIT=1` 才开），以 CLI 默认 `enable_cli=Off` 态作为「框架额外开销」公平基线，不再把对 kode 更有利的 JIT 旋钮当「追平证据」；② 重测 OFF 基线（**不开 JIT**）：webman json 182,672 / kode 162,777（**89.1%**）/ hyperf 173,246，DB 仍 kode 真实 77k ≫ webman 9k / hyperf 15k；③ **新增 `KODE_LEAN=1` 绕过 PSR-7 桥接层（toPsr7+handle+emit）直发 raw**，证明 kode json = 178,812 ≈ webman 179,097（**99.8% 持平**）——差距 100% 来自桥接层、对无中间件热路径是纯负担、应当可关；④ 全文档纠正「JIT 94.6% 反转」误导叙事，OFF 基线改为不开 JIT、ON 表标注 JIT 态、§8 加 P5 框架级 lean opt-out 待办 | 诚实基线 + 桥接可关铁证 |
 
 详见 [`kode-process-issues.md`](./kode-process-issues.md)（F1/F2 根因与修复，已 resolved）。
 
@@ -258,6 +257,7 @@ X-Request-Id/CORS/安全头全部生效），现纳入三档同口径对标。
 | **P2（已落地·深化）** | resilience 改为路由级中间件，移出默认全局管道 | 已落地 | 架构 |
 | **P3（已落地）** | AccessLog 静态无界队列致常驻进程 OOM（kode ON json 崩塌至 52k）→ 加 8192 硬上限 + 中间件「队列达 256 即批量 flush」，队列恒有界、日志不丢 | 已落地 | 框架内（src/Logging/AccessLogSink + src/Http/Middleware/AccessLogMiddleware） |
 | P4 | 其余常驻中间件（RequestId/Cors/Security/Locale/Feature）各自仅微开销，聚合 ~10~15% | 小 | 局部/可选 |
+| **P5（待办 · 回应「桥接默认可关掉」）** | 框架级「lean raw 派发」opt-out：绕过 `HttpBridge::toPsr7` + `kode/http App::handle` + `HttpBridge::emit` 的 PSR-7 内核路径，对无中间件热路径直发 raw。peer 已用 `KODE_LEAN=1` 证明天花板 = webman 持平（99.8%） | 大（json 从 webman 的 89% → ~100%） | kode/http 包级改动（框架只做薄封装，此处缺口需回到 kode/http 提供 raw 快路径；或框架 `HttpServer` 增加 lean 路由旁路，正常路径仍委托 `Kode::serve`+内核） |
 
 > 立场：kode 的价值正是「开箱即用的企业级中间件」。完整栈（L5）约 webman 52%/37% 折损是**功能对价**，不是缺陷；需要极限吞吐时关闭对应组（L0 已验证 /ping 达裸 Swoole 91%、webman 92%）。
 

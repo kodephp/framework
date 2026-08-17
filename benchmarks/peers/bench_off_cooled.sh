@@ -12,10 +12,15 @@ START_COOLDOWN=60; BETWEEN_EP=12; BETWEEN_PEER=20
 OUT=/tmp/fair_off_cooled.txt
 : > "$OUT"
 
-# 生产真实 PHP 配置：CLI SAPI 默认 opcache.enable_cli=Off 且 jit_buffer_size=0（JIT 关闭），
-# 会使「PHP 级热路径更厚」的框架（kode 的 PSR-7 桥接）被不成比例地惩罚，且数字不反映生产。
-# 三个压测进程统一开启 opcache+JIT（公平、且贴近生产），否则对比失真。
-JIT_FLAGS="-d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing"
+# 默认不开 JIT：CLI SAPI 默认 opcache.enable_cli=Off 且 jit_buffer_size=0（JIT 关闭），
+# 这是「框架额外开销」的公平基线——不靠对 kode 更有利的 JIT 旋钮去缩差距
+# （JIT 对 PHP 热路径更厚的框架受益更大，属不公平旋钮，不应作为对标默认）。
+# 如需看「生产 JIT 态」对比，设 WITH_JIT=1 再跑（此时 kode 受益更大，但仍低于 webman）。
+if [ "${WITH_JIT:-0}" = "1" ]; then
+  JIT_FLAGS="-d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing"
+else
+  JIT_FLAGS=""
+fi
 
 kill_port() {
   local port="$1" tries=0
