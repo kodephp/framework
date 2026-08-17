@@ -7,7 +7,7 @@ namespace App\Middleware;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use Hyperf\HttpServer\Contract\MiddlewareInterface;
+use Psr\Http\Server\MiddlewareInterface;
 
 /**
  * 安全响应头中间件（对标 kode/config/security.php security 开启态 + webman 同构中间件）。

@@ -12,6 +12,11 @@ START_COOLDOWN=60; BETWEEN_EP=12; BETWEEN_PEER=20
 OUT=/tmp/fair_off_cooled.txt
 : > "$OUT"
 
+# 生产真实 PHP 配置：CLI SAPI 默认 opcache.enable_cli=Off 且 jit_buffer_size=0（JIT 关闭），
+# 会使「PHP 级热路径更厚」的框架（kode 的 PSR-7 桥接）被不成比例地惩罚，且数字不反映生产。
+# 三个压测进程统一开启 opcache+JIT（公平、且贴近生产），否则对比失真。
+JIT_FLAGS="-d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing"
+
 kill_port() {
   local port="$1" tries=0
   while [ "$tries" -lt 40 ]; do
@@ -81,13 +86,13 @@ bench_off() {
 echo "########## OFF 基线冷却式 + DB 完整性校验复测（端口强杀防残留）##########"
 php -r '$p=new PDO("mysql:host=127.0.0.1;dbname=kode_bench","root","root"); for($i=0;$i<800;$i++){ $s=$p->prepare("SELECT * FROM bench_users WHERE id=?"); $s->execute([rand(1,1000)]); $s->fetch(); } echo "MySQL warmed\n";'
 bench_off "webman_OFF" \
-  "cd $PEERS/webman && WEBMAN_MW=off BENCH_PORT=8091 BENCH_WORKERS=$WORKERS php kode_server.php start -d" \
+  "cd $PEERS/webman && WEBMAN_MW=off BENCH_PORT=8091 BENCH_WORKERS=$WORKERS php $JIT_FLAGS kode_server.php start -d" \
   8091 "bench/db"
 bench_off "kode_L0_off" \
-  "cd $PEERS && KODE_PROFILE=off KODE_RUNTIME=workerman BENCH_PORT=8200 BENCH_WORKERS=$WORKERS php -d memory_limit=512M kode_swoole_server.php" \
+  "cd $PEERS && KODE_PROFILE=off KODE_RUNTIME=workerman BENCH_PORT=8200 BENCH_WORKERS=$WORKERS php $JIT_FLAGS -d memory_limit=512M kode_swoole_server.php" \
   8200 "bench/raw/mysql"
 bench_off "hyperf_OFF" \
-  "cd $PEERS/hyperf && HYPERF_MW=off php bin/hyperf.php start" \
+  "cd $PEERS/hyperf && HYPERF_MW=off php $JIT_FLAGS bin/hyperf.php start" \
   9501 "bench/db"
 echo "================ OFF 基线汇总 ================"
 cat "$OUT"

@@ -25,6 +25,11 @@ START_COOLDOWN=60; BETWEEN_EP=12; BETWEEN_PEER=20
 OUT=/tmp/fair_on_cooled.txt
 : > "$OUT"
 
+# 生产真实 PHP 配置：CLI SAPI 默认 opcache.enable_cli=Off 且 jit_buffer_size=0（JIT 关闭），
+# 会使「PHP 级热路径更厚」的框架（kode 的 PSR-7 桥接）被不成比例地惩罚，且数字不反映生产。
+# 三个压测进程统一开启 opcache+JIT（公平、且贴近生产），否则对比失真。
+JIT_FLAGS="-d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing"
+
 kill_port() { # port
   local port="$1" tries=0
   while [ "$tries" -lt 40 ]; do
@@ -102,19 +107,19 @@ echo "########## ON 档冷却式 + DB 完整性校验复测（端口强杀防残
 php -r '$p=new PDO("mysql:host=127.0.0.1;dbname=kode_bench","root","root"); for($i=0;$i<800;$i++){ $s=$p->prepare("SELECT * FROM bench_users WHERE id=?"); $s->execute([rand(1,1000)]); $s->fetch(); } echo "MySQL warmed\n";'
 
 bench_on "webman_ON" \
-  "cd $PEERS/webman && WEBMAN_MW=on BENCH_PORT=8091 BENCH_WORKERS=$WORKERS php kode_server.php start -d" \
+  "cd $PEERS/webman && WEBMAN_MW=on BENCH_PORT=8091 BENCH_WORKERS=$WORKERS php $JIT_FLAGS kode_server.php start -d" \
   8091 "bench/db"
 
 bench_on "kode_ON_sameType" \
-  "cd $PEERS && KODE_PROFILE=off KODE_ENABLE=cors,security,logging KODE_AUDIT=off KODE_RUNTIME=workerman BENCH_PORT=8201 BENCH_WORKERS=$WORKERS php -d memory_limit=512M kode_swoole_server.php" \
+  "cd $PEERS && KODE_PROFILE=off KODE_ENABLE=cors,security,logging KODE_AUDIT=off KODE_RUNTIME=workerman BENCH_PORT=8201 BENCH_WORKERS=$WORKERS php $JIT_FLAGS -d memory_limit=512M kode_swoole_server.php" \
   8201 "bench/raw/mysql"
 
-# hyperf_ON 脚手架缺陷（app/middleware/CorsMiddleware 引用不存在的
-# Hyperf\HttpServer\Contract\MiddlewareInterface），启动即 fatal，非 kode 范畴，
-# 本轮 kode↔webman 同口径对比不依赖它，注释跳过以免污染汇总。
-# bench_on "hyperf_ON" \
-#   "cd $PEERS/hyperf && HYPERF_MW=on php bin/hyperf.php start" \
-#   9501 "bench/db"
+# hyperf_ON：已修复脚手架缺陷（app/Middleware/* 原 `use Hyperf\HttpServer\Contract\MiddlewareInterface`
+# 不存在，正确为 `Psr\Http\Server\MiddlewareInterface`，启动即 fatal）。现 4 个中间件接口已改正，
+# 与 kode/webman ON 同类型（CORS+Security头+链路ID+访问日志）可比。HYPERF_MW=on 由 middlewares.php 读取。
+bench_on "hyperf_ON" \
+  "cd $PEERS/hyperf && HYPERF_MW=on php $JIT_FLAGS -d memory_limit=1G bin/hyperf.php start" \
+  9501 "bench/db"
 
 echo "================ ON 档汇总 ================"
 cat "$OUT"
