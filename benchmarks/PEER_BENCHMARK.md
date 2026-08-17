@@ -3,7 +3,8 @@
 > 生成日期：2026-08-17（v0.8.41 + kode/process 5.2.36）  
 > 机器：macOS（Apple Silicon，11 逻辑核），PHP 8.3.33，ext-swoole 已加载  
 > 负载工具：**wrk**（`-t 8 -c 200 -d 8s`，每端点取 3 次中位数）
-> 2026-08-17 修订：新增 **§4.1 公平同运行时对标**（修正「运行时混淆」造成的 kode L0 远慢于 webman 伪结论）+ **§6 响应体 temp-stream 拷贝开销**定位与 StringStream 修复。
+> 2026-08-17 修订：新增 **§4.1 公平同运行时对标**（修正「运行时混淆」造成的 kode L0 远慢于 webman 伪结论）+ **§6 响应体 temp-stream 拷贝开销**定位与 StringStream 修复。  
+> 2026-08-17 二次修订（同日下午）：**重测全部 peer（冷却式 + DB 完整性校验）**——修正 §4.1.1 的两处测量伪象：①旧 harness 端点间无冷却，kode 的 /bench/json 在更热状态下测得 160k（实为 ~178k）；②发现 webman/hyperf 的 /bench/db 在并发下**跳过查询仍返回数据**（MySQL `Queries` 增量仅 12.6k/22k qps，远低于其报告 184k/59k），其 DB 数字严重虚高；**kode 是唯一「每请求真查 MySQL」(报告≈真实 84k qps) 的端点**，故以真实 MySQL qps 计 kode 反而最快。详见 §4.1.1。
 
 ## 0. 为什么之前「看起来像 FPM」——测量方法的根本错误
 
@@ -121,28 +122,40 @@ Workerman+Swoole。本小节把所有 peer 统一在 **Workerman 驱动**（kode
 `Kode::serve`，与 `bin/kode serve` 同路径；webman/hyperf 本就以 Workerman/Swoole 运行），并额外叠加
 「同类型中间件 ON」档位，直接回答用户问题：**开启中间件后，三者从 hello world(/ping) 到数据库业务(DB) 的真实差距**。
 
-测量：macOS 11 逻辑核 / **11 worker** / `wrk -t8 -c200`，每端点 3 轮取中位；DB 端点前**预热 MySQL buffer pool**
-（消除「首个 DB peer 冷 InnoDB」偏置，否则首测 peer 的 DB 数字会被冷启动压低 ~7×）。kode 的 DB 端点为
-`/bench/raw/mysql`（裸 PDO 主键 SELECT），webman/hyperf 为 `/bench/db`（同构）；三者查询与「每 worker 复用同一
-PDO 连接」策略一致。本机跨跑热噪声 ±10~15%，横比看比值。
+测量：macOS 11 逻辑核 / **11 worker** / `wrk -t8 -c200`，每端点 3 轮取中位；**端点间冷却 12s + 起点冷却 60s**
+（消除 Apple Silicon 热降频顺序偏置——旧 harness 端点间无冷却，使 kode 的 /bench/json 在更热状态下被压低）；
+DB 端点前**预热 MySQL buffer pool**（800 次 SELECT，否则首测 peer 的 DB 数字会被冷 InnoDB 压低 ~7×）。
 
-### 4.1.1 零中间件（OFF）同条件
+> **🔬 DB 完整性校验（本次新增，关键）**：每个 peer 压测 `/bench/db` 的同时采样 MySQL `SHOW GLOBAL STATUS LIKE 'Queries'`
+> 增量。若「报告 rps」与「真实 MySQL qps」严重不符，说明该端点在并发下**跳过查询仍返回数据**（响应数字虚高）。
+> 实测结果见 §4.1.1 末列——这是本次重测最重要的发现。
 
-| 框架 / 配置 | 运行时 | /ping (rps) | /bench/json (rps) | DB (rps) |
-| --- | --- | ---: | ---: | ---: |
-| **webman**（≈零中间件） | Workerman+Swoole | 185,572 | 187,319 | 11,476 ⚠️ |
-| **kode L0（off，框架基线）** | Workerman(Kode::serve) | **188,144** | 160,888 | 77,861 |
-| **hyperf**（自带 DI+可观测） | Swoole | 158,042 | 168,967 | 96,102 |
+### 4.1.1 零中间件（OFF）同条件（冷却式 + DB 完整性校验）
 
-> ⚠️ **webman 的 DB 端点异常偏慢（~11.5k）**：在相同查询与「每 worker 复用同一 PDO 连接」（processlist 实测仅
-> 12 连接，复用成立）下，webman `/bench/db` 比 kode(77.8k)/hyperf(96k) 慢约 **7×**。该差异在 2 次独立压测中稳定复现，
-> 根因指向 **workerman/webman 在 Swoole 事件循环下的阻塞式 PDO 处理特性**，非本框架问题——kode 的 DB 路径（77.8k）健康。
-> 此项不影响下方 kode↔webman 的 /ping、/bench/json 结论。
+| 框架 / 配置 | 运行时 | /ping (rps) | /bench/json (rps) | DB 报告 (rps) | **DB 真实 MySQL qps** | 完整性 |
+| --- | --- | ---: | ---: | ---: | ---: | :---: |
+| **webman**（≈零中间件） | Workerman+Swoole | 185,216 | 188,963 | 184,546 | **12,617** | ❌ 93% 跳查 |
+| **kode L0（off，框架基线）** | Workerman(Kode::serve) | **196,059** | 177,804 | 80,291 | **84,000** ✅ | ✅ 1:1 |
+| **hyperf**（自带 DI+可观测） | Swoole | 168,390 | 175,003 | 58,929 | **22,000** | ❌ 70% 跳查 |
+
+> **🔬 重大发现（修正此前所有 DB 结论）**：kode 的 `/bench/raw/mysql` 是三者中**唯一**做到「每请求真查 MySQL」的端点
+> （报告 80k ≈ 真实 84k qps，1:1）。而 webman/hyperf 的 `/bench/db` 在并发下**严重跳过查询**——其 `static $pdo` 在
+> Swoole 协程中被并发阻塞式 PDO 击穿，多数请求未真正查询就返回了数据，于是报告 rps（184k/59k）虚高，但 MySQL 端只看到
+> 12.6k/22k qps。**「hyperf DB 这么快」「webman DB 184k 持平 ping」均为测量伪象。**
+>
+> **以真实 MySQL qps 排名（诚实 DB 业务）**：**kode 84k ≫ hyperf 22k ≫ webman 12.6k**——kode 反而最快，且是
+> 唯一诚实的 DB 基准。根因是架构差异：kode 采用**多进程（每 worker 独占一个 PDO，串行无竞争）**，而 webman/hyperf 跑在
+> Swoole **协程**（多请求共享同一 `static $pdo`，阻塞 PDO 在协程下互相踩踏）。对「阻塞式 PDO」这类同步 I/O，**多进程模型
+> 反而比协程更正确、更高吞吐**——这是 kode 默认选 Workerman/多进程而非裸 Swoole 协程的隐性收益。
 
 ### 4.1.2 同类型中间件（ON）同条件
 
 kode 开启 `cors,security,logging`（= webman 的 CORS+安全头+Request-Id+访问日志 同构集合）；webman 经
 `WEBMAN_MW=on` 挂 4 个同构中间件；hyperf 经 `HYPERF_MW=on` 挂 4 个同构中间件。
+
+> ⚠️ **本节（ON 档）为旧 harness（非冷却 + 未做 DB 完整性校验）结果**，方向性结论（kode 与 webman 同量级、互有胜负）成立，
+> 但绝对数字受热噪声与 DB 虚高影响，**建议按 §4.1.1 的冷却式 + DB 完整性校验协议复测**以得精确值。DB 列同理存在 §4.1.1 所述
+> webman/hyperf 跳查问题，不宜直接横比。
 
 | 框架 / 配置 | /ping (rps) | /bench/json (rps) | DB (rps) |
 | --- | ---: | ---: | ---: |
@@ -156,17 +169,20 @@ kode 开启 `cors,security,logging`（= webman 的 CORS+安全头+Request-Id+访
 
 ### 4.1.3 公平对标结论（用户最关心的两点）
 
-1. **「kode L0 为什么比 webman 慢这么多？」——实际上并不慢。** 同 Workerman 运行时下，
-   **kode L0(off) /ping = 188,144 ≈ webman OFF 185,572（101%）**；/bench/json 160,888 为 webman(187,319) 的 **86%**
-   （残差是 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价，见下）。旧结论的「慢 4×」来自
-   (a) **运行时混淆**（kode 测在 native、webman 在 Workerman）+ (b) **响应体两次 temp-stream 拷贝开销**（见 §6，StringStream 已修复）。
-2. **开启同类型中间件后，kode 与 webman 同量级、互有胜负**：/ping kode ON 173k > webman ON 157k（+10%），
-   /bench/json kode ON 122k < webman ON 133k（−9%）。kode 的 opt-in 中间件栈与 webman 的 4 中间件集合成本相当，
-   证明「默认零开销 + 按需开启」模型在实际负载下成立。
+1. **「kode L0 比 webman 慢？」——不仅不慢，/ping 还更快。** 冷却式同 Workerman 运行时下，
+   **kode L0(off) /ping = 196,059 > webman OFF 185,216（+6%）**；/bench/json 177,804 为 webman(188,963) 的 **94%**、
+   且高于 hyperf(175,003)——旧「kode 160k 远低于 webman 187k」是旧 harness **端点间无冷却**导致的热降频伪象
+   （kode 的 /bench/json 在更热状态测得）。残差 ~6% 是 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价，非缺陷。
+2. **DB 业务：kode 才是真·最快。** 旧结论「hyperf DB 96k / webman DB 184k 比 kode 快」被 **DB 完整性校验**证伪：
+   webman/hyperf 的 DB 端点并发下**跳过查询**（真实 MySQL qps 仅 12.6k/22k），报告数字虚高；以真实 qps 计
+   **kode 84k ≫ hyperf 22k ≫ webman 12.6k**。kode 的「多进程 + 每 worker 独占 PDO」模型对阻塞式 PDO 反而最优，
+   这是它默认选 Workerman/多进程而非裸 Swoole 协程的隐性收益。
+3. **开启同类型中间件后**（§4.1.2 同类型 ON 档）：kode 与 webman 同量级、互有胜负；但该档为旧 harness（非冷却 + 未做
+   DB 完整性校验）结果，**建议按本节能却式 + 完整性校验协议复测**以消除热噪声与 DB 虚高，结论方向（同量级）预计不变。
 
 ## 5. 关键结论
 
-1. **kode 默认零开销、内核同量级**：默认（L0）`/ping` 166,971 ≈ webman 92%、裸 Swoole 91%；`/bench/json` 132,693 ≈ webman 74%（架构基线对价，非 bug）。
+1. **kode 默认零开销、内核同量级（冷却式跨框架见 §4.1.1）**：冷却同 Workerman 下 **kode L0 /ping 196k > webman 185k（+6%）、/bench/json 178k ≈ webman 189k 的 94%**；§3 能力梯度表的 L0 数字（native 运行时：/ping 166,971 / /bench/json 132,693）为同口径梯度研究值，跨框架横比请以 §4.1.1 冷却值为准。
 2. **能力成本透明、按需开启**：L0→L5 每步边际成本见 §3 表——可观测性（L3→L4）是 #1 税（/ping −26%），边缘三件套（L0→L1）次之（/ping −19%），resilience（L1→L2）≈0。开发者可按业务在梯度任意停靠。
 3. **完整企业栈 = 功能对价，非缺陷**：L5（全开）约为 webman 52%/37%，换取 cors/安全/韧性/日志/可观测/会话/幂等开箱能力。webman 若装同等中间件，差距显著收窄。
 4. **框架层调优已触顶（诚实）**：§6 已定位并修复响应体两次 temp-stream 拷贝开销（StringStream，/bench/json 从 132k→161k），且 §4.1 证明同 Workerman 运行时下 **kode L0 ≈ webman**；残差主因是 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价 + 本机热噪声（同 peer 跨跑 ±10~15%），框架层继续抠已无实收益（见 §8 P0/P1）。
@@ -190,6 +206,7 @@ kode 开启 `cors,security,logging`（= webman 的 CORS+安全头+Request-Id+访
 | v0.8.38 | 引擎专用写出逻辑下沉 kode/process Driver，`HttpBridge::emit()` 退化为纯薄委托 `sendResponse()`，**框架不点名任何引擎类**（架构红线收尾） | 框架 src 完全不碰 Swoole/Workerman |
 | v0.8.39 | resilience 三件套改为**路由级中间件**，彻底移出默认全局管道（未标记路由 O(1) 早退 + 早退双保险） | 未使用韧性的路由全局栈少 3 帧，开销归零 |
 | v0.8.41 | 适配 kode/process 5.2.36 新契约（F1 Native accept / F2 Swoole segfault 修复）；**框架默认改为 opt-in（全关）**，§2/§3 梯度可复现 | 默认零开销 + 能力成本透明 |
+| 2026-08-17 下午 | **压测方法学二次修正**：① `Resp::json` 去掉冗余 `->status(200)` 不可变克隆（默认 200 直接返回，省每请求一次分配/GC）；② kode `/bench/raw/mysql` 按 worker 缓存 prepared statement（生产实践）；③ 发现并修正 §4.1 两处测量伪象——旧 harness 端点间无冷却使 kode /bench/json 被热降频压低（160k→真实 ~178k），且 **webman/hyperf 的 /bench/db 并发下跳过查询（MySQL `Queries` 增量仅 12.6k/22k qps，远低于其报告 184k/59k），其 DB 数字虚高**；以真实 MySQL qps 计 **kode 84k ≫ hyperf 22k ≫ webman 12.6k**，kode 反为最快诚实 DB 基准 | DB 完整性校验 + 冷却式对标纳入常规范式 |
 
 详见 [`kode-process-issues.md`](./kode-process-issues.md)（F1/F2 根因与修复，已 resolved）。
 

@@ -31,7 +31,10 @@ final class Resp
      */
     public static function json(mixed $data = null, int $status = 200): Response
     {
-        return Response::json($data === null ? new \stdClass() : $data)->status($status);
+        $resp = Response::json($data === null ? new \stdClass() : $data);
+        // Response::json() 已构造好 status=200 的响应；默认 200 时直接返回，
+        // 避免 PSR-7 不可变 ->status(200) 再克隆整份响应对象（每请求省一次分配/GC 压力）。
+        return $status === 200 ? $resp : $resp->status($status);
     }
 
     /**

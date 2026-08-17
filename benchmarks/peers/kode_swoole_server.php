@@ -216,6 +216,7 @@ $bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCre
 
                 if ($layer === 'raw') {
                     static $rawPool = [];
+                    static $rawStmt = [];
                     $key = "raw-$db";
                     if (!isset($rawPool[$key])) {
                         $dsn = $db === 'pgsql'
@@ -223,10 +224,11 @@ $bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCre
                             : "mysql:host={$cred['host']};port={$cred['port']};dbname={$cred['database']};charset=utf8mb4";
                         $p = new \PDO($dsn, $cred['username'], $cred['password'], [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
                         $rawPool[$key] = $p;
+                        // 生产实践：prepared statement 按 worker 缓存复用，避免每请求重复 prepare。
+                        $rawStmt[$key] = $p->prepare('SELECT * FROM bench_users WHERE id = ?');
                     }
-                    $stmt = $rawPool[$key]->prepare('SELECT * FROM bench_users WHERE id = ?');
-                    $stmt->execute([$id]);
-                    $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+                    $rawStmt[$key]->execute([$id]);
+                    $row = $rawStmt[$key]->fetch(\PDO::FETCH_ASSOC);
                 } elseif ($layer === 'kode') {
                     $conn = $db === 'pgsql' ? 'kode-pgsql' : 'kode-mysql';
                     $row = \Kode\Database\Db\Db::connection($conn)
