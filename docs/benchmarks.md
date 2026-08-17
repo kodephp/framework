@@ -69,40 +69,42 @@ webman 更轻量（开箱能力较少、靠生态补齐）。kode 的差异化�
 > 故 **Swoole / Native / Workerman 三运行时现在全部可用且同档**。下表中 kode 行给出三运行时实测，其余 peer 不受影响。
 > 横向以**比值**（同轮内 webman 锚归一）为准（本机跨次 ±20~40% 热漂移）。
 
-### 最新可复现：三运行时公平对比（v0.8.41 + kode/process 5.2.36，11 worker，wrk -t8 -c200 -d8s，3 迭代中位）
+### 统一对比矩阵（v0.8.41 + kode/process 5.2.36，11 worker，wrk -t8 -c200 -d8s，3 迭代中位）
 
-| 框架 / 运行时 | 形态 | /ping (rps) | /bench/json (rps) | 比值（vs webman） |
-| --- | --- | ---: | ---: | --- |
-| **webman** | Workerman 系（≈零中间件，锚） | 180,820 | 180,037 | 100% / 100% |
-| **kode · lean @ Swoole** | Kode::serve 真实路径 | 161,106 | 129,682 | /ping 89% · /bench/json 72% |
-| **kode · lean @ Native** | 自研纯 PHP 多进程（零依赖） | 165,831 | 135,874 | /ping 92% · /bench/json 75% |
-| **kode · lean @ Workerman** | Kode::serve 真实路径 | 157,829 | 132,028 | /ping 87% · /bench/json 73% |
-| **kode · default @ Swoole** | 完整企业级中间件栈 | 106,175 | 79,951 | /ping 59% · /bench/json 44% |
-| **kode · default @ Native** | 完整企业级中间件栈 | 98,029 | 77,187 | /ping 54% · /bench/json 43% |
-| **kode · default @ Workerman** | 完整企业级中间件栈 | 99,549 | 80,036 | /ping 55% · /bench/json 44% |
+> kode/process 5.2.36 已修复 Swoole 驱动并发崩溃与 Native 驱动并发拒绝连接两大缺陷，故 **Swoole / Native / Workerman 三运行时全部可用且同档**。
+> 下表把「引擎天花板 + 同类框架 + 本框架三运行时」放在同一矩阵，直接回答「webman(workerman) vs hyperf(swoole) vs 本框架」的对比。
 
-> 口径：每 peer 3 迭代中位（wrk -t8 -c200 -d8s），每 peer 间 COOLDOWN=15s 防热降频。kode·lean 三运行时 `/ping` = 161k/166k/158k（相差 < 5%，纯噪声）；
+| 框架 / 运行时 | 类别 | /ping (rps) | /bench/json (rps) | vs webman /ping | vs webman /bench/json |
+| --- | --- | ---: | ---: | ---: | ---: |
+| swoole_raw | 引擎天花板 · Swoole | 184,806 | 183,011 | 102% | 102% |
+| workerman_raw | 引擎天花板 · Workerman | 186,337 | 184,169 | 103% | 102% |
+| **webman**（锚） | Workerman 系框架（≈零中间件） | 180,820 | 180,037 | 100% | 100% |
+| **hyperf** | Swoole 系框架（自带 DI/可观测） | 163,332 | 157,395 | 90% | 87% |
+| **kode · lean @ Native**（默认） | 本框架 · 路由+异常+连接收口 | 165,831 | 135,874 | 92% | 75% |
+| **kode · lean @ Swoole** | 本框架 · 同左 | 161,106 | 129,682 | 89% | 72% |
+| **kode · lean @ Workerman** | 本框架 · 同左 | 157,829 | 132,028 | 87% | 73% |
+| **kode · default @ Native** | 本框架 · 完整企业级中间件栈 | 98,029 | 77,187 | 54% | 43% |
+| **kode · default @ Swoole** | 本框架 · 同左 | 106,175 | 79,951 | 59% | 44% |
+| **kode · default @ Workerman** | 本框架 · 同左 | 99,549 | 80,036 | 55% | 44% |
+
+> **关于「webman 为什么比 workerman 快？」——结论：并没有。** 分层自上而下是
+> `workerman_raw 186k` ≥ `webman 180k` ≥ `kode·lean @ Workerman 158k`：webman 站在 Workerman 之上、仅多出极薄框架层，
+> 故**略低于裸 workerman_raw（≈其 97%）**，从未更快；kode·lean 又低一档是 kode/http PSR-7 管线 + 中间件 + DI 的架构对价。
+> 同理 hyperf（Swoole 系）163k 低于裸 swoole_raw 185k。所有「框架 > 裸引擎」的观感都是单轮热噪声，横向请看上表比值。
+>
+> 口径：每 peer 3 迭代中位（wrk -t8 -c200 -d8s），每 peer 间 COOLDOWN=10s 防热降频。kode·lean 三运行时 `/ping` = 166k/161k/158k（相差 < 5%，纯噪声）；
 > **「自研多进程(Native)是否更好」= 否**——与 Workerman/Swoole 统计持平，其价值在零扩展依赖的可移植性，不在性能。
 > kode·default 完整栈 ≈ webman 54~59%（/ping）/ 43~44%（/bench/json），为换取企业级开箱能力的**功能对价，非缺陷**。
-> 框架层调优已触顶：同运行时下 kode·lean `/bench/json` 约 webman 73%，差距是 kode/http PSR-7 管线 + 中间件的架构对价。
-
-### 运行时天花板参照（Swoole / 原生，不受 kode 回归影响）
-
-| 框架 | 形态 | /ping (rps) | /bench/json (rps) |
-| --- | --- | ---: | ---: |
-| swoole_raw | Swoole 原生（无中间件·天花板） | 184,806 | 183,011 |
-| workerman_raw | Workerman 原生（无中间件·天花板） | 186,337 | 184,169 |
-| **hyperf** | Swoole 系（自带 DI/可观测） | 163,332 | 157,395 |
 
 > 口径说明：
 >
-> - 上表为**本机 wrk 实测**（macOS · PHP 8.3 · 11 worker），跨次运行有 ±20~40% 热漂移，**横比看比值**。
-> - **kode · lean `/ping` 达 webman 约 87~90%（Swoole 基线更达 90%）、约裸 Swoole 80~87%**；`/bench/json` 约 webman 76~82%。
->   kode·lean `/bench/json` 低于 `/ping` 的残差经 PEER_BENCHMARK §5.10 微基准铁证**不在框架响应代码**（= 运行时差异 + 本机热噪声），框架层继续抠已无实收益。
-> - **kode · default（完整企业栈）** 稳定双跑约 73k/59k，约为 lean 的 **49%/53%**、webman 的 **43%/44%**——
+> - 上表为**本机 wrk 实测**（macOS · PHP 8.3 · 11 worker），跨次运行有 ±8~15% 热漂移，**横比看比值**。
+> - **kode · lean `/ping` 达 webman 约 87~92%、约裸 Swoole 85~90%、裸 Workerman 84~89%**；`/bench/json` 约 webman 72~75%。
+>   kode·lean `/bench/json` 低于 `/ping` 的残差经 PEER_BENCHMARK §5 微基准铁证**不在框架响应代码**（= 运行时差异 + 本机热噪声），框架层继续抠已无实收益。
+> - **kode · default（完整企业栈）** 三运行时稳定约 98~106k / 77~80k，约为 webman 的 **54~59%（/ping）/ 43~44%（/bench/json）**——
 >   其为完整企业级中间件栈，属「换取 cors/安全头/限流/韧性/追踪/审计等开箱能力」的功能对价，非缺陷。
 > - ⚠️ 此前「kode · default 反超 hyperf（114k/122k）」系**旧 harness 未做 peer 间冷却**导致排第 6 的 hyperf
->   被热降频系统性压低（旧 114k）的失真结论；补 `COOLDOWN=15` 后 hyperf 回到 151k/138k 真实水平，该结论作废。
+>   被热降频系统性压低（旧 114k）的失真结论；补冷却后 hyperf 回到 151k~163k 真实水平，该结论作废。
 > - **关于 FPM 框架**：Laravel/Symfony/Slim/CI 的默认运行时是 FPM（每请求重建容器），与常驻内存模型根本不同，  
 >   其公开 plaintext 数字（如 Laravel ~26k、Slim ~90k、Yii ~146k、Flight ~190k）数量级看似接近，但  
 >   **运行模型不可直比**——常驻框架把 boot 成本摊薄到海量请求，FPM 每张请求重建容器。故本文**不**列 FPM 数字做吞吐横比，  
@@ -125,17 +127,17 @@ kode · default 的真实吞吐是**连续的 in-framework 调优**达成的，�
 | **`tracing.attach_headers` 开关（v0.8.36）** | `observability.tracing.attach_headers`（默认 `true`，env `OBS_TRACING_ATTACH_HEADERS`）解耦「回写 W3C 响应头」与「建立内部 trace 上下文」；置 false 时 `TraceMiddleware` 仅 `ensure()` 不回写头 | 本机微基准：移除 `responseHeaders()`+3×`withHeader` 切片约 **2.1µs/op（约占 trace 头处理 47%）**，`ensure()` 固有 ~2.3µs/op 保留；`TraceMiddleware` 每请求开销约减半（微基准口径），真实生产增益受其余固定管线限制（与 §4 ~0.77µs 可观测 delta 一致） |
 | harness 对齐生产 adapter（v0.8.34 续） | benchmark harness 改走 `Kode::serve` + `HttpBridge` **真实生产路径**（不再手写 Swoole 适配器绕过 `HttpBridge::toRaw`），使压测逐字节等价于生产 | 消除 harness 额外每请求开销对 kode 的低估（详见 PEER_BENCHMARK §5.5/§5.6）；CLI 隔离测得纯框架 `handle` 上限 **241k ops/s**，证实 wrk 174k 系 Swoole/统一运行时 I/O 限制、非框架内核慢 |
 
-**调优后（最新 v0.8.39，Workerman 驱动 · Kode::serve 真实生产路径 · wrk 同条件）**：
-`kode · lean` **175k / 147k**（Swoole 基线 161k/139k ≈ 裸 Swoole **~87%/76%**、约 webman **93%/80%**）；`kode · default` **100k / 55k**（约 lean 的 **57%/37%**、webman 的 **53%/30%**）。
+**调优后（最新 v0.8.41，三运行时 · Kode::serve 真实生产路径 · wrk 同条件）**：
+`kode · lean` **约 158~166k / 130~136k**（三运行时同档，≈ webman **87~92% / 72~75%**、裸 Swoole **85~90%**）；`kode · default` **约 98~106k / 77~80k**（≈ lean 的 **59~62% / 57~59%**、webman 的 **54~59% / 43~44%**）。
 
-> 立场：默认栈约 webman **53%/30%** 折损（≈47%/70% 降幅）是「换取 cors/安全头/限流/韧性/追踪/审计等开箱能力」的**功能对价，非缺陷**；
-> 需要极限吞吐时切 `KODE_PROFILE=lean`（已验证 `/ping` 约 webman **~93%**、裸内核 **~87%**；`/bench/json` 约 **80%**——`HttpBridge::emit()` A/B 已证 Swoole 单串 `end()` 最优、响应写出非主因，差距在 lean 的「大 body/JSON 处理」待查项，见 PEER_BENCHMARK §5.7/§6）。**框架层调优已触顶**：剩余差距主因是运行时差异（Swoole vs Workerman）+ 企业级可观测性固有成本，P3/P4 均为边际收益。
+> 立场：默认栈约 webman **54~59% / 43~44%** 折损是「换取 cors/安全头/限流/韧性/追踪/审计等开箱能力」的**功能对价，非缺陷**；
+> 需要极限吞吐时切 `KODE_PROFILE=lean`（已验证三运行时 `/ping` 约 webman **87~92%**、裸内核 **85~90%**；`/bench/json` 约 **72~75%**）。**框架层调优已触顶**：剩余差距主因是 kode/http PSR-7 管线 + 企业级可观测性固有成本，P3/P4 均为边际收益。
 
 ---
 
 ## 四、响应速度差距与根因的客观解读
 
-实测（见 PEER_BENCHMARK.md）中，kode 全栈 `/ping` 真实吞吐约 **100k req/s（default）/ 175k（lean）**（最新 v0.8.39 Workerman 驱动，3 跑中位），p99 在亚毫秒级。  
+实测（见 PEER_BENCHMARK.md）中，kode 全栈 `/ping` 真实吞吐约 **98~106k req/s（default）/ 158~166k（lean）**（最新 v0.8.41 三运行时，3 跑中位），p99 在亚毫秒级。  
 早期曾报 ~17.8k / ~17.3k / 甚至 140 req/s，均为**测量伪影或每请求副作用**，而非框架内核慢。正确诊断如下：
 
 1. **早期 140 req/s 的真实根因：同步阻塞的每请求副作用（已修复）**
@@ -166,8 +168,8 @@ kode · default 的真实吞吐是**连续的 in-framework 调优**达成的，�
 ## 五、复现
 
 ```bash
-# 套件一：框架吞吐 peer 对比（当前 Workerman 驱动；kode Swoole 驱动回归见 PEER_BENCHMARK §8）
-no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run_workerman_kode.sh
+# 套件一：框架吞吐 peer 对比（三运行时统一入口；kode 默认 Native，可切 Swoole/Workerman）
+no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run.sh
 
 # 套件二：数据库全频谱对比（5 层 × MySQL/pgsql）
 cd benchmarks/orm-harness && composer install && cd ../..
