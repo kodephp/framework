@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Server;
 
+use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
 use Kode\Http\Psr7\Stream;
 use Kode\Http\Response;
 use Kode\Process\Http\Request as ProcessRequest;
@@ -57,6 +58,22 @@ final class HttpBridge
         // 这四类解析对路由匹配（只消费 method + path 两个字符串）完全无用，且多数热路径
         // handler 根本不读它们（如 /bench/json）。改由 LazyServerRequest 在首次访问时才从
         // 原生 ProcessRequest 解析并缓存，使热路径零解析成本。契约不变（仍是 ServerRequestInterface）。
+        // KODE_EAGER=1 时回退到急切旧路径（每请求解析全部字段），仅用于压测 A/B 对照，非生产路径。
+        if (($GLOBALS['KODE_EAGER'] ?? ($_SERVER['KODE_EAGER'] ?? '0')) === '1') {
+            return (new KodeServerRequest(
+                method: $request->method(),
+                uri: $uri,
+                serverParams: $serverParams,
+                headers: $request->headers(),
+                body: Stream::create($request->body()),
+                protocolVersion: $protocolVersion,
+            ))
+                ->withQueryParams($request->get())
+                ->withParsedBody($request->post())
+                ->withCookieParams($request->cookies())
+                ->withUploadedFiles(self::normalizeFiles($request->files()));
+        }
+
         return new LazyServerRequest(
             native: $request,
             method: $request->method(),
@@ -136,5 +153,21 @@ final class HttpBridge
             500 => 'Internal Server Error', 502 => 'Bad Gateway', 503 => 'Service Unavailable',
             504 => 'Gateway Timeout',
         ][$code] ?? 'OK';
+    }
+
+    /**
+     * 仅透传 PSR-7 UploadedFile 实例（原生报文下通常为空）。
+     * 急切旧路径（KODE_EAGER=1）使用；懒路径的等价逻辑见 LazyServerRequest。
+     *
+     * @param array<string, mixed> $files
+     * @return array<string, \Psr\Http\Message\UploadedFileInterface>
+     */
+    private static function normalizeFiles(array $files): array
+    {
+        if ($files === []) {
+            return [];
+        }
+
+        return array_filter($files, static fn($f) => $f instanceof \Psr\Http\Message\UploadedFileInterface);
     }
 }
