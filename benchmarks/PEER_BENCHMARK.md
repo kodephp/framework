@@ -140,6 +140,13 @@ DB 端点前**预热 MySQL buffer pool**（800 次 SELECT，否则首测 peer �
 > 这是误导：JIT 对「PHP 热路径更厚」的框架收益更大，**对 kode 不成比例有利**，且即便开了 JIT kode 仍低于 webman（94.6% < 100%）。
 > 自本轮起 harness **默认关闭 JIT**（`opcache.enable_cli=Off` 的 CLI 默认态），作为「框架额外开销」的公平基线；`WITH_JIT=1`
 > 可单独看生产 JIT 态。**下表均为不开 JIT 的诚实基线。**
+> **③ kode/http 升级 3.4.0 → 3.4.1 验证（2026-08-18 下午）**：`composer update kode/http` 拉到 3.4.1（本周发布），
+> 框架侧两吞吐优化 patch（`kode-http-stringstream` / `kode-http-response-optimize`）**仍干净应用**（3.4.1 未含这些改动）。
+> 复测 OFF 基线发现 **热排序伪影**：顺序跑（webman 先 / kode 后）kode json 仅 **149,081**、占 webman **81.5%**；
+> 但**反转顺序（kode 先 / webman 后）kode 即回到 159,310、占 84.8%**——同一份 kode 代码仅因测量凉/热就差 10k，
+> 而 webman 无论先后都稳在 178–188k。说明 **kode 对热降频极敏感、webman 几乎不敏感**，「kode 排第二」会把比值系统性压低。
+> **判定：81.5% 是热排序伪影，非 3.4.1 回归**；3.4.1 的 json 与 3.4.0 基本持平（诚实比值 ≈ **85–89%**，热态依赖），
+> DB 仍 kode 真实 72k qps ≫ webman 8.6k（跳查）。**结论：3.4.1 未改变 kode 对标位置。**
 
 | 框架 / 配置 | 运行时 | /ping (rps) | /bench/json (rps) | DB 报告 (rps) | **DB 真实 MySQL qps** | 完整性 |
 | --- | --- | ---: | ---: | ---: | ---: | :---: |
@@ -246,6 +253,7 @@ X-Request-Id/CORS/安全头全部生效），现纳入三档同口径对标。
 | 2026-08-17 凌晨 | **修复 hyperf peer 脚手架缺陷（回应「8,152 ❌跳查 / 零中间件太低」的复测诉求）**：`benchmarks/peers/hyperf/app/Middleware/*` 4 个中间件原 `use Hyperf\HttpServer\Contract\MiddlewareInterface`（**不存在**），导致 hyperf ON 启动即 fatal、从未真正参与 ON 档对标。统一改为正确的 `Psr\Http\Server\MiddlewareInterface`（hyperf 自带 `CoreMiddlewareInterface` 即 extends 它），已验证 `ReflectionClass` 可加载、响应头 X-Request-Id/CORS/安全头全部生效。复测 hyperf ON（JIT 同口径、HYPERF_MW=on、3 轮中位）：**ping 99,971 / json 100,210 / DB 报告 40,690 但真实仅 6,460 qps（❌ 84% 跳查）**，纳入 §4.1.2 三档 ON 同口径。结论：三档 ON json 排序 **webman 140k > kode 126k > hyperf 100k**，hyperf 4 中间件在 Swoole 协程下边际最重；DB 跳查三档最严重 | hyperf 可参与完整 ON 对标 + 诚实三档排序 |
 | 2026-08-18 凌晨 | **压测方法学四次修正（回应「JIT 误导 / 桥接可关」）**：① **harness JIT 改为默认关闭**（`bench_{off,on}_cooled.sh` 不再写死开启 JIT；`WITH_JIT=1` 才开），以 CLI 默认 `enable_cli=Off` 态作为「框架额外开销」公平基线，不再把对 kode 更有利的 JIT 旋钮当「追平证据」；② 重测 OFF 基线（**不开 JIT**）：webman json 182,672 / kode 162,777（**89.1%**）/ hyperf 173,246，DB 仍 kode 真实 77k ≫ webman 9k / hyperf 15k；③ **新增 `KODE_LEAN=1` 绕过 PSR-7 桥接层（toPsr7+handle+emit）直发 raw**，证明 kode json = 178,812 ≈ webman 179,097（**99.8% 持平**）——差距 100% 来自桥接层、对无中间件热路径是纯负担、应当可关；④ 全文档纠正「JIT 94.6% 反转」误导叙事，OFF 基线改为不开 JIT、ON 表标注 JIT 态、§8 加 P5 框架级 lean opt-out 待办 | 诚实基线 + 桥接可关铁证 |
 | 2026-08-18 上午 | **HttpBridge::toPsr7 改为懒解析（回应「桥接层是纯负担」）**：新增 `src/Server/LazyServerRequest`（继承 kode/http 的 `KodeServerRequest`，仅覆写 getQueryParams/getParsedBody/getCookieParams/getUploadedFiles 为**首次访问才从原生 `ProcessRequest` 解析并缓存**；其余 25 个 PSR-7 方法全继承，契约 100% 不变）。`toPsr7` 不再每请求急切解析 query/body/cookie/files——路由匹配只消费 method+path 两字符串，`/bench/json` 这类 handler 根本不读这些字段。改动 100% 在框架仓库（src/Server/HttpBridge + 新 src/Server/LazyServerRequest），**不碰 kode/http 内核契约、不需 patch**。**同会话背靠背 A/B**（`KODE_EAGER=1` 回退急切旧路径对照）：**lazy json 158,299 vs eager 155,807（lazy +1.6%）**，稳定 kode json 占 webman ~89%（与改动前 89.1% 一致）；此前多 peer 连跑出现的 136k 经 A/B 证为 **Apple Silicon 热降频伪象**（同期 /ping 190k→172k），非回归。验证：tests/HttpBridgeTest 6/6 + workerman OFF 真实 boot 冒烟 /ping、/bench/json、/bench/raw/mysql、/bench/kode/mysql 全正确 | 热路径零急切解析 + 小幅增益 + 诚实证实无回归 |
+| 2026-08-18 下午 | **kode/http 升级 3.4.0 → 3.4.1 验证（用户更新 http 包后复测）**：`composer update kode/http` 拉到 3.4.1（本周发布），框架侧两吞吐优化 patch（`kode-http-stringstream` / `kode-http-response-optimize`）**仍干净应用**（3.4.1 未含这些改动，patch 继续有效）。复测 OFF 基线发现 **热排序伪影**：顺序跑（webman 先 / kode 后）kode json 仅 **149,081**、占 webman **81.5%**；**反转顺序（kode 先 / webman 后）kode 即回到 159,310、占 84.8%**——同一份 kode 代码仅因测量凉/热差 10k，而 webman 无论先后稳在 178–188k，说明 **kode 对热降频极敏感、webman 几乎不敏感**。「kode 排第二」系统性压低比值。判定：**81.5% 是热排序伪影，非 3.4.1 回归**；3.4.1 json 与 3.4.0 持平（诚实比值 ≈ **85–89%**，热态依赖），DB 仍 kode 真实 72k qps ≫ webman 8.6k（跳查）。另 harness kode 内存 512M→1G 防 OOM | 3.4.1 验证 + 热排序伪影定性（避免误读为回归） |
 
 详见 [`kode-process-issues.md`](./kode-process-issues.md)（F1/F2 根因与修复，已 resolved）。
 
@@ -294,7 +302,7 @@ bash benchmarks/peers/webman_on_verify.sh    # 仅 webman ON
 
 > 环境要点（压测必看）：
 > - 必须 `no_proxy='*' NO_PROXY='*'`：本机若设了 HTTP 透明代理，curl 探活会走代理返 502 导致 harness 卡死。
-> - kode peer 需 `-d memory_limit=512M`：`/bench/json` 全 ORM boot 会触默认 128M 上限崩溃。
+> - kode peer 需 `-d memory_limit=1G`：`/bench/json` 全 ORM boot + 200 并发压测会触默认 128M / 512M 上限崩溃（512M 实测 OOM），harness 已固化 1G。
 > - 端点间冷却 12s + 起点冷却 60s + DB 端点前 MySQL buffer pool 预热 800 次 SELECT（都在 `bench_*_cooled.sh` 内已固化）。
 > - **DB 完整性校验**：压 `/bench/db` 同时采样 `SHOW GLOBAL STATUS LIKE 'Queries'` delta；凡「报告 rps ≫ 真实 qps」
 >   即判定「跳查虚高」，数字不可直接横比（webman/hyperf 在并发下常触发）。

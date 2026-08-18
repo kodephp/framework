@@ -94,7 +94,7 @@ bench_off "webman_OFF" \
   "cd $PEERS/webman && WEBMAN_MW=off BENCH_PORT=8091 BENCH_WORKERS=$WORKERS php $JIT_FLAGS kode_server.php start -d" \
   8091 "bench/db"
 bench_off "kode_L0_off" \
-  "cd $PEERS && KODE_PROFILE=off KODE_RUNTIME=workerman BENCH_PORT=8200 BENCH_WORKERS=$WORKERS php $JIT_FLAGS -d memory_limit=512M kode_swoole_server.php" \
+  "cd $PEERS && KODE_PROFILE=off KODE_RUNTIME=workerman BENCH_PORT=8200 BENCH_WORKERS=$WORKERS php $JIT_FLAGS -d memory_limit=1G kode_swoole_server.php" \
   8200 "bench/raw/mysql"
 bench_off "hyperf_OFF" \
   "cd $PEERS/hyperf && HYPERF_MW=off php $JIT_FLAGS bin/hyperf.php start" \
