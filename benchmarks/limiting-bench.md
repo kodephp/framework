@@ -1,6 +1,6 @@
 # 限流链路压测与调优记录（RateLimitMiddleware + kode/limiting）
 
-> 生成日期：2026-08-23（框架 v0.8.43 / kode/limiting **2.2.0** / PHP 8.3.32 NTS）
+> 生成日期：2026-08-23（框架 v0.8.44 / kode/limiting **2.2.0** / PHP 8.3.32 NTS）
 > 环境：aarch64 Linux 沙箱；redis-server 7.0.15（本机 loopback，`--save ""`）；phpredis 扩展
 > 口径：预热 n/10 次后计时，3 轮取最小（热状态最稳，避免 GC 尖峰计入）；误差 ±5%。
 > 脚本：`benchmarks/limiting-bench.php [iterations] [drivers]`

@@ -8,14 +8,14 @@
 > kode/fibers 4.10.0；Apple Silicon（热降频 ±2~3×，故只取稳健比值与 DB 完整性 1:1 信号）。
 > 本地 DB：MySQL `root/root`、MariaDB `root/root`、PostgreSQL `root` 无密码（库 `kode_bench`）。
 >
-> **状态（2026-08-23 · framework v0.8.43）**：
+> **状态（2026-08-23 · framework v0.8.44）**：
 > - **A. kode/http**：§3.5/§3.6 卫生项已由上游 **3.4.6** 合入（`json()` rawBody 快速路径、`getBody()` 非破坏性），
 >   上游 3.4.6 另自带 `LazyServerRequest`/`LazyUri`（热路径免 header 规范化，与框架侧实现同方向）；
 >   但「无 DB 热路径 2.6–2.9×」的**主因（PSR-7 对象分配/GC 基线）未消除**，仍需 P5 lean opt-out 或包侧
 >   「热路径零分配 Request」继续推进（见下文 A 的「推荐修复方向」与 `PEER_BENCHMARK.md` §7）。详见
 >   `docs/kode-http-change-spec.md`（状态块）。
 > - **B. kode/database**：缺陷 1、2 **已由上游 1.15.6** 修复（`PoolManager::init` 运行时感知自动降级
->   ProcessPool；新增 `ScopedConnection` RAII 自动归还）。框架 v0.8.43 尚未切换到 kode/database 原生池
+>   ProcessPool；新增 `ScopedConnection` RAII 自动归还）。框架 v0.8.44 尚未切换到 kode/database 原生池
 >   （框架级 `src/Database/ConnectionPool` 仍可用、诚实）；切换属后续选型决策，见下方 B 的「推荐修复方向」。
 
 ---

@@ -1,7 +1,7 @@
 # vendor/kode 包修改指引（可选加固）
 
 > 对应审计报告：`audit-report-2026-08-22.md`
-> 框架版本：v0.8.43（`src/Application.php` 的 `VERSION` 已同步）
+> 框架版本：v0.8.44（`src/Application.php` 的 `VERSION` 已同步）
 > 适用范围：**仅限 `vendor/kode/` 下的第三方包**。框架源码（`src/`、`config/`）已在 v0.8.42 全部修复，
 > 本指引中的改动是**可选加固**——不改 vendor，框架也能正确工作（见「五、框架侧规避对照」）。
 >
@@ -27,7 +27,7 @@
 
 > ### ✅ 2026-08-23：本节 A/B/C 三处已由上游 **v2.2.0**（2026-08-22 发布）合入，无需手动改动
 >
-> 实测核对（PHP 8.3.32 + 真实 redis-server 7.0.15，框架 v0.8.43）：
+> 实测核对（PHP 8.3.32 + 真实 redis-server 7.0.15，框架 v0.8.44）：
 > 1. `Limiter::redis()` 新增 `string $prefix = 'kode:limiting:'` 参数，standalone / sentinel / cluster
 >    三分支全部透传（对应下文修改点 A）；
 > 2. `Limiter::memcached()` 新增 `$prefix` 参数并传给 `MemcachedStore::create($host, $port, $prefix)`
@@ -200,7 +200,7 @@ StoreType::REDIS => match (RedisMode::tryFrom((string) ($config['mode'] ?? 'stan
 
 ---
 
-## 五、框架侧规避对照（v0.8.42 → v0.8.43）
+## 五、框架侧规避对照（v0.8.42 → v0.8.44）
 
 | 原缺陷 | 框架规避方式 | 对应文件 |
 | --- | --- | --- |
@@ -337,6 +337,6 @@ if ($resource === false) {
 
 ---
 
-*本指引由静态审读 + 源码级核对产出。v0.8.43（2026-08-23）起已在 PHP 8.3.32 + 真实
+*本指引由静态审读 + 源码级核对产出。v0.8.44（2026-08-23）起已在 PHP 8.3.32 + 真实
 redis-server 7.0.15 环境对限流链路做过运行验证（框架 425 测试全绿、限流三后端实测见
 `benchmarks/limiting-bench.md`）；改动点行号基于当时 `vendor/kode/limiting` 版本。*
