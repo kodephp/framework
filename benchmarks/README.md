@@ -78,7 +78,8 @@ bash benchmarks/peers/run.sh
 | ThinkORM | 27.9k | 25.0k |
 
 - kode 原生经 `patches/kode-database-pdoconnection.patch` 补丁（去 `SELECT 1` 探活 + 预编译语句缓存）后，
-  MySQL **21.6k → 38.1k（+77%）**、pgsql **17.5k → 34.5k（+98%）**，已追平原生 PDO；
+  MySQL **21.6k → 38.1k（+77%）**、pgsql **17.5k → 34.5k（+98%）**，已追平原生 PDO
+  （注：该补丁语义已由上游 **kode/database 1.15.7** 合入，框架 v0.8.45 起直接使用纯净包，不再打此补丁）；
 - Doctrine 因缓存预编译语句抹平协议开销，pgsql 与 mysql 几乎同速（40.8k ≈ 40.6k）；
 - MySQL 比 pgsql 快的根因在**扩展查询协议多往返 + pdo_pgsql 驱动开销**，非「pgsql 是更慢的数据库」。
 
@@ -96,6 +97,30 @@ php benchmarks/peers/kode_swoole_server.php &
 
 # 4) 跑全频谱压测
 bash benchmarks/run_spectrum.sh
+```
+
+---
+
+## 套件三：热路径微基准（限流 / 数据库语句缓存）
+
+**问题**：限流对单请求的增量成本是多少？kode/database 1.15.7 预编译语句缓存的收益有多大？
+
+**方法**：单进程微基准（预热后 3 轮取最小），见 `limiting-bench.php`（限流三后端：memory / redis /
+pdo-sqlite）与 `database-bench.php`（PdoConnection 语句缓存 vs 原生每次 prepare vs 框架 ConnectionPool）。
+
+**结果**：
+
+- 限流：见 [`limiting-bench.md`](limiting-bench.md)。memory 后端完整链 ≈ **9.5µs/请求**、
+  redis ≈ **174µs**（单次 TCP 往返主导）、pdo-sqlite ≈ **22µs**。
+- 数据库：见 [`database-bench.md`](database-bench.md)。1.15.7 语句缓存命中 SELECT **802.9 ns/op**
+  vs 原生每次 prepare **1821.5 ns/op（-56%，吞吐 ↑2.27×）**；真实 MySQL/pgsql 因 PREPARE 含网络往返，
+  收益更大。
+
+**复现**：
+
+```bash
+php benchmarks/limiting-bench.php 50000 memory,redis,pdo   # 需 redis-server :6379
+php benchmarks/database-bench.php 20000
 ```
 
 ---

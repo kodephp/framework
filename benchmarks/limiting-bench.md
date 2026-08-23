@@ -1,22 +1,25 @@
 # 限流链路压测与调优记录（RateLimitMiddleware + kode/limiting）
 
-> 生成日期：2026-08-23（框架 v0.8.44 / kode/limiting **2.2.0** / PHP 8.3.32 NTS）
+> 生成日期：2026-08-23（框架 v0.8.45 / kode/limiting **2.2.0** / PHP 8.3.32 NTS）
 > 环境：aarch64 Linux 沙箱；redis-server 7.0.15（本机 loopback，`--save ""`）；phpredis 扩展
 > 口径：预热 n/10 次后计时，3 轮取最小（热状态最稳，避免 GC 尖峰计入）；误差 ±5%。
 > 脚本：`benchmarks/limiting-bench.php [iterations] [drivers]`
 > 说明：本表测量的是「**限流对单请求的增量成本**」，非框架总吞吐；绝对值受本机 CPU/网络影响。
 
-## 一、三后端实测对比（200k→50k 迭代稳定值）
+## 一、三后端实测对比（200k→50k 迭代稳定值，v0.8.45 复测）
 
 | 场景 | ops/s | ns/op | 说明 |
 | --- | --- | ---: | --- |
 | `mw/open`（无规则早退） | 737,720 | 1,355 | 全局兜底关、路由无 `#[RateLimit]` 时近乎零成本 |
 | `mw/limited`（memory 规则） | 105,166 | 9,509 | **memory 后端完整限流链**（路由解析+签名+consume+响应头） |
-| `memory/consume` fixed-key | 170,131 | 5,878 | kode/limiting 内存桶算法核心（热键） |
+| `memory/consume` fixed-key | 167,499 | 5,970 | kode/limiting 内存桶算法核心（热键，v0.8.45 复测） |
 | `memory/consume` unique-key | 218,307 | 4,581 | 冷键（每请求新 IP）反而更快的解释见 §四 |
-| `pdo-sqlite/consume` fixed-key | 41,453 | 24,124 | PDO 持久化后端（sqlite::memory，无 fsync） |
-| `redis/consume` fixed-key | 5,652 | 176,918 | **生产常用分布式后端**：loopback 单命令往返主导 |
+| `pdo-sqlite/consume` fixed-key | 45,732 | 21,867 | PDO 持久化后端（sqlite::memory，无 fsync，v0.8.45 复测） |
+| `redis/consume` fixed-key | 5,752 | 173,840 | **生产常用分布式后端**：loopback 单命令往返主导（v0.8.45 复测） |
 | `mw/limited`（redis 规则） | 5,491 | 182,132 | 完整链 + redis 存储（增量 ≈ 中间件编排 5µs） |
+
+> v0.8.45 复测口径：50k 迭代单跑；memory / pdo / redis 与归档值（5,878 / 24,124 / 176,918 ns/op）
+> 差异在 ±8% 运行期噪声内，**kode/database 1.15.7 合入后限流链路无回归**。
 
 ## 二、热路径调优前后对比（memory 后端）
 
