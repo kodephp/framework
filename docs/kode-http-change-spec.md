@@ -5,7 +5,7 @@
 > `LazyServerRequest`（框架仓库内，提交 `54fc797`/`5211c39`）回收；
 > `KODE_LEAN=1` 已证明绕过 PSR-7 桥接 + `App::handle` + emit 后 kode json ≈ webman 99.8%。
 >
-> **状态（2026-08-23 · 框架 v0.8.45 · 实测安装 3.4.6 复核）**：
+> **状态（2026-08-23 · 框架 v0.8.46 · 实测安装 3.4.7 复核）**：
 > - 方案 B（`syncTraceContext` 无链路头即返回）**已落地 3.4.2**（`b29796c`）。✅
 > - 方案 A（`setRequest` 增加 `syncTrace` 开关）**未单独落地**——B 已足够：`setRequest` 对任意次数调用（App::handle / RouteRunner / Request::json 等）经守卫幂等早退，冗余成本趋近于零。
 > - §3.5：`Response::json()` 走 rawBody 快速路径 —— **已落地上游 3.4.6**：`json()` 即 `(new self())->body(self::encode($payload))`（`Response.php:82`），实测 `Response::json()->hasRawBody()===true`，`Emitter`/`getBodyString()` 快速路径命中。✅
@@ -15,7 +15,7 @@
 > - 框架侧 `src/Http/Resp.php` 已先落实 rawBody 等价改动；`src/Server/HttpBridge.php::emit` 已改为 rawBody 直发（`toRaw` + `send(...,true)`），`toRaw` 实测仅 ~0.3µs 且与体无关。
 > - **微基准（2026-08-23，PHP 8.3.32，v0.8.44）**：`Response::json()` + `getRawBody()` ≈ 678ns/op；同 payload 下 rawBody 直取 1189ns vs Stream 物化 1382ns，**§3.5 快路径省 ~14%** 的响应体访问成本（`getBodyString()` 命中 rawBody 返回，不再物化 Stream）。
 > - **关键定性（微基准 + 干净压测双重证实，不因 3.4.6 改变）**：`/bench/json` 落后 webman 的差距**不在 kode/http 的 §3.5/§3.6 卫生项，也不在框架 PHP 逻辑**——派发链路（router+中间件+RouteRunner）经微基准证实与响应体大小**无关**（2KB 预构建 6.47µs ≈ 小响应 6.49µs），体增大的额外成本 100% 是控制器自身 `json_encode`（对称、webman 同构）。差距只在真实 11-worker 并发下、PSR-7 包装的**每请求对象分配/GC 压力**中显现（`/ping` 体小故持平），**唯一能关闭它的杠杆是 P5 lean opt-out**（`KODE_LEAN` 已证 99.8% 持平）。kode/http 的 §3.5/§3.6 属卫生项，不应为追平而结构性改 PSR-7 管线。
-> - **§7.1 / §7.2（待上游 PR）**：`SwooleServerAdapter` emit 取 `getBodyString()` 内部字符串体直发（§7.1）+ `StringStream` 小体响应纯内存持有（§7.2）。两处仍由框架侧 `composer.json extra.patches` 固化，已产出 upstream-ready patch（`patches/upstream/kode-http-swoole-emit-body.patch`、`patches/upstream/kode-http-stringstream.patch`），待反馈 kode/http 包仓库合入。
+> - **§7.1 / §7.2（✅ 已落地上游 3.4.7）**：`SwooleServerAdapter` emit 取 `getBodyString()` 内部字符串体直发（§7.1）+ `StringStream` 小体响应纯内存持有（§7.2）——**已由 kode/http 3.4.7 合入**（commit `40c09ab`）。框架 v0.8.46 已移除全部 http 补丁与 `composer.json extra.patches`、删除 `patches/` 目录（含 upstream 归档）与 `cweagans/composer-patches` 依赖，vendor 纯净；`benchmarks/http-bench.md` 实测全响应链仅比裸 `json_encode` 慢 +10.4%、/ping 快速路径 426 ns/op。
 
 ---
 
@@ -233,7 +233,7 @@ public function getBody(): StreamInterface
 
 **文件**：`src/Server/SwooleServerAdapter.php`
 **位置**：`$server->start()` 回调内 `$swooleResponse->end(...)` 处（框架补丁 hunk 基于 `@@ -34,7 +34,11 @@`）
-**upstream patch**：`patches/upstream/kode-http-swoole-emit-body.patch`
+**upstream patch**：`patches/upstream/kode-http-swoole-emit-body.patch`（**已由 kode/http 3.4.7 合入，patch 文件随 v0.8.46 删除**）
 
 **背景**：kode 自研响应经 `json()` 已持有内部字符串体（rawBody，3.4.6 起），但 `end()` 仍走
 PSR-7 `getBody()->getContents()` 接口分发，每请求多一次 Stream 物化。直取 `getBodyString()`
@@ -260,7 +260,7 @@ $swooleResponse->end($body);
 
 **文件**：`src/Psr7/Stream.php`（新增类 `src/Psr7/StringStream.php`）
 **位置**：`Stream::create(string $content = '', string $mode = 'r+')` 开头
-**upstream patch**：`patches/upstream/kode-http-stringstream.patch`
+**upstream patch**：`patches/upstream/kode-http-stringstream.patch`（**已由 kode/http 3.4.7 合入，patch 文件随 v0.8.46 删除**）
 
 **背景**：`Stream::create()` 默认 `fopen('php://temp')`，每响应一次临时流分配 + 两次整段拷贝
 （`fwrite` 写入、`stream_get_contents` 读回）；对 ~1KB 响应体该开销被放大 ~100×，是 kode 响应管线

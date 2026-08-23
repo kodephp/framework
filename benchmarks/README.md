@@ -101,12 +101,14 @@ bash benchmarks/run_spectrum.sh
 
 ---
 
-## 套件三：热路径微基准（限流 / 数据库语句缓存）
+## 套件三：热路径微基准（限流 / 数据库 / HTTP 响应链）
 
 **问题**：限流对单请求的增量成本是多少？kode/database 1.15.7 预编译语句缓存的收益有多大？
+kode/http 3.4.7 合入 emit 直发 + StringStream 后，响应体处理离「裸 json_encode」还有多远？
 
 **方法**：单进程微基准（预热后 3 轮取最小），见 `limiting-bench.php`（限流三后端：memory / redis /
-pdo-sqlite）与 `database-bench.php`（PdoConnection 语句缓存 vs 原生每次 prepare vs 框架 ConnectionPool）。
+pdo-sqlite）、`database-bench.php`（PdoConnection 语句缓存 vs 原生每次 prepare vs 框架 ConnectionPool）
+与 `http-bench.php`（/bench/json 与 /ping 响应链快速 vs PSR-7 通用路径 vs 原生基线）。
 
 **结果**：
 
@@ -115,12 +117,16 @@ pdo-sqlite）与 `database-bench.php`（PdoConnection 语句缓存 vs 原生每�
 - 数据库：见 [`database-bench.md`](database-bench.md)。1.15.7 语句缓存命中 SELECT **802.9 ns/op**
   vs 原生每次 prepare **1821.5 ns/op（-56%，吞吐 ↑2.27×）**；真实 MySQL/pgsql 因 PREPARE 含网络往返，
   收益更大。
+- HTTP：见 [`http-bench.md`](http-bench.md)。3.4.7 全响应链仅比裸 `json_encode` 慢 **+10.4%**
+  （5534 vs 5014 ns/op）；/ping 快速路径 **426 ns/op**（比 PSR-7 通用路径快 27%）——响应体不再是
+  与 webman/hyperf 的差距主因，剩余杠杆在运行时桥接与功能对价（见 PEER_BENCHMARK）。
 
 **复现**：
 
 ```bash
 php benchmarks/limiting-bench.php 50000 memory,redis,pdo   # 需 redis-server :6379
 php benchmarks/database-bench.php 20000
+php benchmarks/http-bench.php 100000
 ```
 
 ---

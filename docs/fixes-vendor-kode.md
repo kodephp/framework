@@ -1,13 +1,16 @@
 # vendor/kode 包修改指引（可选加固）
 
-> 对应审计报告：`audit-report-2026-08-22.md`
-> 框架版本：v0.8.45（`src/Application.php` 的 `VERSION` 已同步）
+> 对应审计：2026-08-22 全框架审计（2 严重 / 8 高 / 2 中 / 5 观察项，已于 v0.8.42 全部修复；
+> 审计报告文件随 v0.8.46 清理移除，结论与修复记录见本文档及对应 commit）
+> 框架版本：v0.8.46（`src/Application.php` 的 `VERSION` 已同步）
 > 适用范围：**仅限 `vendor/kode/` 下的第三方包**。框架源码（`src/`、`config/`）已在 v0.8.42 全部修复，
 > 本指引中的改动是**可选加固**——不改 vendor，框架也能正确工作（见「五、框架侧规避对照」）。
 >
 > **2026-08-23 更新**：`kode/limiting` **2.2.0** 已把 A/B/C 三处改动全部合入上游；`kode/database`
 > **1.15.7**（2026-08-23 发布）已把「八」的 `PdoConnection` 语句缓存/去探活/断连重试合入上游；
-> **两个包均无需再手动修改 vendor**，`composer update` 即可获得修复（见对应节末尾的验证记录）。
+> `kode/http` **3.4.7**（2026-08-23 发布）已把「七」的 `SwooleServerAdapter` emit 直发与
+> `StringStream` 纯内存流两处合入上游——**全部包均已无需手动修改 vendor、无需任何补丁**，
+> `composer update` 即可获得修复（见对应节末尾的验证记录）。
 
 ---
 
@@ -16,7 +19,7 @@
 | 包 | 版本 | 是否建议修改 | 原因 |
 | --- | --- | --- | --- |
 | `kode/limiting` | 2.1.0 → **2.2.0（已修复）** | **无需修改** | 2.2.0 已把静态工厂 prefix 硬编码 / 不收 prefix / storeFromArray 缺 HA 分支三处全部合入上游 |
-| `kode/http` | **3.4.6（部分已修复）** | **2 处待反馈上游** | §3.5（`json()` rawBody 快路径）/§3.6（`getBody()` 非破坏性）已合入 3.4.6/3.4.3；仍有 `SwooleServerAdapter` emit 直发与 `StringStream` 纯内存流共 2 处由框架补丁承载，见「七」 |
+| `kode/http` | **3.4.7（全部已修复）** | **无需修改** | §3.5（`json()` rawBody 快路径）/§3.6（`getBody()` 非破坏性）已合入 3.4.6/3.4.3；`SwooleServerAdapter` emit 直发与 `StringStream` 纯内存流由 **3.4.7** 合入（见「七」），框架侧 http 补丁已全部移除 |
 | `kode/database` | **1.15.7（全部已修复）** | **无需修改** | B 缺陷（非 Swoole 下池不可用）已由 1.15.6 修复（`PoolManager` 降级 + `ScopedConnection`）；`PdoConnection` 语句缓存/去探活/断连重试由 **1.15.7** 合入（见「八」），框架侧 database 补丁已移除 |
 | `kode/jwt` | — | 无需修改 | 审计观察项 3 经核对为误报（`issue()` 返回结构与 guard 用法匹配） |
 | `kode/fibers` | — | 无需修改 | 非协程上下文同步执行是刻意语义；框架已通过 `Scheduler::inCoroutine()` 规避 |
@@ -233,12 +236,18 @@ StoreType::REDIS => match (RedisMode::tryFrom((string) ($config['mode'] ?? 'stan
 
 ## 七、kode/http 待反馈上游（2 处，由框架补丁承载）
 
-> **现状（2026-08-23）**：`kode/http` 已升级 3.4.6；§3.5（`Response::json()` rawBody 快路径）与
-> §3.6（`getBody()` 非破坏性）已由上游合入（见 `docs/kode-http-change-spec.md` 状态块）。下述 2 处仍由
-> 框架侧 `composer.json extra.patches` 固化，**建议按下方 diff 反馈 kode/http 包仓库**，合入后框架侧
-> 对应补丁即可删除。
+> ### ✅ 2026-08-23：本节已由上游 **v3.4.7**（2026-08-23 发布：`Swoole emit 直取字符串体 +
+> 小体响应纯内存 StringStream`）两处全部合入，无需手动改动
 >
-> 修改方式（在 kode/http 仓库根目录操作，改完跑 `composer test` 与框架全量测试复核）：
+> 实测核对（PHP 8.3.32，框架 v0.8.46）：
+> 1. `SwooleServerAdapter::emit` 已直取 `getBodyString()`（kode 响应）并 `end()`（残留
+>    PSR-7 `getBody()->getContents()` 分发仅用于第三方响应 fallback）；
+> 2. `src/Psr7/StringStream.php` 已入上游（纯内存流），`Stream::create()` 对 ≤1MB（含空串）
+>    返回 `StringStream`，超限回落 `php://temp`。
+> 3. 框架 v0.8.46 已**移除全部 http 补丁与 `composer.json extra.patches`**（`patches/` 目录连同
+>    upstream 归档整体删除，`cweagans/composer-patches` 依赖一并移除），vendor 为纯净 3.4.7。
+>
+> 以下原文保留作为「上游 3.4.7 相对 3.4.6 改动对照」存档。
 
 ### 7.1 `SwooleServerAdapter`：emit 响应取内部字符串体直发
 
@@ -264,8 +273,7 @@ $swooleResponse->end($body);
 ```
 
 - 验证：Swoole 环境回归 `kode/process` worker 响应字节与旧实现一致；框架 `tests/HttpBridgeTest.php`
-  全绿。框架侧补丁：`patches/kode-http-response-optimize.patch`（合入上游后删除该补丁与
-  `composer.json extra.patches` 对应条目）。
+  全绿（已由上游 3.4.7 合入，`composer.json extra.patches` 与 `patches/` 目录已随 v0.8.46 删除）。
 
 ### 7.2 `StringStream` + `Stream::create`：小体响应纯内存持有
 
@@ -296,13 +304,11 @@ if ($resource === false) {
     throw new RuntimeException('无法创建临时流');
 ```
 
-- 新增 `src/Psr7/StringStream.php` 完整源码：见框架仓库 `patches/kode-http-stringstream.patch`
-  （该补丁含新增文件的完整内容，可直接 `git apply`；PSR-4 命名空间 `Kode\Http\Psr7` 新文件
-  无需 `composer dump-autoload`）。
+- 新增 `src/Psr7/StringStream.php` 完整源码：已由上游 3.4.7 合入
+  （`vendor/kode/http/src/Psr7/StringStream.php`；PSR-4 命名空间 `Kode\Http\Psr7`）。
 - 验证要点：`Stream::create()` 返回的流必须通过 PSR-7 契约——`seek()`/`rewind()` 抛
   `RuntimeException` 是**刻意语义**（`isSeekable() === false`），其余 `read`/`getContents`/
-  `getSize`/`getMetadata` 行为要与 php://temp 一致；跑 kode/http 自带的 PSR-7 契约测试 +
-  响应管线冒烟。框架侧补丁：`patches/kode-http-stringstream.patch`。
+  `getSize`/`getMetadata` 行为要与 php://temp 一致（上游 3.4.7 自带契约测试 + 框架全量复核通过）。
 
 ---
 
@@ -347,7 +353,8 @@ if ($resource === false) {
 
 ---
 
-*本指引由静态审读 + 源码级核对产出。v0.8.45（2026-08-23）起已在 PHP 8.3.32 + 真实
-redis-server 7.0.15 环境对限流链路与数据库链路做过运行验证（框架 425 测试全绿、限流三后端与
-数据库语句缓存实测见 `benchmarks/limiting-bench.md` 与 `benchmarks/database-bench.md`）；改动点行号基于当时
-`vendor/kode/limiting` / `vendor/kode/database` 版本。*
+*本指引由静态审读 + 源码级核对产出。v0.8.46（2026-08-23）起已在 PHP 8.3.32 + 真实
+redis-server 7.0.15 环境对限流链路、数据库链路与 HTTP 响应链路做过运行验证（框架 425 测试全绿、
+限流三后端、数据库语句缓存与 HTTP 热路径实测见 `benchmarks/limiting-bench.md`、
+`benchmarks/database-bench.md` 与 `benchmarks/http-bench.md`）；改动点行号基于当时
+`vendor/kode/limiting` / `vendor/kode/database` / `vendor/kode/http` 版本。*
