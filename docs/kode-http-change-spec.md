@@ -5,13 +5,16 @@
 > `LazyServerRequest`（框架仓库内，提交 `54fc797`/`5211c39`）回收；
 > `KODE_LEAN=1` 已证明绕过 PSR-7 桥接 + `App::handle` + emit 后 kode json ≈ webman 99.8%。
 >
-> **状态（2026-08-18 晚 · 已全部落地）**：
+> **状态（2026-08-23 · 框架 v0.8.43 · 实测安装 3.4.6 复核）**：
 > - 方案 B（`syncTraceContext` 无链路头即返回）**已落地 3.4.2**（`b29796c`）。✅
-> - 方案 A（`setRequest` 增加 `syncTrace` 开关）**未落地**——B 已足够：`setRequest` 对任意次数调用（App::handle / RouteRunner / Request::json 等）经守卫幂等早退，冗余成本趋近于零。
-> - §3.5：`Response::json()` 走 rawBody 快速路径**已满足（自 v3.0.0 起 `json()` 即经 `body()` 设 `rawBody`，当前代码已命中 `Emitter` 快速路径，无需改动）**。✅
-> - §3.6：`ResponseTrait`/`RequestTrait::getBody()` 物化 Stream 时**销毁 `rawBody`** 的缺陷**已落地 3.4.3**（`617cddb`）——`getBody()` 改为非破坏性，保留 `rawBody` 作字符串真相源，`kode/process::toHttp11` 每请求 `getBody()` 不再封死快速路径。✅
+> - 方案 A（`setRequest` 增加 `syncTrace` 开关）**未单独落地**——B 已足够：`setRequest` 对任意次数调用（App::handle / RouteRunner / Request::json 等）经守卫幂等早退，冗余成本趋近于零。
+> - §3.5：`Response::json()` 走 rawBody 快速路径 —— **已落地上游 3.4.6**：`json()` 即 `(new self())->body(self::encode($payload))`（`Response.php:82`），实测 `Response::json()->hasRawBody()===true`，`Emitter`/`getBodyString()` 快速路径命中。✅
+> - §3.6：`ResponseTrait`/`RequestTrait::getBody()` 非破坏性（保留 rawBody 作字符串真相源）——**已落地上游 3.4.3**（`617cddb`）并保持至 3.4.6。✅
+> - **3.4.6 新增**：上游自带 `Psr7/Message/LazyServerRequest` + `Psr7/LazyUri`（`ServerRequestFactory::createFromServer` 默认返回懒请求，热路径免 header 规范化）——与框架侧 `src/Server/LazyServerRequest` 是**两套独立实现**，框架桥接仍走自己那份（`HttpBridge::toPsr7`），无冲突；上游此次自带懒请求支持确认了 A 缺陷的修复方向。
+> - **框架侧补丁同步（重要，本轮修复）**：此前 `patches/kode-http-response-optimize.patch` 的 `Response.php` 段（把 `json()` 改回 `Stream::create` 直构）与上游 3.4.6 修复**冲突**，会把上游 rawBody 快路径又改回去（实测 `hasRawBody()===false`）——该段已从补丁中**移除**；补丁现仅保留 `SwooleServerAdapter` 段（emit 取 `getBodyString()` 内部字符串体）。`patches/kode-http-stringstream.patch`（小体响应 StringStream 内存持有）与 3.4.6 兼容，保留。
 > - 框架侧 `src/Http/Resp.php` 已先落实 rawBody 等价改动；`src/Server/HttpBridge.php::emit` 已改为 rawBody 直发（`toRaw` + `send(...,true)`），`toRaw` 实测仅 ~0.3µs 且与体无关。
-> - **关键定性（微基准 + 干净压测双重证实）**：`/bench/json` 落后 webman 的差距**不在 kode/http，也不在框架 PHP 逻辑**——派发链路（router+中间件+RouteRunner）经微基准证实与响应体大小**无关**（2KB 预构建 6.47µs ≈ 小响应 6.49µs），体增大的额外成本 100% 是控制器自身 `json_encode`（对称、webman 同构）。差距只在真实 11-worker 并发下、PSR-7 包装的**每请求对象分配/GC 压力**中显现（`/ping` 体小故持平），**唯一能关闭它的杠杆是 P5 lean opt-out**（`KODE_LEAN` 已证 99.8% 持平）。kode/http 只需做 §3.5/§3.6 卫生项，不应为追平而结构性改 PSR-7 管线。
+> - **微基准（2026-08-23，PHP 8.3.32，v0.8.43）**：`Response::json()` + `getRawBody()` ≈ 678ns/op；同 payload 下 rawBody 直取 1189ns vs Stream 物化 1382ns，**§3.5 快路径省 ~14%** 的响应体访问成本（`getBodyString()` 命中 rawBody 返回，不再物化 Stream）。
+> - **关键定性（微基准 + 干净压测双重证实，不因 3.4.6 改变）**：`/bench/json` 落后 webman 的差距**不在 kode/http 的 §3.5/§3.6 卫生项，也不在框架 PHP 逻辑**——派发链路（router+中间件+RouteRunner）经微基准证实与响应体大小**无关**（2KB 预构建 6.47µs ≈ 小响应 6.49µs），体增大的额外成本 100% 是控制器自身 `json_encode`（对称、webman 同构）。差距只在真实 11-worker 并发下、PSR-7 包装的**每请求对象分配/GC 压力**中显现（`/ping` 体小故持平），**唯一能关闭它的杠杆是 P5 lean opt-out**（`KODE_LEAN` 已证 99.8% 持平）。kode/http 的 §3.5/§3.6 属卫生项，不应为追平而结构性改 PSR-7 管线。
 
 ---
 
@@ -106,7 +109,7 @@ private static function syncTraceContext(ServerRequestInterface $request): void
 
 ## 3.5 真实问题（续）：`Response::json()` 未走 rawBody 快速路径
 
-> **落地状态（2026-08-18 晚）**：本节诊断的「`json()` 不走 rawBody 快速路径」在**当前代码已不成立**——`Response::json()` 自 v3.0.0 起即经 `body()`（设置 `rawBody`）构造，`success`/`fail`/`error`/`paginate` 同理，全部命中 `Emitter` 快速路径。故本节**无需改动**，仅留作历史诊断记录；下方证据与影响量级描述的是改动前的旧代码。
+> **落地状态（2026-08-18 晚 · 2026-08-18 续 · 经源码复核纠正）**：本节诊断的「`json()` 不走 rawBody 快速路径」在**安装版本 3.4.2 中仍然成立**——`Response::json()` 仍经 `Stream::create(self::encode($payload))` 构造（`Response.php:82`），`rawBody` 为 `null`，`Emitter` 快速路径（`Emitter.php:40` 的 `hasRawBody()` 分支）与 `getBodyString()` 对 JSON 响应**不生效**，每请求仍物化一次 StringStream。下方「最小修复」即**真实待合入改动**（已由 `patches/upstream/kode-http-response-json-rawbody.patch` 交付上游 PR），非历史记录。
 
 ### 证据
 
@@ -187,7 +190,7 @@ public function getBody(): StreamInterface
 - 任何直接用 PSR-7 `getBody()` 读 kode/http 响应的第三方代码（如 Swoole/Workerman 集成、代理中间件）。
 属**传输层卫生项**，减少每请求 Stream 分配与字符串拷贝，降低 GC 压力；压测数字持平（已在干净 harness 验证 emit 修复前后 ~82% 不变），但不改变「默认路径 vs webman」的架构基线差距——后者只能由 P5 lean opt-out 关闭。
 
-> **落地状态（2026-08-18 晚）**：本缺陷已于 **3.4.3**（`617cddb`）合入——`ResponseTrait` 与 `RequestTrait` 的 `getBody()` 改为**非破坏性**：物化 `Stream` 作 `$body` 缓存但**保留 `rawBody`** 作字符串真相源，使 `hasRawBody()` / `Emitter` 快速路径 / `getRawBody()` 在任意次 `getBody()` 后仍可用，`kode/process::toHttp11` 每请求 `getBody()` 不再封死快速路径。新增回归测试锁定该不变量（`tests/ResponseBuilderTest.php`）。
+> **落地状态（2026-08-18 晚 · 2026-08-18 续 · 经源码复核纠正）**：本缺陷**在安装版本 3.4.2 中未合入**——`ResponseTrait.php:101` 与 `RequestTrait.php:112` 仍 `$this->rawBody = null`（销毁缓存）。**同 `patches/upstream/kode-http-response-json-rawbody.patch` 已一并修正**：`getBody()` 改为非破坏性（物化 `Stream` 作 `$body` 缓存但**保留 `rawBody`**），使 `Response::getBodyString()` / `hasRawBody()` / `Emitter` 快速路径在任意次 `getBody()` 后仍可用，`kode/process::toHttp11` 每请求 `getBody()` 不再封死快速路径。建议上游合入时补回归测试锁定该不变量（如 `tests/ResponseBuilderTest.php`）。
 
 ---
 
@@ -207,11 +210,11 @@ public function getBody(): StreamInterface
 
 ## 5. 交付与合入
 
-- **改动文件（kode/http 仓库，v3.4.1–v3.4.3 累计）**：
+- **改动文件（kode/http 仓库，v3.4.1–v3.4.2 已发布 + §3.5/§3.6 待上游 PR）**：
   - **v3.4.1**（懒原始体 + `Emitter` 快速路径）：`src/Psr7/Trait/ResponseTrait.php`、`src/Psr7/Trait/RequestTrait.php`、`src/Psr7/Message/{Request,Response,ServerRequest}.php`、`src/Response.php`、`src/Emitter.php`、`src/Psr7/Factory/ServerRequestFactory.php`、`src/App.php`、`src/Kode.php`、`src/Server/{ServerRunner,SwooleServerAdapter,WorkermanServerAdapter}.php`
   - **v3.4.2**（syncTraceContext 守卫）：`src/Request.php`
-  - **v3.4.3**（getBody() 非破坏性）：`src/Psr7/Trait/ResponseTrait.php`、`src/Psr7/Trait/RequestTrait.php`、`tests/ResponseBuilderTest.php`
+  - **§3.5 / §3.6（待上游 PR，未在任何已发布版本）**：`src/Response.php`（`json()` 经 `body()` 设 `rawBody`）、`src/Psr7/Trait/ResponseTrait.php` 与 `src/Psr7/Trait/RequestTrait.php`（`getBody()` 非破坏性）。**已在 framework 仓库产出 apply-ready patch：`patches/upstream/kode-http-response-json-rawbody.patch`**，交 kode/http 维护方 `git apply` 后开 PR；建议配套 `tests/ResponseBuilderTest.php` 回归。
 - **不动**：PSR-7 契约、`ServerRequest` / `Uri` / `Stream` / `StringStream` / `Response` / `Router` / `MiddlewarePipeline`。
-- **版本建议**：上述修复已在 **v3.4.3** 全部合入（3.4.1 懒原始体 + 快速路径、3.4.2 链路守卫、3.4.3 非破坏性 getBody）；框架侧 `composer update kode/http` 升至 `^3.4.3` 即可吃到全部卫生项。
+- **版本建议**：§3.5/§3.6 尚未合入任何已发布版本（实测安装 3.4.2 仍缺）。kode/http 维护方合入上述 patch 并发布（建议 **v3.4.4** 或 **v3.5.0**）后，框架侧 `composer update kode/http` 即可吃到；本会话已先在 framework 的 `vendor/kode/http` 本地落地验证（php -l 通过 + 冒烟：`Response::json()->hasRawBody()===true` 且输出字节级一致）。
 - **框架侧零改动**：本说明不入 framework 仓库；vendor 改动不入仓、composer update 会覆盖，故以「逐包变更说明」交还 kode/http 维护方手工合入。
 - **验证门（合入前）**：`composer test` 全绿 + PHPStan level 8 + phpcs PSR12；重点回归 `Request` 上下文与链路追踪单测（带/不带链路头两种流量）。
