@@ -18,7 +18,11 @@ use Workerman\Connection\TcpConnection;
 use Workerman\Protocols\Http\Request;
 use Workerman\Protocols\Http\Response;
 
-Worker::$eventLoopClass = Workerman\Events\Swoole::class;
+// 仅在 Swoole 扩展可用时使用 Swoole 事件循环；无 ext-swoole 的环境（如 CI/沙箱）
+// 自动回退 Workerman 默认循环，保证 peer 可在任意环境同条件运行。
+if (\extension_loaded('swoole')) {
+    Worker::$eventLoopClass = Workerman\Events\Swoole::class;
+}
 
 $port = (int) ($_SERVER['BENCH_PORT'] ?? 8102);
 $workers = (int) ($_SERVER['BENCH_WORKERS'] ?? (int) (shell_exec('sysctl -n hw.ncpu') ?: 4));

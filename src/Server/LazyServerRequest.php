@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Server;
 
+use Kode\Http\Psr7\Message\LazyHeaderAware;
 use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
-use Kode\Http\Psr7\Stream;
 use Kode\Process\Http\Request as ProcessRequest;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\StreamInterface;
@@ -13,23 +13,26 @@ use Psr\Http\Message\UriInterface;
 
 /**
  * 懒解析服务端请求：在 kode/http 的 {@see KodeServerRequest} 之上，
- * 把「查询参数 / 解析后请求体 / Cookie / 上传文件」四类**昂贵解析**从
- * 每请求急切构造改为**首次访问才解析并缓存**。
+ * 把「查询参数 / 解析后请求体 / Cookie / 上传文件 / 请求头 / 原始请求体 / 服务器参数」
+ * 七类昂贵解析从每请求急切构造改为**首次访问才解析并缓存**。
  *
- * 背景：原 {@see HttpBridge::toPsr7} 每请求都急切调用
- * `ProcessRequest::get()/post()/cookies()/files()` 并 populate 进 PSR-7，
- * 但大多数热路径（如 /bench/json）的 handler 根本不读这些字段——
+ * 背景：{@see HttpBridge::toPsr7} 旧实现每请求急切调用
+ * `ProcessRequest::get()/post()/cookies()/files()/headers()/body()`
+ * 并 populate 进 PSR-7，但大多数热路径（如 /bench/json）的 handler 根本不读这些字段——
  * 路由匹配只消费 method + path 两个字符串（见 kode/http Router::match）。
- * 急切解析是纯浪费。本类把这些解析延迟到真正被读取时，使热路径零解析成本。
+ * 急切解析是纯浪费。本类把这七类解析全部延迟到真正被读取时，使热路径只付出
+ * 「空构造 + 幂等加载」的成本。
  *
  * 设计要点：
- * - 继承 KodeServerRequest，仅覆写 4 个重 getter + 其对应 with* setter，
- *   其余 25 个 PSR-7 方法全部继承，契约 100% 不变（仍是 ServerRequestInterface）。
+ * - 继承 KodeServerRequest，仅覆写重 getter + 其对应 with* setter，
+ *   其余 PSR-7 方法全部继承，契约 100% 不变（仍是 ServerRequestInterface）。
  * - with* setter 同步更新基类与本地缓存，保证 RouteRunner::withAttribute 等
  *   继承行为不变、且显式设置后 get* 返回被设置值（不回退到原生解析）。
+ * - 构造参数向后兼容：默认空容器/空流 = 「待懒解析」；传入非空值 = 「显式采用」
+ *   （旧调用路径行为不变）。
  * - 这是框架仓库内的纯优化，不触碰 kode/http 内核契约，也不需要 composer patch。
  */
-final class LazyServerRequest extends KodeServerRequest implements ServerRequestInterface
+final class LazyServerRequest extends KodeServerRequest implements ServerRequestInterface, LazyHeaderAware
 {
     /** @var ProcessRequest 原生统一请求，懒解析的数据源 */
     private ProcessRequest $native;
@@ -43,15 +46,66 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
     /** @var mixed 懒解析缓存：解析后的请求体 */
     private mixed $lazyBody = null;
 
+    /** @var bool 解析后请求体是否已解析（null 值也需标记） */
+    private bool $bodyParsed = false;
+
     /** @var array|null 懒解析缓存：上传文件 */
     private ?array $lazyFiles = null;
+
+    /** @var array|null 懒解析缓存：服务器参数 */
+    private ?array $lazyServerParams = null;
+
+    /** @var bool 请求头是否已从原生解析进基类 */
+    private bool $headersResolved = false;
+
+    /**
+     * 实现 {@see LazyHeaderAware}：在不触发任何解析的前提下暴露 header 解析状态，
+     * 供 kode/http 链路追踪嗅探（hasTraceHeaders）等热路径守卫做早退判断，
+     * 避免强制 server params 构建 / header 规范化。
+     */
+    public function isHeadersResolved(): bool
+    {
+        return $this->headersResolved;
+    }
+
+    /**
+     * 定向读取单个 header，不触发全量解析：
+     * - 未解析：委托原生请求的 rawHeader()——RAW 源对原始报文做一次 stripos
+     *   定向扫描，其它源退化为哈希查找，均不会触发本类的 resolveHeaders()
+     *   （header 规范化）或 getServerParams()（引导构建）；
+     * - 已解析：退化为普通 getHeaderLine。
+     */
+    public function peekHeader(string $name): ?string
+    {
+        if (!$this->headersResolved) {
+            $value = $this->native->rawHeader($name);
+
+            return $value !== '' ? $value : null;
+        }
+
+        $line = parent::getHeaderLine($name);
+
+        return $line !== '' ? $line : null;
+    }
+
+    /** @var bool 原始请求体是否已从原生读取 */
+    private bool $rawBodyResolved = false;
+
+    /** @var bool 构造时是否显式传入服务器参数（跳过懒解析） */
+    private bool $hasExplicitServerParams;
+
+    /** @var bool 构造时是否显式传入请求头（跳过懒解析） */
+    private bool $hasExplicitHeaders;
+
+    /** @var bool 构造时是否显式传入请求体（跳过懒解析） */
+    private bool $hasExplicitBody;
 
     /**
      * @param string $method HTTP 方法
      * @param UriInterface|string $uri 请求 URI（path?query 形态）
-     * @param array $serverParams 服务器参数
-     * @param array $headers 请求头
-     * @param StreamInterface|null $body 请求体流
+     * @param array $serverParams 服务器参数；传 [] 表示首次访问时懒解析
+     * @param array $headers 请求头；传 [] 表示首次访问时懒解析
+     * @param StreamInterface|null $body 请求体流；传 null 表示首次访问时懒解析
      * @param string $protocolVersion HTTP 协议版本
      */
     public function __construct(
@@ -63,40 +117,139 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         ?StreamInterface $body = null,
         string $protocolVersion = '1.1'
     ) {
+        $this->hasExplicitServerParams = $serverParams !== [];
+        $this->hasExplicitHeaders      = $headers !== [];
+        $this->hasExplicitBody         = $body !== null;
+
         parent::__construct($method, $uri, $serverParams, $headers, $body, $protocolVersion);
         $this->native = $native;
     }
 
     /**
-     * 首次访问才从原生请求解析查询参数并缓存。
+     * 服务器参数：首次访问才从原生请求构建（显式传入则原样保留）。
      */
+    public function getServerParams(): array
+    {
+        if ($this->lazyServerParams !== null) {
+            return $this->lazyServerParams;
+        }
+        if ($this->hasExplicitServerParams) {
+            return $this->lazyServerParams = parent::getServerParams();
+        }
+
+        $native = $this->native;
+
+        return $this->lazyServerParams = [
+            'REQUEST_METHOD'     => $native->method(),
+            'REQUEST_URI'        => $native->uri(),
+            'SERVER_PROTOCOL'    => $native->protocol(),
+            'SERVER_NAME'        => $native->host() ?: 'localhost',
+            'HTTP_HOST'          => $native->host() ?: 'localhost',
+            'REMOTE_ADDR'        => $native->ip(),
+            'REQUEST_TIME'       => time(),
+            'REQUEST_TIME_FLOAT' => microtime(true),
+            'HTTPS'              => $native->isSecure() ? 'on' : 'off',
+        ];
+    }
+
     public function getQueryParams(): array
     {
         return $this->lazyQuery ??= $this->native->get();
     }
 
-    /**
-     * 首次访问才从原生请求解析 Cookie 参数并缓存。
-     */
     public function getCookieParams(): array
     {
         return $this->lazyCookie ??= $this->native->cookies();
     }
 
-    /**
-     * 首次访问才从原生请求解析请求体并缓存。
-     */
     public function getParsedBody(): mixed
     {
-        return $this->lazyBody ??= $this->native->post();
+        if (!$this->bodyParsed) {
+            $this->bodyParsed = true;
+            $this->lazyBody = $this->native->post();
+        }
+
+        return $this->lazyBody;
+    }
+
+    public function getUploadedFiles(): array
+    {
+        return $this->lazyFiles ??= $this->normalizeFiles($this->native->files());
     }
 
     /**
-     * 首次访问才从原生请求取上传文件并归一化、缓存。
+     * 请求头：首次访问才从原生解析进基类（protected 字段可直接写）。
      */
-    public function getUploadedFiles(): array
+    public function getHeaders(): array
     {
-        return $this->lazyFiles ??= self::normalizeFiles($this->native->files());
+        $this->resolveHeaders();
+
+        return parent::getHeaders();
+    }
+
+    public function hasHeader(string $name): bool
+    {
+        $this->resolveHeaders();
+
+        return parent::hasHeader($name);
+    }
+
+    public function getHeader(string $name): array
+    {
+        $this->resolveHeaders();
+
+        return parent::getHeader($name);
+    }
+
+    public function getHeaderLine(string $name): string
+    {
+        $this->resolveHeaders();
+
+        return parent::getHeaderLine($name);
+    }
+
+    public function withHeader(string $name, $value): static
+    {
+        $this->resolveHeaders();
+
+        return parent::withHeader($name, $value);
+    }
+
+    public function withAddedHeader(string $name, $value): static
+    {
+        $this->resolveHeaders();
+
+        return parent::withAddedHeader($name, $value);
+    }
+
+    public function withoutHeader(string $name): static
+    {
+        $this->resolveHeaders();
+
+        return parent::withoutHeader($name);
+    }
+
+    /**
+     * 原始请求体：首次访问才从原生读取（显式传入的流原样保留）。
+     */
+    public function getBody(): StreamInterface
+    {
+        if (!$this->rawBodyResolved) {
+            $this->rawBodyResolved = true;
+            if (!$this->hasExplicitBody) {
+                $this->rawBody = (string) $this->native->body();
+            }
+        }
+
+        return parent::getBody();
+    }
+
+    public function withBody(StreamInterface $body): static
+    {
+        $this->rawBodyResolved = true;
+        $this->hasExplicitBody = true;
+
+        return parent::withBody($body);
     }
 
     public function withQueryParams(array $query): static
@@ -116,6 +269,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
     public function withParsedBody(mixed $data): static
     {
         $this->lazyBody = $data;
+        $this->bodyParsed = true;
 
         return parent::withParsedBody($data);
     }
@@ -128,12 +282,36 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
     }
 
     /**
-     * 复用 HttpBridge 的归一化逻辑：仅透传 PSR-7 UploadedFile 实例。
+     * 首次访问才把原生请求头写入基类 headers/headerNames（protected 字段直写）。
+     */
+    private function resolveHeaders(): void
+    {
+        if ($this->headersResolved) {
+            return;
+        }
+        $this->headersResolved = true;
+        if ($this->hasExplicitHeaders) {
+            return;
+        }
+        $headers = $this->native->headers();
+        if ($headers === []) {
+            return;
+        }
+        // 与 KodeServerRequest::initializeHeaders 等价写法：直接写 protected 字段，
+        // 使 parent::hasHeader/getHeader/getHeaders 基于真实数据工作。
+        foreach ($headers as $name => $value) {
+            $normalized = strtolower($name);
+            $this->headers[$name] = is_array($value) ? $value : [$value];
+            $this->headerNames[$normalized] = $name;
+        }
+    }
+
+    /**
+     * 把原生上传文件数组归一化为 PSR-7 UploadedFile 列表（只留接口实例）。
      *
-     * @param array<string, mixed> $files
      * @return array<string, \Psr\Http\Message\UploadedFileInterface>
      */
-    private static function normalizeFiles(array $files): array
+    private function normalizeFiles(array $files): array
     {
         if ($files === []) {
             return [];

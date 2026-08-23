@@ -38,29 +38,32 @@ final class HttpBridge
         $queryString = $request->queryString();
         $uri = $request->path() . ($queryString !== '' ? '?' . $queryString : '');
 
-        $serverParams = [
-            'REQUEST_METHOD'       => $request->method(),
-            'REQUEST_URI'          => $request->uri(),
-            'SERVER_PROTOCOL'      => $request->protocol(),
-            'SERVER_NAME'          => $request->host() ?: 'localhost',
-            'HTTP_HOST'            => $request->host() ?: 'localhost',
-            'REMOTE_ADDR'          => $request->ip(),
-            'REQUEST_TIME'         => time(),
-            'REQUEST_TIME_FLOAT'   => microtime(true),
-            'HTTPS'                => $request->isSecure() ? 'on' : 'off',
-        ];
-
         // 协议版本由驱动自身持有（SwooleConnection / Http2Stream / WorkermanConnection /
         // NativeConnection 各自已知其协议），此处仅从请求头形态（"HTTP/1.1"）提取 "1.1"。
         $protocol = $request->protocol();
         $protocolVersion = preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m) ? $m[1] : '1.1';
 
-        // 不再急切调用 withQueryParams / withParsedBody / withCookieParams / withUploadedFiles：
-        // 这四类解析对路由匹配（只消费 method + path 两个字符串）完全无用，且多数热路径
-        // handler 根本不读它们（如 /bench/json）。改由 LazyServerRequest 在首次访问时才从
-        // 原生 ProcessRequest 解析并缓存，使热路径零解析成本。契约不变（仍是 ServerRequestInterface）。
-        // KODE_EAGER=1 时回退到急切旧路径（每请求解析全部字段），仅用于压测 A/B 对照，非生产路径。
+        // 不再急切调用 withQueryParams / withParsedBody / withCookieParams / withUploadedFiles，
+        // 也不急切解析 serverParams / headers / body：这七类对路由匹配（只消费 method +
+        // path 两个字符串）完全无用，且多数热路径 handler 根本不读它们（如 /bench/json）。
+        // 改由 LazyServerRequest 在首次访问时才从原生 ProcessRequest 解析并缓存，使热路径
+        // 零解析成本（连 headers 数组拷贝、时钟调用、body 读取都省掉）。契约不变。
+        // serverParams 构建（time()/microtime()/host()×2/ip()/isSecure()）也只下沉到
+        // KODE_EAGER 分支内，绝非懒路径的固定成本。
+        // KODE_EAGER=1 时回退到急切旧路径（每请求解析全部字段），仅用于压测 A/B 对照。
         if (($GLOBALS['KODE_EAGER'] ?? ($_SERVER['KODE_EAGER'] ?? '0')) === '1') {
+            $serverParams = [
+                'REQUEST_METHOD'     => $request->method(),
+                'REQUEST_URI'        => $request->uri(),
+                'SERVER_PROTOCOL'    => $request->protocol(),
+                'SERVER_NAME'        => $request->host() ?: 'localhost',
+                'HTTP_HOST'          => $request->host() ?: 'localhost',
+                'REMOTE_ADDR'        => $request->ip(),
+                'REQUEST_TIME'       => time(),
+                'REQUEST_TIME_FLOAT' => microtime(true),
+                'HTTPS'              => $request->isSecure() ? 'on' : 'off',
+            ];
+
             return (new KodeServerRequest(
                 method: $request->method(),
                 uri: $uri,
@@ -79,9 +82,6 @@ final class HttpBridge
             native: $request,
             method: $request->method(),
             uri: $uri,
-            serverParams: $serverParams,
-            headers: $request->headers(),
-            body: Stream::create($request->body()),
             protocolVersion: $protocolVersion,
         );
     }

@@ -162,17 +162,13 @@ $bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCre
     // ---------- hello world / 内存锚点 ----------
     $http->get('/ping', static fn () => Resp::json(['status' => 'ok']));
     $http->get('/bench/json', static function () {
-        // 与 webman 对标 handler 完全同构：array_map(range) + framework/now 字段
+        // 与 webman 对标 handler 完全同构：array_map(range) + items-only（对称负载）
         $items = array_map(
             static fn (int $i) => ['id' => $i, 'name' => 'item-' . $i],
             range(1, 50)
         );
 
-        return Resp::json([
-            'framework' => 'kode',
-            'now'       => date('c'),
-            'items'     => $items,
-        ]);
+        return Resp::json(['items' => $items]);
     });
 
     // ---------- /bench/db：框架级有界 PDO 池（Kode\Framework\Database\ConnectionPool，per-worker 多连接 + closeCursor） ----------
@@ -335,7 +331,7 @@ $leanRoutes = $lean ? [
             range(1, 50)
         );
 
-        return ['framework' => 'kode', 'now' => date('c'), 'items' => $items];
+        return ['items' => $items];
     },
 ] : [];
 
@@ -386,5 +382,8 @@ Kode::serve("http://127.0.0.1:$port", [
         } catch (\Throwable $e) {
             HttpBridge::emit($conn, Resp::error('服务器内部错误', 500));
         }
+    })
+    ->on('error', static function (ConnectionInterface $conn, \Throwable $e): void {
+        fwrite(STDERR, '[kode-peer error] ' . get_class($e) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n");
     })
     ->start();

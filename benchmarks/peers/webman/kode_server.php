@@ -19,8 +19,11 @@ use Webman\App;
 use Webman\Middleware;
 use Webman\Config;
 
-// 使用 Swoole 事件循环（高并发远优于默认 Select 循环），否则压测下大量连接超时。
-Worker::$eventLoopClass = SwooleEventLoop::class;
+// 仅在 Swoole 扩展可用时使用 Swoole 事件循环（高并发远优于默认 Select 循环）；
+// 无 ext-swoole 的环境（如 CI/沙箱）自动回退 Workerman 默认循环，保证 peer 可同条件运行。
+if (\extension_loaded('swoole')) {
+    Worker::$eventLoopClass = SwooleEventLoop::class;
+}
 
 // 极简 PSR-3 占位 logger（webman App 构造需要；压测不输出日志）。
 $logger = new class implements \Psr\Log\LoggerInterface {

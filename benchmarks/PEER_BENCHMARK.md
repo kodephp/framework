@@ -303,11 +303,39 @@ webman 的 `/bench/db`（MySQL）在高并发持续速率下稳定返回 500（2
 - **kode/database（P1）**：连接池在 Native/Workerman 运行时可用。方向：`PoolManager::init` 运行时感知默认进程安全池 + 自动归还连接（RAII）+ 多进程部署文档。详见 `kode-package-issues.md` §B。
 - framework 侧：已落地 `P5 lean opt-out` 作止血 + 非池化 per-worker PDO 作诚实 fallback；**不自行 workaround 包缺陷**，待包侧修复后切换回 `kode/database` 官方池。
 
+### 4.4 沙箱交叉验证（2026-08-23 · 框架 v0.8.47 · Linux 2 核 · Workerman Select 循环 · 无 JIT · workers=2）
+
+`benchmarks/peers/bench_sandbox.sh`（wrk -t4 -c60 -d6s × 3 轮中位，正反两遍取均值；全部 peer 走 Workerman 运行时、零中间件）：
+
+| peer | /ping (rps) | /bench/json (rps) | json 相对 webman |
+| --- | ---: | ---: | ---: |
+| workerman_raw（天花板） | 220,333 | 109,506 | 115.7% |
+| **kode_LEAN**（旁路 PSR-7 直发 raw） | 196,266 | **100,022** | **105.7%** |
+| webman_OFF | 184,141 | 94,623 | 100% |
+| **kode_L0**（完整 PSR-7 内核） | 77,019 | **54,746** | 57.9% |
+
+**本轮结论（沙箱口径，绝对数仅限本机横比）**：
+
+1. **kode_LEAN json（100.0k）已反超 webman（94.6k，+5.7%）**：框架 `HttpBridge::emit` raw 快路径（`toRaw` + `conn->send($raw,true)`）比 webman 的 `Response` 对象式 send 更快——**「相同的 frame 下 kode 不慢于 webman」在无 PSR-7 包装时成立**。
+2. **kode_L0（54.7k）vs kode_LEAN（100.0k）= −45.3%**：差距 100% 落在 PSR-7 内核链（toPsr7 构造 + `App::handle` 管线 + `RouteRunner` 派发 + `Response::resolve`），与 §4.1.1 结论同向、跨平台（macOS Swoole / Linux Workerman-Select）复核成立。
+3. **toPsr7 第二轮优化（本轮）**：`HttpBridge::toPsr7` 的 `$serverParams` 数组构建（`time()`/`microtime(true)`/`host()`×2/`ip()`/`isSecure()`）从函数开头下沉到 `KODE_EAGER=1` 分支内——懒路径不再为不读 serverParams 的业务（如 `/bench/json`）白付 ~1.4µs/req。打点实测 toPsr7 段 **3.73 → 2.32 µs**（lazy 后理论下限 ~1.0 µs，残差为 `parseLine` 首次 + `Uri` 构造 + `preg_match` 协议提取，均属 kode/process-http 侧固定成本）。kode_L0 json 由 53,980 → **54,746（+1.4%）**；吞吐增益小于 toPsr7 节省比例，因热点仍在 `handle`（~22µs）+ `conn->send`（~7.8µs，Workerman 固有、webman 同付）。
+4. **handle 内部段（vendor 打点，µs/req）**：`route.match 0.42` + `attr(3×withAttribute + Request::setRequest) 1.46` + `dispatch 8.25`（含业务 `json_encode` ~5µs，双方同付不可省）+ 中间件栈 margin ~7µs（`JsonErrorHandlerMiddleware` 可观测性对价）。**剩余可调杠杆全在 kode/http 包侧**：`RouteRunner` 无参路由跳过 withAttribute、`CallableHandler`/`Response::resolve` 包装瘦身——见 `docs/kode-http-tuning-2026-08-23.md`。
+
 ## 5. 关键结论
 
 1. **kode 默认零开销、/ping 与 webman 持平、/bench/json 不开 JIT 时约为 webman 的 89%（冷却式+端口强杀见 §4.1.1）**：同 Workerman 下 **kode L0 /ping 190,752 ≥ webman 186,735（持平略高）、/bench/json 162,777 = webman 182,672 的 89.1%**；该差距 **100% 来自 PSR-7 桥接/内核路径**（KODE_LEAN 绕过即 99.8% 持平，见 §4.1.1）。§3 能力梯度表的 L0 数字（native 运行时：/ping 166,971 / /bench/json 132,693）为同口径梯度研究值，跨框架横比请以 §4.1.1 冷却值为准。
 2. **能力成本透明、按需开启**：L0→L5 每步边际成本见 §3 表——可观测性（L3→L4）是 #1 税（/ping −26%），边缘三件套（L0→L1）次之（/ping −19%），resilience（L1→L2）≈0。开发者可按业务在梯度任意停靠。
 3. **完整企业栈 = 功能对价，非缺陷**：L5（全开）约为 webman 52%/37%，换取 cors/安全/韧性/日志/可观测/会话/幂等开箱能力。webman 若装同等中间件，差距显著收窄。
+5. **链路追踪嗅探强制解析根因已定位并修复（kode/http 3.4.8，同轮验证）**：§4.4 结论 4 打点数据中 attr 段 ~1.46µs 的大头并非 `withAttribute`×3（变异写，≤150ns），而是 `Request::setRequest →
+   syncTraceContext → hasTraceHeaders` 每请求无条件触发框架 `LazyServerRequest::getServerParams()`
+   首访引导构建 + 4×`hasHeader` 强制 header 全量规范化；且该函数用
+   `instanceof Kode\Http\Psr7\Message\LazyServerRequest` 做懒早退，对框架侧懒类（父类不同）恒 false。
+   修复：新增 `LazyHeaderAware` 接口（`isHeadersResolved + peekHeader` 定向读取），懒请求未解析时
+   对 4 个链路头定向 peek，全程零解析。微基准：RAW 源每请求省 **~1.46µs（2452→992ns，-59%）**；
+   Workerman 源压测 A/B **持平于噪声内**（54.6k vs 54.7k，因 Workerman 下 `host()` 走 headers()
+   缓存、旧的 serverParams 引导本就 ~600ns）。收益定位：RAW/直连源 ≈7% 吞吐；Workerman 源为
+   结构性修复（不再强制 serverParams 引导 + header 全量规范化），对不读 serverParams 的
+   转发型热路径仍有 ~0.6µs 级纯收益。框架 v0.8.47 + kode/http v3.4.8，全量 425/26428 绿。
 4. **框架层调优已触顶（诚实）**：§6 已定位并修复响应体两次 temp-stream 拷贝开销（StringStream，/bench/json 从 132k→161k），且 §4.1 证明同 Workerman 运行时下 **kode L0 ≈ webman**；残差主因是 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价 + 本机热噪声（同 peer 跨跑 ±10~15%），框架层继续抠已无实收益（见 §8 P0/P1）。
 
 ## 6. 默认栈成本剖析（观测性为主税 · 隔离微基准铁证）
@@ -315,7 +343,7 @@ webman 的 `/bench/db`（MySQL）在高并发持续速率下稳定返回 500（2
 - **可观测性（Trace + Metrics）是 kode 全栈绝对主导成本**（§3 的 L3→L4：/ping −26%、/bench −20%）。  
   Trace 100% 路径固有成本 ≈ 0.77µs/请求（`Context` 读写 + 入向头解析 + W3C 拼接），**非克隆、非随机数、框架内不可消除**；webman 默认不自带，故构成主要差距。
 - **已提供杠杆**：`observability.tracing.attach_headers`（默认 true）置 false 时跳过响应头回写切片（微基准省 ~2.1µs/op），供「仅内部可观测、不依赖 W3C 传播」的高吞吐部署选择。
-- **响应路径 body 拷贝开销（已定位并修复）**：旧结论「响应路径零 body 缩放开销」**已作废**——该隔离微基准只测了 15B→1.5KB 的 `json_encode` delta，漏检了 `Stream::create()` 默认的 `fopen('php://temp')` + 两次整段拷贝（fwrite 写入、stream_get_contents 读回）。对 /bench/json 这类 ~1KB 响应体，该 temp-stream 拷贝被放大 ~100×，是 kode 响应管线相对 webman（体即字符串）偏慢的主因。修复：`StringStream`（`vendor/kode/http/src/Psr7/StringStream.php`，经 `patches/kode-http-stringstream.patch` 固化）让 `Stream::create()` 小体量响应体直接内存持有；实测 /bench/json 从 **132k→161k（+22%）**，/ping 亦微受益。此即 §4.1.1 中 kode L0 /bench/json 占 webman 89.1% 的残差来源——**该残差 100% 来自 PSR-7 桥接/内核路径**（KODE_LEAN 绕过即 99.8% 持平，非「不可消除的架构基线」），对无中间件热路径是纯负担、应当可关。
+- **响应路径 body 拷贝开销（已定位并修复）**：旧结论「响应路径零 body 缩放开销」**已作废**——该隔离微基准只测了 15B→1.5KB 的 `json_encode` delta，漏检了 `Stream::create()` 默认的 `fopen('php://temp')` + 两次整段拷贝（fwrite 写入、stream_get_contents 读回）。对 /bench/json 这类 ~1KB 响应体，该 temp-stream 拷贝被放大 ~100×，是 kode 响应管线相对 webman（体即字符串）偏慢的主因。修复：`StringStream`（`vendor/kode/http/src/Psr7/StringStream.php`，已随 kode/http **v3.4.7** 直接合入上游，vendor 纯净）让 `Stream::create()` 小体量响应体直接内存持有；实测 /bench/json 从 **132k→161k（+22%）**，/ping 亦微受益。此即 §4.1.1 中 kode L0 /bench/json 占 webman 89.1% 的残差来源——**该残差 100% 来自 PSR-7 桥接/内核路径**（KODE_LEAN 绕过即 99.8% 持平，非「不可消除的架构基线」），对无中间件热路径是纯负担、应当可关。
 - **请求桥接层急切解析 → 懒解析（已落地，框架内）**：原 `HttpBridge::toPsr7` 每请求急切调用 `ProcessRequest::get()/post()/cookies()/files()` 并 populate 进 PSR-7；但**路由匹配只消费 method+path 两个字符串**（`Router::match(string,string)`），且多数热路径 handler（如 `/bench/json`）根本不读 query/body/cookie——急切解析是纯浪费。已改为 `LazyServerRequest`（继承 kode/http 的 `KodeServerRequest`，仅覆写 4 个重 getter 为**首次访问才从原生 `ProcessRequest` 解析并缓存**；其余 25 个 PSR-7 方法全继承，契约 100% 不变）。**同会话背靠背 A/B 对照**（`KODE_EAGER=1` 回退急切旧路径）：**lazy json 158,299 vs eager 155,807 = lazy 快 +1.6%**，且把不开 JIT 下 kode json 占 webman 比值稳定在 ~89%（与改动前 89.1% 一致）。此前多 peer 连跑曾出现 136k，经 A/B 证为 **Apple Silicon 热降频伪象**（同期 /ping 亦从 190k 掉到 172k），非回归。改动 100% 在框架仓库（`src/Server/HttpBridge` + 新 `src/Server/LazyServerRequest`），不碰 kode/http 内核契约、不需要 composer patch。
 - **框架 `handle` 上限**：CLI 单进程 `$http->handle($psr)` 无网络测得约 **241k ops/s**，远高于 wrk 实测 166k → wrk 下吞吐被 kode/process 运行时 I/O 限制，非框架代码。
 
