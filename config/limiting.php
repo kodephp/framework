@@ -55,4 +55,11 @@ return [
         'password' => env('RATE_LIMIT_PDO_PASS'),
         'table' => env('RATE_LIMIT_PDO_TABLE', 'limiting'),
     ],
+    // memcached 后端（可选，v0.8.42 补齐：旧实现误读 redis.host/port 且无本段，H6）
+    'memcached' => [
+        'host' => env('RATE_LIMIT_MEMCACHED_HOST', '127.0.0.1'),
+        'port' => (int) env('RATE_LIMIT_MEMCACHED_PORT', 11211),
+        // 限流键前缀（与 redis.prefix 同理，隔离多业务共用 Memcached 时的键空间）
+        'prefix' => env('RATE_LIMIT_MEMCACHED_PREFIX', 'kode:limiting:'),
+    ],
 ];

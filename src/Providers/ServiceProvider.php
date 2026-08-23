@@ -44,4 +44,19 @@ abstract class ServiceProvider extends CoreServiceProvider
 
         return $path === '' ? $base : $base . '/' . ltrim($path, '/\\');
     }
+
+    /**
+     * 受信代理列表（config/security.php trusted_proxies，H4）。
+     *
+     * 供各需要区分「真实客户端 IP / 可信转发头」的中间件装配时注入；
+     * 默认 [] = 不信任任何代理，一律以 REMOTE_ADDR 为对端地址。
+     *
+     * @return array<int, string>
+     */
+    protected function trustedProxies(): array
+    {
+        $trusted = $this->config('security.trusted_proxies', []);
+
+        return is_array($trusted) ? array_values(array_map('strval', $trusted)) : [];
+    }
 }

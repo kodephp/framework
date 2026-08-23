@@ -8,6 +8,7 @@ use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
 use Kode\Http\Psr7\Stream;
 use Kode\Http\Response;
 use Kode\Process\Http\Request as ProcessRequest;
+use Kode\Process\Protocol\HttpProtocol;
 use Kode\Process\Runtime\ConnectionInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -139,7 +140,27 @@ final class HttpBridge
         ConnectionInterface $conn,
         ResponseInterface $response,
     ): void {
-        $conn->sendResponse($response);
+        // 优先走框架 rawBody 感知的快速路径：kode/http 响应体以原生字符串持有
+        // （Resp::json → Response::make 直接缓存在 $rawBody），toRaw 经 getBodyString() 零拷贝取出，
+        // 避免 kode/process Psr7Response::toHttp11 经 PSR-7 getBody() 对响应体做
+        // 「StringStream 二次物化 + 销毁 rawBody 缓存」的逐请求分配（体越大越慢，是 /bench/json
+        // 落后 webman 的主因）。输出与 toHttp11 逐字节一致。
+        // 仅当连接层确会触发自动 gzip（请求带 Accept-Encoding: gzip 且响应体 ≥ GZIP_MIN_SIZE）时，
+        // 才退回官方 sendResponse 以保留压缩能力；其余情况（含压测 wrk，不带该头）一律走快路径。
+        $bodyLen = $response instanceof Response
+            ? strlen($response->getBodyString())
+            : strlen((string) $response->getBody());
+        if (
+            $bodyLen >= HttpProtocol::GZIP_MIN_SIZE
+            && method_exists($conn, 'isGzipAuto')
+            && $conn->isGzipAuto()
+        ) {
+            $conn->sendResponse($response);
+
+            return;
+        }
+
+        $conn->send(HttpBridge::toRaw($response), true);
     }
 
     private static function reasonPhrase(int $code): string

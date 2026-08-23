@@ -22,6 +22,13 @@ use Psr\Log\LoggerInterface;
 final class AuditSink
 {
     /**
+     * 队列硬上限（防御性，v0.8.42 对齐 AccessLogSink）：即使下游 flush 因异常未触发，
+     * 也保证内存有界，不会在持续高并发下无限累积直至 worker OOM。达上限时丢弃最新条目
+     * （审计在极端过载下可丢弃，优于 OOM 致 worker 崩溃、整体不可用）。
+     */
+    private const MAX = 8192;
+
+    /**
      * 进程级待导出队列（离请求路径批量落盘）。
      *
      * @var array<int, array{level: string, message: string, context: array}>
@@ -33,6 +40,9 @@ final class AuditSink
      */
     public function emit(string $level, string $message, array $context): void
     {
+        if (count(self::$queue) >= self::MAX) {
+            return;
+        }
         self::$queue[] = [
             'level'   => $level,
             'message' => $message,

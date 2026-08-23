@@ -34,11 +34,15 @@ final class LimiterFactory
      */
     private array $cache = [];
 
+    /** 存储侧签名前缀（driver + 地址 + prefix），构造时算一次（v0.8.42 热路径优化）。 */
+    private readonly string $storeSignature;
+
     /**
      * @param array<string, mixed> $config 框架 config/limiting.php 全量配置
      */
     public function __construct(private readonly array $config = [])
     {
+        $this->storeSignature = $this->buildStoreSignature();
     }
 
     /**
@@ -46,7 +50,13 @@ final class LimiterFactory
      */
     public function make(RateLimit $rule): Limiter
     {
-        $signature = $this->signature($rule);
+        $signature = $this->storeSignature . sprintf(
+            '|%s|%d|%s|%d',
+            $rule->type->value,
+            $rule->capacity,
+            $rule->rate,
+            $rule->tokens,
+        );
 
         return $this->cache[$signature] ??= $this->build($rule);
     }
@@ -63,39 +73,119 @@ final class LimiterFactory
     {
         $driver = (string) ($this->config['driver'] ?? 'memory');
 
+        // memory 保留原有算法工厂映射（无存储前缀语义）。
         return match ($driver) {
-            'apcu' => Limiter::apcu($rule->type, $rule->capacity, $rule->rate),
-            'memcached' => Limiter::memcached(
+            'apcu' => Limiter::create(
                 $rule->type,
-                $rule->capacity,
-                $rule->rate,
-                (string) ($this->config['redis']['host'] ?? '127.0.0.1'),
-                (int) ($this->config['redis']['port'] ?? 11211),
+                ['capacity' => $rule->capacity, 'refillRate' => $rule->rate],
+                $this->apcuStore(),
             ),
-            'pdo' => Limiter::pdo(
+            'memcached' => Limiter::create(
                 $rule->type,
-                $rule->capacity,
-                $rule->rate,
-                (string) ($this->config['pdo']['dsn'] ?? 'sqlite::memory:'),
-                isset($this->config['pdo']['username']) ? (string) $this->config['pdo']['username'] : null,
-                isset($this->config['pdo']['password']) ? (string) $this->config['pdo']['password'] : null,
-                (string) ($this->config['pdo']['table'] ?? 'limiting'),
+                ['capacity' => $rule->capacity, 'refillRate' => $rule->rate],
+                $this->memcachedStore(),
             ),
-            'redis' => Limiter::redis(
+            'pdo' => Limiter::create(
                 $rule->type,
-                $rule->capacity,
-                $rule->rate,
-                (string) ($this->config['redis']['host'] ?? '127.0.0.1'),
-                (int) ($this->config['redis']['port'] ?? 6379),
-                $this->config['redis']['password'] ?? null,
-                (int) ($this->config['redis']['database'] ?? 0),
-                $this->redisMode(),
-                $this->sentinels(),
-                (string) ($this->config['redis']['master_name'] ?? 'mymaster'),
-                $this->clusterNodes(),
+                ['capacity' => $rule->capacity, 'refillRate' => $rule->rate],
+                $this->pdoStore(),
+            ),
+            'redis' => Limiter::create(
+                $rule->type,
+                ['capacity' => $rule->capacity, 'refillRate' => $rule->rate],
+                $this->redisStore(),
             ),
             default => $this->memoryLimiter($rule),
         };
+    }
+
+    /**
+     * Redis store 数组（standalone / sentinel / cluster）。
+     *
+     * kode/limiting 2.1.0 的 storeFromArray 只支持 standalone，且 Limiter::redis() 对
+     * sentinel / cluster 分支不传 prefix、standalone 硬编码前缀 → 配置 redis.prefix 在
+     * HA 模式下不生效（H7）；**2.2.0 起上游三处全部修补**：storeFromArray 按 config['mode']
+     * 分发 standalone/sentinel/cluster 三分支，且 prefix 全程受控。此处统一走 storeFromArray，
+     * 删除 v0.8.42 的手搓 redisHA()（直接构造 {@see RedisStore} 实例）历史规避。
+     *
+     * 字段名对齐上游 2.2.0：sentinel 读 sentinels / masterName，cluster 读 clusterNodes；
+     * 框架 config 侧为 sentinels / master_name / cluster_nodes（见 config/limiting.php）。
+     *
+     * @return array<string, mixed>
+     */
+    private function redisStore(): array
+    {
+        return match ($this->redisMode()) {
+            RedisMode::SENTINEL => [
+                'type' => 'redis',
+                'mode' => 'sentinel',
+                'sentinels' => $this->sentinels(),
+                'masterName' => (string) ($this->config['redis']['master_name'] ?? 'mymaster'),
+                'password' => isset($this->config['redis']['password'])
+                    ? (string) $this->config['redis']['password'] : null,
+                'database' => (int) ($this->config['redis']['database'] ?? 0),
+                'prefix' => (string) ($this->config['redis']['prefix'] ?? 'kode:limiting:'),
+            ],
+            RedisMode::CLUSTER => [
+                'type' => 'redis',
+                'mode' => 'cluster',
+                'clusterNodes' => $this->clusterNodes(),
+                'password' => isset($this->config['redis']['password'])
+                    ? (string) $this->config['redis']['password'] : null,
+                'prefix' => (string) ($this->config['redis']['prefix'] ?? 'kode:limiting:'),
+            ],
+            default => [
+                'type' => 'redis',
+                'mode' => 'standalone',
+                'host' => (string) ($this->config['redis']['host'] ?? '127.0.0.1'),
+                'port' => (int) ($this->config['redis']['port'] ?? 6379),
+                'prefix' => (string) ($this->config['redis']['prefix'] ?? 'kode:limiting:'),
+                'password' => isset($this->config['redis']['password'])
+                    ? (string) $this->config['redis']['password'] : null,
+                'database' => (int) ($this->config['redis']['database'] ?? 0),
+            ],
+        };
+    }
+
+    /**
+     * Memcached：经 store 数组路径，读独立 memcached 段（H6——旧实现错误地读了
+     * redis.host/port，且 config 无 memcached 段时全部落到默认值，配置形同虚设）。
+     *
+     * @return array<string, mixed>
+     */
+    private function memcachedStore(): array
+    {
+        return [
+            'type' => 'memcached',
+            'host' => (string) ($this->config['memcached']['host'] ?? '127.0.0.1'),
+            'port' => (int) ($this->config['memcached']['port'] ?? 11211),
+            'prefix' => (string) ($this->config['memcached']['prefix'] ?? 'kode:limiting:'),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function apcuStore(): array
+    {
+        return [
+            'type' => 'apcu',
+            'prefix' => (string) ($this->config['redis']['prefix'] ?? 'kode:limiting:'),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pdoStore(): array
+    {
+        return [
+            'type' => 'pdo',
+            'dsn' => (string) ($this->config['pdo']['dsn'] ?? 'sqlite::memory:'),
+            'username' => isset($this->config['pdo']['username']) ? (string) $this->config['pdo']['username'] : null,
+            'password' => isset($this->config['pdo']['password']) ? (string) $this->config['pdo']['password'] : null,
+            'table' => (string) ($this->config['pdo']['table'] ?? 'limiting'),
+        ];
     }
 
     private function memoryLimiter(RateLimit $rule): Limiter
@@ -138,25 +228,27 @@ final class LimiterFactory
         return is_array($raw) ? array_values(array_map('strval', $raw)) : ['127.0.0.1:7000'];
     }
 
-    private function signature(RateLimit $rule): string
+    /**
+     * 预计算存储侧签名（仅供构造 {@see $storeSignature}）：只依赖 config 中
+     * driver/地址/prefix 等静态段，热路径每请求拼签名时免去 match + 多次兜底取值（v0.8.42）。
+     * 各分支字符串与 v0.8.41 的 signature() 中 store 段逐字一致，缓存键语义不变。
+     */
+    private function buildStoreSignature(): string
     {
-        $store = match ((string) ($this->config['driver'] ?? 'memory')) {
+        $driver = (string) ($this->config['driver'] ?? 'memory');
+
+        return match ($driver) {
             'redis' => 'redis:' . $this->redisMode()->value
                 . ':' . ($this->config['redis']['host'] ?? '')
-                . ':' . ($this->config['redis']['port'] ?? ''),
-            'apcu' => 'apcu',
-            'memcached' => 'memcached',
+                . ':' . ($this->config['redis']['port'] ?? '')
+                . ':' . (string) ($this->config['redis']['prefix'] ?? ''),
+            'apcu' => 'apcu:' . (string) ($this->config['redis']['prefix'] ?? ''),
+            'memcached' => 'memcached:'
+                . ':' . ($this->config['memcached']['host'] ?? '')
+                . ':' . ($this->config['memcached']['port'] ?? '')
+                . ':' . (string) ($this->config['memcached']['prefix'] ?? ''),
             'pdo' => 'pdo',
             default => 'memory',
         };
-
-        return sprintf(
-            '%s|%s|%d|%s|%d',
-            $store,
-            $rule->type->value,
-            $rule->capacity,
-            $rule->rate,
-            $rule->tokens,
-        );
     }
 }

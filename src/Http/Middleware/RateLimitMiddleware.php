@@ -10,6 +10,8 @@ use Kode\Framework\Http\Resp;
 use Kode\Framework\Http\RouteMatchTrait;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Http\RouteResolver;
+use Kode\Framework\Http\Support\RouteKey;
+use Kode\Framework\Http\Support\TrustedProxies;
 use Kode\Http\Routing\Router;
 use Kode\Limiting\Attribute\RateLimit;
 use Kode\Limiting\Enum\LimiterType;
@@ -41,6 +43,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
 
     /**
      * @param array<string, mixed> $globalConfig 框架 config/limiting.php 全量配置
+     * @param array<int, string>   $trusted     受信代理列表（IP / CIDR / '*'），见 config/security.php
      */
     public function __construct(
         private readonly Router $router,
@@ -48,6 +51,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
         private readonly LimiterFactory $factory,
         private readonly array $globalConfig = [],
         private readonly ?RouteResolver $resolver = null,
+        private readonly array $trusted = [],
     ) {
     }
 
@@ -73,10 +77,12 @@ final class RateLimitMiddleware implements MiddlewareInterface
         }
 
         // 应用每条声明式规则（同分组可叠加多条，任一拒绝即 429）。
+        // 客户端 IP 只解析一次：keyContext 与 fallback 键共用（热路径省一次 REMOTE_ADDR 读取 + 受信判定）。
         $headers = [];
         $denied = null;
-        $context = $this->keyContext($request, $matched?->params ?? []);
-        $fallback = $this->routeKey($request) . ':' . $this->clientIp($request);
+        $ip = $this->clientIp($request);
+        $context = $this->keyContext($matched?->params ?? [], $ip);
+        $fallback = $this->routeKey($request) . ':' . $ip;
 
         foreach ($rules as $rule) {
             $limiter = $this->factory->make($rule);
@@ -165,12 +171,13 @@ final class RateLimitMiddleware implements MiddlewareInterface
      * 限流键上下文：路由参数（{id} 等）+ 客户端 IP，供 #[RateLimit] 的 key 模板渲染。
      *
      * @param array<string, string> $routeParams
+     * @param string                $ip 已解析的真实客户端 IP（调用方已算好，禁止再调 clientIp）
      * @return array<string, string|int>
      */
-    private function keyContext(ServerRequestInterface $request, array $routeParams): array
+    private function keyContext(array $routeParams, string $ip): array
     {
         $context = $routeParams;
-        $context['ip'] = $this->clientIp($request);
+        $context['ip'] = $ip;
 
         return $context;
     }
@@ -180,22 +187,15 @@ final class RateLimitMiddleware implements MiddlewareInterface
      */
     private function routeKey(ServerRequestInterface $request): string
     {
-        $path = $request->getUri()->getPath();
-
-        return (string) preg_replace(
-            '/\/\d+(?=\/|$)/',
-            '/{id}',
-            preg_replace('/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i', '/{uuid}', $path)
-        );
+        return RouteKey::normalize($request->getUri()->getPath());
     }
 
+    /**
+     * 取真实客户端 IP：仅当直连对端（REMOTE_ADDR）为受信代理时才采信转发头，
+     * 否则一律用 REMOTE_ADDR——杜绝伪造 X-Forwarded-For 绕过限流（H4）。
+     */
     private function clientIp(ServerRequestInterface $request): string
     {
-        $forwarded = $request->getHeaderLine('x-forwarded-for');
-        if ($forwarded !== '') {
-            return explode(',', $forwarded)[0];
-        }
-
-        return $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
+        return TrustedProxies::clientIp($request, $this->trusted);
     }
 }

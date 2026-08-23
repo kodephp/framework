@@ -58,7 +58,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.41';
+    public const VERSION = '0.8.43';
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。
@@ -86,6 +86,15 @@ final class Application
     private readonly string $basePath;
 
     private bool $booted = false;
+
+    /**
+     * preloadAppConfig() 的调用缓存（v0.8.42，M2）：config/app.php 引导期至多 require 一次，
+     * 避免 providers()/runtimeModes()/checkProviderCoverage() 重复 require 触发顶层副作用
+     * （define() 重复定义告警等）。null = 尚未加载。
+     *
+     * @var array<string, mixed>|null
+     */
+    private ?array $preloaded = null;
 
     public static function getInstance(): ?Application
     {
@@ -302,18 +311,25 @@ final class Application
      * 在 App::boot() 之前预读 config/app.php，用于 providers / runtime 合并。
      * 仅读取单个文件，不依赖完整的配置加载流程。
      *
+     * v0.8.42（M2）：结果缓存于 {@see $preloaded}，引导期内多次调用只 require 一次，
+     * 消除顶层副作用重复执行风险。
+     *
      * @return array<string, mixed>
      */
     private function preloadAppConfig(): array
     {
+        if ($this->preloaded !== null) {
+            return $this->preloaded;
+        }
+
         $file = $this->basePath . '/config/app.php';
         if (!is_file($file)) {
-            return [];
+            return $this->preloaded = [];
         }
 
         $config = (require $file) ?: [];
 
-        return is_array($config) ? $config : [];
+        return $this->preloaded = is_array($config) ? $config : [];
     }
 
     private function loadEnvironment(): void

@@ -110,19 +110,53 @@ final class IdempotencyMiddleware implements MiddlewareInterface
     }
 
     /**
-     * 把响应编码为一个可持久化的 envelope（状态 / Content-Type / 体），体经 base64 避免 JSON 破坏。
+     * 把响应编码为一个可持久化的 envelope（状态 / Content-Type / 响应头 / 体），体经 base64 避免 JSON 破坏。
+     *
+     * 修复说明（v0.8.42）：旧实现只存 status / Content-Type / body，重放时丢失
+     * Set-Cookie / Location / 缓存控制等业务响应头，导致「重放响应与首次不一致」。
+     * 现把（除 hop-by-hop 与 Content-Length 外的）全部响应头一并持久化，重放原样重建。
      */
     private function envelope(ResponseInterface $response): string
     {
         return (string) json_encode([
             's' => $response->getStatusCode(),
             'c' => $response->getHeaderLine('Content-Type'),
+            'h' => $this->persistableHeaders($response),
             'b' => base64_encode((string) $response->getBody()),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     /**
-     * 从重放 envelope 重建响应（保持状态 / Content-Type / 体一致）。
+     * 需要随幂等记录持久化回放的响应头。
+     *
+     * 排除：
+     *  - hop-by-hop 头（Connection / Keep-Alive / Transfer-Encoding / Upgrade / TE / Trailer
+     *    / Proxy-*）：只对当前连接有意义，回放重建时不应原样复制；
+     *  - Content-Length：长度由 body 决定，重建时由响应工厂统一处理。
+     *
+     * @return array<string, list<string>>
+     */
+    private function persistableHeaders(ResponseInterface $response): array
+    {
+        static $skip = [
+            'connection', 'keep-alive', 'transfer-encoding', 'upgrade',
+            'te', 'trailer', 'proxy-authenticate', 'proxy-authorization',
+            'content-length',
+        ];
+
+        $headers = [];
+        foreach ($response->getHeaders() as $name => $values) {
+            if (in_array(strtolower($name), $skip, true)) {
+                continue;
+            }
+            $headers[$name] = array_map('strval', $values);
+        }
+
+        return $headers;
+    }
+
+    /**
+     * 从重放 envelope 重建响应（状态 / Content-Type / 响应头 / 体与首次完全一致）。
      */
     private function rebuild(string $payload): ResponseInterface
     {
@@ -137,7 +171,23 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         $body = $raw === false ? '' : $raw;
 
         $headers = $contentType !== '' ? ['Content-Type' => $contentType] : [];
+        $response = Response::make($body, $status, $headers);
 
-        return Response::make($body, $status, $headers);
+        // v0.8.42+：回放持久化的业务响应头（Set-Cookie / Location 等）；
+        // 旧记录（无 h 字段）静默兼容，仅返回 Content-Type + body。
+        $persisted = $data['h'] ?? null;
+        if (is_array($persisted)) {
+            foreach ($persisted as $name => $values) {
+                // Content-Type 已在构造时按 envelope 'c' 字段设置，避免 withAddedHeader 追加重复值。
+                if (strtolower((string) $name) === 'content-type') {
+                    continue;
+                }
+                foreach ((array) $values as $value) {
+                    $response = $response->withAddedHeader((string) $name, (string) $value);
+                }
+            }
+        }
+
+        return $response;
     }
 }

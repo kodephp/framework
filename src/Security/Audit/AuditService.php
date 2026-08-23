@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kode\Framework\Security\Audit;
 
 use Kode\Context\Context;
+use Kode\Framework\Http\Support\QueryMasker;
+use Kode\Framework\Http\Support\TrustedProxies;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Log\LoggerInterface;
@@ -31,21 +33,22 @@ final class AuditService
     /**
      * 默认敏感字段名（统一小写）。命中其一的查询参数 / 事件明细值将被替换为 '***'。
      * 可经 config/audit.php 的 mask_params 覆盖（设为 [] 即显式关闭脱敏）。
+     *
+     * v0.8.42 起移至 {@see QueryMasker::DEFAULT_MASK_PARAMS}，本常量保留为兼容别名
+     * （与访问日志共用同一份默认集合，避免两份拷贝漂移）。
      */
-    public const DEFAULT_MASK_PARAMS = [
-        'password', 'passwd', 'pwd', 'token', 'secret', 'secrets',
-        'authorization', 'api_key', 'apikey', 'access_token', 'refresh_token',
-        'private_key', 'cookie', 'set-cookie', 'x-api-key', 'csrf_token', 'otp', 'pin',
-    ];
+    public const DEFAULT_MASK_PARAMS = QueryMasker::DEFAULT_MASK_PARAMS;
 
     /**
      * @param array<string, mixed> $config
+     * @param array<int, string>   $trusted 受信代理列表（IP / CIDR / '*'），见 config/security.php
      */
     public function __construct(
         private readonly LoggerInterface $logger,
         private readonly array $config = [],
         private readonly ?AuditSink $sink = null,
         private readonly bool $async = true,
+        private readonly array $trusted = [],
     ) {
     }
 
@@ -164,67 +167,38 @@ final class AuditService
     private function maskParams(): array
     {
         $mask = $this->config['mask_params'] ?? self::DEFAULT_MASK_PARAMS;
-        if (!is_array($mask)) {
-            return [];
-        }
 
-        return array_map('strtolower', $mask);
+        return is_array($mask) ? QueryMasker::normalizeMaskParams($mask) : [];
     }
 
     /**
      * 递归脱敏：键命中 mask 集合的值替换为 '***'（兼容嵌套数组，如 filter[password]=x）。
      *
      * @param array<string, mixed> $data
-     * @param array<int, string>   $mask 已统一小写的字段名集合
      * @return array<string, mixed>
      */
     private function maskSensitive(array $data, array $mask): array
     {
-        if ($mask === []) {
-            return $data;
-        }
-
-        $out = [];
-        foreach ($data as $key => $value) {
-            if (is_array($value)) {
-                $out[$key] = $this->maskSensitive($value, $mask);
-            } else {
-                $out[$key] = in_array(strtolower((string) $key), $mask, true) ? '***' : $value;
-            }
-        }
-
-        return $out;
+        return QueryMasker::maskSensitive($data, $mask);
     }
 
     /**
-     * 脱敏查询串：按 & 切分参数，对敏感参数名（兼容 filter[password] 这类嵌套键）原地替换为 ***。
-     * 直接在原串上操作，保留既有格式（不做 URL 重编码，避免日志里出现 %2A%2A%2A 这类噪声）。
+     * 脱敏查询串（v0.8.42 起委托 {@see QueryMasker}，与访问日志共用实现）。
      */
     private function maskQuery(string $query): string
     {
-        $mask = $this->maskParams();
-        if ($mask === [] || $query === '') {
-            return $query;
-        }
-
-        $pairs = explode('&', $query);
-        foreach ($pairs as &$pair) {
-            $eq = strpos($pair, '=');
-            $key = $eq === false ? $pair : substr($pair, 0, $eq);
-            foreach ($mask as $sensitive) {
-                if (stripos($key, $sensitive) !== false) {
-                    $pair = $key . '=***';
-                    break;
-                }
-            }
-        }
-        unset($pair);
-
-        return implode('&', $pairs);
+        return QueryMasker::maskQuery($query, $this->maskParams());
     }
 
     /**
-     * 从 kode/context 解析当前用户 ID（AuthMiddleware 鉴权时写入），并清除防泄漏。
+     * 从 kode/context 解析当前用户 ID（AuthMiddleware 鉴权时写入）。
+     *
+     * 修复说明（v0.8.42）：旧实现「读取后立即清除」，导致同一请求内先执行一次审计后，
+     * 后续业务审计（recordEvent / record）再也取不到用户 ID（H1）。现在**只读不清除**，
+     * 同请求内多次读取结果一致；防跨请求泄漏的清理改由全局最外层
+     * {@see \Kode\Framework\Http\Middleware\ConnectionCleanupMiddleware} 在每个请求
+     * 开始前执行（`Context::delete('auth_user_id')`），保证未鉴权请求不会读到上一个
+     * 请求残留的用户身份。
      */
     private function resolveUser(): ?string
     {
@@ -234,8 +208,6 @@ final class AuditService
 
         /** @var mixed $id */
         $id = Context::get('auth_user_id');
-        // 读取后立即清除，避免同一 worker 顺序处理下一请求时泄漏。
-        Context::set('auth_user_id', null);
 
         if ($id === null) {
             return null;
@@ -244,18 +216,12 @@ final class AuditService
         return is_scalar($id) ? (string) $id : json_encode($id);
     }
 
+    /**
+     * 真实客户端 IP：仅当直连对端为受信代理时采信转发头（H4），
+     * 否则一律用 REMOTE_ADDR——防伪造 XFF/X-Real-IP 造成审计溯源失真。
+     */
     private function clientIp(ServerRequestInterface $request): string
     {
-        $fwd = $request->getHeaderLine('X-Forwarded-For');
-        if ($fwd !== '') {
-            return strstr($fwd, ',', true) ?: $fwd;
-        }
-        $real = $request->getHeaderLine('X-Real-IP');
-        if ($real !== '') {
-            return $real;
-        }
-        $server = $request->getServerParams();
-
-        return $server['REMOTE_ADDR'] ?? 'unknown';
+        return TrustedProxies::clientIp($request, $this->trusted);
     }
 }

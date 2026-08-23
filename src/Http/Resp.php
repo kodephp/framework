@@ -31,10 +31,13 @@ final class Resp
      */
     public static function json(mixed $data = null, int $status = 200): Response
     {
-        $resp = Response::json($data === null ? new \stdClass() : $data);
-        // Response::json() 已构造好 status=200 的响应；默认 200 时直接返回，
-        // 避免 PSR-7 不可变 ->status(200) 再克隆整份响应对象（每请求省一次分配/GC 压力）。
-        return $status === 200 ? $resp : $resp->status($status);
+        $payload = $data === null ? new \stdClass() : $data;
+        // 直接持有原生字符串体（kode/http 3.4.2 起 Response::body() 缓存 rawBody）：
+        // HttpBridge::toRaw 的 getBodyString() 与 kode/http Emitter 均直接写出，
+        // 跳过每请求 Stream::create + 读取物化。JsonFlags 与 Response::json() 保持一致。
+        // 默认 200 时直接返回，避免 PSR-7 不可变 ->status(200) 再克隆整份响应对象。
+        $body = json_encode($payload, Response::JSON_FLAGS | JSON_THROW_ON_ERROR);
+        return Response::make($body, $status);
     }
 
     /**
@@ -56,7 +59,8 @@ final class Resp
             $body = array_merge($body, $extra);
         }
 
-        return Response::json($body)->status($status);
+        $encoded = json_encode($body, Response::JSON_FLAGS | JSON_THROW_ON_ERROR);
+        return Response::make($encoded, $status);
     }
 
     /**

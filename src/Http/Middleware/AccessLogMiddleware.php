@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kode\Framework\Http\Middleware;
 
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Http\Support\QueryMasker;
+use Kode\Framework\Http\Support\TrustedProxies;
 use Kode\Framework\Logging\AccessLogSink;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -21,6 +23,10 @@ use Psr\Log\LoggerInterface;
  *
  * 开关见 config/logging.php 的 access_log.enabled；生产建议开启。
  * 自身异常（如日志写入失败）绝不中断请求——观测是辅助，可用性优先。
+ *
+ * v0.8.42：
+ *  - query 写入日志前经 {@see QueryMasker} 脱敏（H5），防令牌/密码明文落日志；
+ *  - client_ip 仅当直连对端为受信代理时采信转发头（H4），否则一律用 REMOTE_ADDR。
  */
 final class AccessLogMiddleware implements MiddlewareInterface
 {
@@ -29,12 +35,14 @@ final class AccessLogMiddleware implements MiddlewareInterface
      * @param bool                 $enabled 是否记录访问日志
      * @param AccessLogSink|null   $sink   离路径导出队列；为 null 时强制同步写 logger
      * @param bool                 $async  是否异步（入队后由 shutdown / 停机钩子离路径落盘）
+     * @param array<int, string>   $trusted 受信代理列表（IP / CIDR / '*'），见 config/security.php
      */
     public function __construct(
         private readonly LoggerInterface $logger,
         private readonly bool $enabled = true,
         private readonly ?AccessLogSink $sink = null,
         private readonly bool $async = true,
+        private readonly array $trusted = [],
     ) {
     }
 
@@ -80,7 +88,7 @@ final class AccessLogMiddleware implements MiddlewareInterface
         // server params，正常反代场景只做两次廉价头查找。
         $uri = $request->getUri();
         $path = $uri->getPath();
-        $query = $uri->getQuery();
+        $query = QueryMasker::maskQuery($uri->getQuery(), $this->maskParams());
 
         $context = [
             'method'      => $request->getMethod(),
@@ -134,22 +142,22 @@ final class AccessLogMiddleware implements MiddlewareInterface
     }
 
     /**
-     * 取客户端真实 IP（尊重 X-Forwarded-For / X-Real-IP，优先前者首段）。
-     *
-     * 用 strstr(..., ',', true) 取首段，避免 strtok 的全局解析状态副作用。
+     * 取客户端真实 IP：仅当直连对端为受信代理时才采信 X-Forwarded-For / X-Real-IP，
+     * 否则一律用 REMOTE_ADDR——防伪造转发头造成误账 / 隐私失真（H4）。
      */
     private function clientIp(ServerRequestInterface $request): string
     {
-        $fwd = $request->getHeaderLine('X-Forwarded-For');
-        if ($fwd !== '') {
-            return strstr($fwd, ',', true) ?: $fwd;
-        }
-        $real = $request->getHeaderLine('X-Real-IP');
-        if ($real !== '') {
-            return $real;
-        }
-        $server = $request->getServerParams();
+        return TrustedProxies::clientIp($request, $this->trusted);
+    }
 
-        return $server['REMOTE_ADDR'] ?? 'unknown';
+    /**
+     * 访问日志脱敏集合（与审计共用默认值，见 config/audit.php mask_params 可覆盖；
+     * 访问日志为观测用途，默认即脱敏，不提供关闭开关，防止凭据明文落盘 H5）。
+     *
+     * @return array<int, string>
+     */
+    private function maskParams(): array
+    {
+        return QueryMasker::normalizeMaskParams(null);
     }
 }

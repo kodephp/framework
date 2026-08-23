@@ -43,9 +43,20 @@ final class PcntlTimeoutScheduler implements TimeoutScheduler
         });
 
         try {
+            // 关键：真正启动 SIGALRM 计时（旧实现只调 pcntl_alarm(0) 取消、从不启动，
+            // 导致超时永不触发——v0.8.42 修复）。
+            pcntl_alarm($secondsInt);
+
             $result = $op();
+
             pcntl_alarm(0);
             pcntl_signal(SIGALRM, $previous);
+
+            // 业务若把信号抛出的异常当作普通 \Throwable 吞掉，超时会静默失效：
+            // 这里在 op 正常返回后再次检查信号标志，补抛一次，保证超时仍生效。
+            if ($thrown !== null) {
+                throw $thrown;
+            }
 
             return $result;
         } catch (\Throwable $e) {

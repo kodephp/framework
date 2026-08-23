@@ -8,7 +8,11 @@ use Kode\Exception\ExceptionManager;
 use Kode\Framework\Application;
 use Kode\Framework\Http\Resp;
 use Kode\Http\App as HttpApp;
+use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
+use Kode\Http\Psr7\Uri;
 use Kode\Http\Response;
+use Kode\Http\Routing\RouteResult;
+use Kode\Http\Routing\RouteRunner;
 use Kode\Process\Http\Request as ProcessRequest;
 use Kode\Process\Kode;
 use Kode\Process\Runtime\ConnectionInterface;
@@ -71,6 +75,14 @@ final class HttpServer
         $reusePort  = (bool) ($this->config['reuse_port'] ?? false);
         $name    = (string) ($this->config['name'] ?? 'kode-http');
         $gracefulTimeout = max(0, (int) ($this->config['graceful_shutdown_timeout'] ?? 30));
+        $debug   = (bool) ($this->config['debug'] ?? false);
+
+        // Lean opt-out（默认关）：跳过 toPsr7 + App::handle(全局中间件管道) + emit 整段，
+        // 对「无路由级中间件的热路径」直发 raw，追平 webman 同构 handler 的吞吐天花板。
+        // 通过 server.lean 配置或 KODE_LEAN=1 环境变量开启；带中间件 / 404 / 405 的
+        // 请求自动退回完整 PSR-7 路径，默认行为零影响。
+        $leanEnv = $_SERVER['KODE_LEAN'] ?? getenv('KODE_LEAN');
+        $lean    = !empty($this->config['lean']) || $leanEnv === '1' || $leanEnv === 'true';
 
         echo "正在启动 Kode 多进程服务：http://{$host}:{$port}（worker={$workers}）\n";
         echo "项目根目录：{$root}\n";
@@ -115,7 +127,7 @@ final class HttpServer
                 // 忽略。
             }
         })
-        ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, &$graceful, $bootWorker): void {
+        ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, &$graceful, $bootWorker, $lean, $debug): void {
             if (!$message instanceof ProcessRequest) {
                 return;
             }
@@ -126,6 +138,38 @@ final class HttpServer
                 return;
             }
 
+            // ── Lean opt-out ──────────────────────────────────────────────
+            // 对「无路由级中间件的命中路由」跳过 toPsr7 + App::handle(全局中间件管道) + emit，
+            // 直接 RouteRunner::invoke + Response::resolve + 原生 raw 直发，追平 webman 同构
+            // handler 的吞吐天花板（KODE_LEAN 已证 ≈ webman 99.8%）。含中间件 / 404 / 405
+            // 的请求自动退回下方完整 PSR-7 路径，默认行为零影响。
+            if ($lean) {
+                /** @var HttpApp $http */
+                $router = $http->getRouter();
+                $result = $router->match($message->method(), $message->path());
+                if ($result->status === RouteResult::FOUND) {
+                    $route = $result->route;
+                    if ($route->getMiddlewares() === []) {
+                        $leanReq = (new KodeServerRequest($message->method(), $message->path()))
+                            ->withAttribute('_route', $route)
+                            ->withAttribute('_route_params', $result->params);
+                        foreach ($result->params as $k => $v) {
+                            $leanReq = $leanReq->withAttribute($k, $v);
+                        }
+                        try {
+                            $data = RouteRunner::invoke($route->getHandler(), $leanReq, $result->params);
+                            $response = Response::resolve($data);
+                        } catch (\Throwable $e) {
+                            $response = $this->errorResponse($e, $debug);
+                        }
+                        $protocol = preg_match('#HTTP/(\d+\.\d+)#i', $message->protocol(), $m) ? $m[1] : '1.1';
+                        $conn->send(HttpBridge::toRaw($response, $protocol), true);
+                        return;
+                    }
+                }
+                // 命中带中间件路由 / 未命中：落入完整 PSR-7 路径
+            }
+
             try {
                 $psr = HttpBridge::toPsr7($message);
                 /** @var HttpApp $http */
@@ -133,7 +177,6 @@ final class HttpServer
                 $response = $graceful instanceof GracefulShutdown ? $graceful->track($handler) : $handler();
                 HttpBridge::emit($conn, $response);
             } catch (\Throwable $e) {
-                $debug = (bool) (Application::getInstance()?->config()->get('app.debug', false) ?? false);
                 HttpBridge::emit($conn, $this->errorResponse($e, $debug));
             }
         });

@@ -40,9 +40,23 @@ final class StaticIdempotencyStore implements IdempotencyStore
 
     public function put(string $key, int $ttl, ?string $payload = null): bool
     {
-        if ($this->has($key)) {
+        if ($this->dir === null) {
+            // memory 模式：has→write 之间无任何挂起点（PHP 协作式执行模型下天然原子）。
+            if ($this->has($key)) {
+                return false;
+            }
+            $this->write($key, ['expires' => microtime(true) + max(1, $ttl), 'payload' => $payload]);
+
+            return true;
+        }
+
+        // file 模式（v0.8.42 修复）：先用「独占创建」原子占位（fopen 'x' = O_CREAT|O_EXCL，
+        // 同一时刻仅一个进程能成功），彻底消除旧 check-then-act 竞态——
+        // 旧实现 has() 与 write() 之间多进程并发会双双返回 true、互相覆盖，幂等去重失效。
+        if (!$this->createExclusive($key)) {
             return false;
         }
+
         $this->write($key, ['expires' => microtime(true) + max(1, $ttl), 'payload' => $payload]);
 
         return true;
@@ -179,6 +193,29 @@ final class StaticIdempotencyStore implements IdempotencyStore
         if (is_file($file)) {
             @unlink($file);
         }
+    }
+
+    /**
+     * 以独占方式创建幂等键文件（O_CREAT|O_EXCL 语义）：已存在（含并发竞争）返回 false。
+     *
+     * 内容随后由 {@see write()} 以 tmp + rename 原子落盘覆盖占位文件；占位到落盘之间的
+     * 极窄窗口内，并发进程读取到的是空文件（json 解析失败返回 null），其 put 会因
+     * fopen 'x' 失败返回 false，从而走「重放/409」路径——不会出现双 true，符合幂等语义。
+     */
+    private function createExclusive(string $key): bool
+    {
+        if (!is_dir($this->dir) && !@mkdir($this->dir, 0o755, true) && !is_dir($this->dir)) {
+            throw new RuntimeException('无法创建幂等存储目录：' . $this->dir);
+        }
+
+        $file = $this->path($key);
+        $handle = @fopen($file, 'x');
+        if ($handle === false) {
+            return false;
+        }
+        fclose($handle);
+
+        return true;
     }
 
     private function path(string $key): string

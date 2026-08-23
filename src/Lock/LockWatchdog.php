@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Lock;
 
+use Kode\Fibers\Concurrency\Scheduler;
 use Kode\Fibers\Fibers;
 use RuntimeException;
 
@@ -108,18 +109,26 @@ final class LockWatchdog
     }
 
     /**
-     * 内置默认续期调度：auto 优先尝试 fiber，失败回退 tick。
+     * 内置默认续期调度：auto 优先尝试 fiber（仅在真正处于调度器上下文中），否则回退 tick。
+     *
+     * 修复说明（v0.8.42）：
+     *  - 旧实现用 `Fibers::scheduler() !== null` 判断 fiber 可用性，但 kode/fibers 的
+     *    `Scheduler::default()` 总会创建并返回默认调度器、永不为 null，导致 auto 模式恒走
+     *    fiber 分支；
+     *  - 更致命的是 `Fibers::go()` 的语义是「同步执行任务直至完成」（协程内直接 `$callable()`，
+     *    协程外 new Scheduler + join），并非「后台并行启动」。旧 `fiberTicker()` 用它挂载
+     *    watchdog 循环（`$stop` 初始为 false），该循环永不结束，`$work()` 永远不会执行——
+     *    业务被无限阻塞，等价于无看门狗 + 锁被长期占用。
+     *  - 现在：仅当 `Scheduler::inCoroutine()` 为真（当前执行单元确处于事件循环内）才用
+     *    fiber 驱动，且改用 `Scheduler::current()->go()` 把续期协程并行挂到当前调度器
+     *    （非阻塞），由调度器在 `$work()` 让出执行权时推进续期；`$work()` 自身异常不再被
+     *    吞掉并重跑 tick（那正是「业务双执行」的成因之一），原样向上传播。
      */
     private function defaultTicker(): \Closure
     {
         return function (callable $work, callable $tick, int $interval): mixed {
             if ($this->driver === 'fiber' || ($this->driver === 'auto' && $this->fiberAvailable())) {
-                try {
-                    return $this->fiberTicker($work, $tick, $interval);
-                } catch (\Throwable) {
-                    // fiber 不可用（无调度器上下文等）→ 回退 tick
-                    return $this->tickTicker($work, $tick, $interval);
-                }
+                return $this->fiberTicker($work, $tick, $interval);
             }
 
             return $this->tickTicker($work, $tick, $interval);
@@ -149,20 +158,36 @@ final class LockWatchdog
     }
 
     /**
-     * fiber 驱动：协程 sleep 与 work 并行续期（需 fiber 调度器驱动）。
+     * fiber 驱动：把续期协程**并行挂载**到当前事件循环，与 work 并行推进（需 fiber 调度器驱动）。
+     *
+     * 与旧实现的差异（v0.8.42 修复）：
+     *  - 不再使用 `Fibers::go()`（同步执行直到任务结束，会把 watchdog 无限循环阻塞在当前
+     *    执行单元上，导致 `$work()` 永远不执行）；改用 `Scheduler::current()->go()` 把协程
+     *    挂到当前调度器后就立即返回（非阻塞），`$work()` 在自身协程继续执行；
+     *  - watchdog 协程内部捕获一切异常：续期失败不应打断业务主流程（与 tick 驱动语义一致），
+     *    看门狗静默退出即可，业务按「无看门狗」路径继续。
      */
     private function fiberTicker(callable $work, callable $tick, int $interval): mixed
     {
+        // fiberAvailable() 已保证当前在协程内（inCoroutine() 为真），current() 必非 null；
+        // 仍加防御：若当前实现变化导致走到此处时无调度器，则回退 tick 而非静默死锁。
+        $scheduler = Scheduler::current();
+        if ($scheduler === null) {
+            return $this->tickTicker($work, $tick, $interval);
+        }
+
         $stop = false;
-        // watchdog 协程先于 work 构造：若无调度器上下文，Fibers::go 抛异常 → 由调用方回退 tick，
-        // 此时 work 尚未执行，无副作用。
-        Fibers::go(function () use (&$stop, $interval, $tick): void {
-            while (!$stop) {
-                Fibers::sleep($interval);
-                if ($stop) {
-                    break;
+        $scheduler->go(static function () use (&$stop, $interval, $tick): void {
+            try {
+                while (!$stop) {
+                    Fibers::sleep($interval);
+                    if ($stop) {
+                        break;
+                    }
+                    $tick();
                 }
-                $tick();
+            } catch (\Throwable) {
+                // 续期失败绝不中断业务：看门狗静默退出，work 继续执行。
             }
         });
 
@@ -179,8 +204,10 @@ final class LockWatchdog
             return false;
         }
 
+        // 必须判断「当前执行单元是否处于事件循环内」：Scheduler::default() 总是非 null，
+        // 用它判断会把非协程上下文误判为可用（旧 bug 根因一）。
         try {
-            return Fibers::scheduler() !== null;
+            return Scheduler::inCoroutine();
         } catch (\Throwable) {
             return false;
         }

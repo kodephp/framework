@@ -117,7 +117,7 @@ final class HttpServiceProvider extends ServiceProvider
                 ? $this->container->get(AccessLogSink::class)
                 : null;
 
-            $app->use(new AccessLogMiddleware($logger, true, $sink, $async));
+            $app->use(new AccessLogMiddleware($logger, true, $sink, $async, $this->trustedProxies()));
         }
 
         if (!empty($this->config('cors.enabled', true))) {
@@ -146,6 +146,7 @@ final class HttpServiceProvider extends ServiceProvider
                 $factory,
                 (array) $this->config('limiting', []),
                 $resolver,
+                $this->trustedProxies(),
             ));
         }
 
@@ -262,6 +263,7 @@ final class HttpServiceProvider extends ServiceProvider
                 $featureManager,
                 (array) $this->config('feature', []),
                 $resolver,
+                $this->trustedProxies(),
             ));
         }
 

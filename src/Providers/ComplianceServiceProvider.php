@@ -34,7 +34,7 @@ final class ComplianceServiceProvider extends ServiceProvider
                 : null;
             $async = (bool) ($this->config('audit.async', true) ?? true);
 
-            return new AuditService($logger, (array) $this->config('audit', []), $sink, $async);
+            return new AuditService($logger, (array) $this->config('audit', []), $sink, $async, $this->trustedProxies());
         });
         $this->container->alias('audit', AuditService::class);
     }

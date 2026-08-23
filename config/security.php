@@ -52,4 +52,23 @@ return [
 
     // Cross-Origin-Embedder-Policy：需配合 COOP 开启跨源隔离（凭据类 API 可开 require-corp）。
     'cross_origin_embedder_policy' => env('SECURITY_COEP', false),
+
+    /*
+     * 受信反向代理列表（v0.8.42 新增，H4 修复的配置锚点）。
+     *
+     * 仅当直连对端（REMOTE_ADDR）命中此列表时，框架才采信 X-Forwarded-For / X-Real-IP
+     * 等转发头，用于限流真实 IP、审计溯源、灰度分桶。默认 [] = 不信任任何代理，
+     * 一律用 REMOTE_ADDR——客户端伪造 XFF / X-User-Id 等头将无法绕过限流或操纵分桶。
+     *
+     * 支持三种写法（可混合）：
+     *   - 精确 IP：'203.0.113.10'
+     *   - CIDR：'10.0.0.0/8'、'2001:db8::/32'
+     *   - '*'：信任一切直连（仅限内网网关 / 无法枚举代理出口的场景）
+     *
+     * 常见部署：前置一层 Nginx/LB 时填写其出口网段，如 ['127.0.0.1', '10.0.0.0/8']；
+     * 多层代理时填写全部可直连的代理网段（XFF 解析从右往左取第一个非受信地址）。
+     */
+    'trusted_proxies' => env('TRUSTED_PROXIES')
+        ? explode(',', (string) env('TRUSTED_PROXIES'))
+        : [],
 ];
