@@ -189,7 +189,7 @@ try {
 ```bash
 # 在 kode/http 仓库根目录
 git apply patches/upstream/kode-http-3.4.10.patch   # 或 cp 到仓库根后 git apply
-# 版本号：composer.json version 已随补丁更新为 3.4.8，请手动改为 3.4.10
+# 版本号：composer.json version 已随补丁更新为 3.4.10，无需手动改
 # 提交并打 tag：git tag v3.4.10
 ```
 
