@@ -60,8 +60,9 @@ final class SecurityComplianceTest extends TestCase
         self::assertSame('/api/orders', $ctx['path']);
         self::assertSame(201, $ctx['status']);
         self::assertSame('u-42', $ctx['user_id']);
-        // 读取后清除，避免跨请求泄漏。
-        self::assertNull(Context::get('auth_user_id'));
+        // v0.8.42 契约：AuditService 读取用户上下文时**不清除**（同请求内多次审计取一致身份），
+        // 跨请求防泄漏由全局最外层 ConnectionCleanupMiddleware 在下一请求开始前兜底清理。
+        self::assertSame('u-42', Context::get('auth_user_id'));
     }
 
     public function testAuditMasksSensitiveQueryParam(): void

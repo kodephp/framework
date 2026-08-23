@@ -64,28 +64,39 @@ final class HttpBridgeTest extends TestCase
         self::assertStringStartsWith('HTTP/1.0 200', HttpBridge::toRaw($psr, '1.0'));
     }
 
-    public function testEmitDelegatesToConnectionSendResponse(): void
+    public function testEmitFastPathWritesRawForSmallBody(): void
     {
+        // 架构红线（v0.8.42）：小响应走 rawBody 感知的快路径，由 toRaw 序列化后经 send($raw, true)
+        // 直写连接，避免经 PSR-7 getBody() 二次物化——这是 /bench/json 的性能主路径。
         $response = Response::make('hi', 200)->withHeader('Content-Type', 'text/plain');
         $conn = $this->createMock(\Kode\Process\Runtime\ConnectionInterface::class);
 
-        // 架构红线：框架层只做薄委托，引擎专用写出由 kode/process 各 Driver 负责。
         $conn->expects(self::once())
-            ->method('sendResponse')
-            ->with($response, '1.1');
+            ->method('send')
+            ->with(self::stringStartsWith('HTTP/1.1 200'), true);
+        $conn->expects(self::never())
+            ->method('sendResponse');
 
         HttpBridge::emit($conn, $response);
     }
 
-    public function testEmitDelegatesProtocol(): void
+    public function testEmitDelegatesToConnectionSendResponseWhenGzip(): void
     {
-        $response = Response::make('hi', 200);
+        // 架构红线：仅当连接层确会触发自动 gzip（响应体 >= GZIP_MIN_SIZE 且 isGzipAuto()）时，
+        // 才退回官方 sendResponse 以保留压缩能力；引擎专用写出由 kode/process 各 Driver 负责。
+        $body = str_repeat('a', \Kode\Process\Protocol\HttpProtocol::GZIP_MIN_SIZE);
+        $response = Response::make($body, 200)->withHeader('Content-Type', 'text/plain');
         $conn = $this->createMock(\Kode\Process\Runtime\ConnectionInterface::class);
 
         $conn->expects(self::once())
+            ->method('isGzipAuto')
+            ->willReturn(true);
+        $conn->expects(self::once())
             ->method('sendResponse')
-            ->with($response, '1.0');
+            ->with($response);
+        $conn->expects(self::never())
+            ->method('send');
 
-        HttpBridge::emit($conn, $response, '1.0');
+        HttpBridge::emit($conn, $response);
     }
 }
