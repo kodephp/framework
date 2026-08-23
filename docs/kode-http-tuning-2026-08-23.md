@@ -85,7 +85,10 @@ App::handle → Request::setRequest → syncTraceContext
 
 ---
 
-## 2. 剩余包侧调优候选（未做，按 ROI 排序）
+## 2. 剩余包侧调优候选（已随 v3.4.9 部分落地，更新于 2026-08-23 夜）
+
+> v3.4.9（`docs/kode-http-perf-3.4.9.md`）已实现：`Request::clear` 按需清理（traceWritten）、
+> `JsonErrorHandlerMiddleware` 自研响应短路、`Response::isJsonContentType()` 轻量判定。本节仅存低 ROI 项。
 
 ### 2.1 RouteRunner::handle 尾部瘦身（低 ROI，可不动）
 
@@ -102,10 +105,11 @@ $request = $request
 - 候选：把 `_route_params` 改为惰性属性（读取时再从 `_route` 取）可省 1 次，收益 <100ns，不建议。
 - `dispatchRoute`：`$id = spl_object_id($route)` + 数组命中，已是最小开销。
 
-### 2.2 JsonErrorHandlerMiddleware::ensureJsonContentType（低 ROI）
+### 2.2 JsonErrorHandlerMiddleware::ensureJsonContentType（✅ 已随 v3.4.9 实现）
 
-`getHeaderLine('Content-Type')` 对已解析请求是一次 string 拼装 + 查找，
-对懒请求本会触发一次解析（但正常请求在 handler 前通常已无此读）——保持现状。
+`getHeaderLine('Content-Type')` 对自研响应改为 `Response::isJsonContentType()` 轻量判定
+（headerNames 精确映射 + 直接 array 寻址，零 PSR-7 规范化）；且 `process()` 对自研响应整体短路
+（默认即 JSON 语义，跳过状态码校验 + 内容类型包装全链）。见 `docs/kode-http-perf-3.4.9.md` §2/§3。
 
 ### 2.3 syncTraceContext 其它嗅探（已随 §1 收敛）
 
@@ -125,6 +129,7 @@ stripos 定向扫描（~96ns×4）是剩余的全部成本。若要再压：合�
 
 | 项 | 值 |
 |---|---|
-| 包仓库 | `composer/http` `2718f99`（v3.4.8，未推送） |
-| 框架 | v0.8.47（`src/Application.php` VERSION；README） |
+| 包仓库 | `composer/http` 分支 `perf-3.4.9`，commit `a0a6d9d`（v3.4.9，**未推送**；v3.4.8 `2718f99` 亦未推送，均待真机 push） |
+| 框架 | v0.8.49（`src/Application.php` VERSION；README） |
+| 后续调优 | §2.1~§2.3 与 perf-3.4.9 §6 的剩余候选（RouteRunner withAttribute / Context 写删 / toPsr7 协议懒化）已随 v3.4.10 全部落地，见 `docs/kode-http-perf-3.4.10.md`；`patches/upstream/kode-http-3.4.10.patch` 为本轮全部包侧改动的合集 |
 | 未推送说明 | github push 由用户在真机执行（HTTPS 无凭证），push 后框架侧 `composer update kode/http` 即同步 |

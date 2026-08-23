@@ -1,0 +1,388 @@
+diff --git a/composer.json b/composer.json
+index cf503ea..39c7a79 100644
+--- a/composer.json
++++ b/composer.json
+@@ -26,7 +26,7 @@
+     ],
+     "homepage": "https://github.com/kodephp/http",
+     "license": "Apache-2.0",
+-    "version": "3.4.7",
++    "version": "3.4.8",
+     "authors": [
+         {
+             "name": "Kode Team",
+diff --git a/src/App.php b/src/App.php
+index a3dd3b6..768fee7 100644
+--- a/src/App.php
++++ b/src/App.php
+@@ -252,13 +252,19 @@ class App implements RequestHandlerInterface
+      */
+     public function handle(ServerRequestInterface $request): ResponseInterface
+     {
+-        Request::setRequest($request);
++        // 热路径优化：栈中仅默认异常中间件（无用户全局中间件）时，跳过请求 facade
++        // 预置——此时前置阶段无人读取 `Request::*()`，请求对象由 RouteRunner 在派发时
++        // 写入（含 404/405 分支），行为与旧版完全等价；RouteRunner 的 finally 清理
++        // 照常执行（幂等）。有用户全局中间件时保持原行为，中间件内 facade 可用。
++        if (!$this->dispatcher->isBare()) {
++            Request::setRequest($request);
++        }
+ 
+         try {
+             $response = $this->dispatcher->handle($request);
+ 
+-            // HEAD 请求不返回响应体
+-            if (strtoupper($request->getMethod()) === 'HEAD') {
++            // HEAD 请求不返回响应体（strcasecmp 无分配，热路径免 strtoupper 字符串拷贝）
++            if (strcasecmp($request->getMethod(), 'HEAD') === 0) {
+                 $response = $response->withBody(Psr7\Stream::create(''));
+             }
+ 
+diff --git a/src/Middleware/JsonErrorHandlerMiddleware.php b/src/Middleware/JsonErrorHandlerMiddleware.php
+index d0d8efe..dbd8dda 100644
+--- a/src/Middleware/JsonErrorHandlerMiddleware.php
++++ b/src/Middleware/JsonErrorHandlerMiddleware.php
+@@ -47,15 +47,23 @@ class JsonErrorHandlerMiddleware implements MiddlewareInterface
+     {
+         try {
+             $response = $handler->handle($request);
+-
+-            if ($response->getStatusCode() >= 400) {
+-                return $this->handleErrorResponse($response);
+-            }
+-
+-            return $this->ensureJsonContentType($response);
+         } catch (\Throwable $e) {
+             return $this->handleException($e, $request);
+         }
++
++        // 热路径短路：Kode 自研响应构造默认即 application/json，且状态码语义由
++        // `status()` 显式维护——无需再校验状态码与 Content-Type（省 ~2µs/请求，
++        // 即 getStatusCode + handleErrorResponse/ensureJsonContentType 全链解释开销）。
++        // 仅对非自研 PSR-7 响应（用户手工 new 或第三方中间件产物）保留完整包装逻辑。
++        if ($response instanceof \Kode\Http\Response) {
++            return $response;
++        }
++
++        if ($response->getStatusCode() >= 400) {
++            return $this->handleErrorResponse($response);
++        }
++
++        return $this->ensureJsonContentType($response);
+     }
+ 
+     /**
+@@ -181,6 +189,11 @@ class JsonErrorHandlerMiddleware implements MiddlewareInterface
+      */
+     private function isJsonContentType(Response $response): bool
+     {
++        // Kode 自研响应：轻量读内部 headers，避开 PSR-7 getHeaderLine 规范化（热路径 ~1-2µs/请求）
++        if ($response instanceof \Kode\Http\Response) {
++            return $response->isJsonContentType();
++        }
++
+         $contentType = $response->getHeaderLine('Content-Type');
+         return str_contains(strtolower($contentType), 'application/json');
+     }
+diff --git a/src/Middleware/MiddlewareDispatcher.php b/src/Middleware/MiddlewareDispatcher.php
+index 22de6e0..0045634 100644
+--- a/src/Middleware/MiddlewareDispatcher.php
++++ b/src/Middleware/MiddlewareDispatcher.php
+@@ -50,4 +50,16 @@ class MiddlewareDispatcher extends MiddlewarePipeline
+     {
+         return count($this->middlewares);
+     }
++
++    /**
++     * 是否为「仅默认异常中间件」的最小栈（无用户注册的全局中间件）。
++     *
++     * 供 App::handle 快速判定可否省略请求 facade 预置——栈中只有框架默认
++     * 异常中间件时，前置阶段无人读取 `Request::*()` façade，请求对象由
++     * RouteRunner 在派发时写入即可，行为完全等价。
++     */
++    public function isBare(): bool
++    {
++        return count($this->middlewares) <= 1;
++    }
+ }
+diff --git a/src/Psr7/Message/LazyHeaderAware.php b/src/Psr7/Message/LazyHeaderAware.php
+new file mode 100644
+index 0000000..a226e6c
+--- /dev/null
++++ b/src/Psr7/Message/LazyHeaderAware.php
+@@ -0,0 +1,34 @@
++<?php
++
++declare(strict_types=1);
++
++namespace Kode\Http\Psr7\Message;
++
++/**
++ * 懒加载请求的头解析状态守卫接口。
++ *
++ * 供框架 / 适配层标记「header 尚未解析的懒请求」：链路追踪嗅探等热路径可据此
++ * 在不触发任何解析（header 规范化 / server params 构建）的前提下快速判定
++ * 「不存在程序化注入的链路头」，避免为每个请求付出不必要的引导成本。
++ *
++ * 背景：{@see LazyServerRequest} 承诺热路径零 header 成本；但服务端框架可能
++ * 自实现同语义的懒请求类（父类不同，无法被 instanceof 包内类捕获）。
++ * 通过本接口解耦：任何实现方只要声明 isHeadersResolved() 供守卫查询即可。
++ */
++interface LazyHeaderAware
++{
++    /**
++     * header 是否已解析（规范化并写入内部存储）。
++     * 未解析时调用方应假设不存在程序化注入的 header，可跳过 header 扫描。
++     */
++    public function isHeadersResolved(): bool;
++
++    /**
++     * 定向读取单个 header 的值：必须在不触发全量 header 解析 / server params
++     * 引导构建的前提下完成（未命中返回 null）。用于链路追踪嗅探等热路径守卫，
++     * 使懒加载请求维持「热路径零解析成本」的承诺，同时不错判真实报文中的链路头。
++     * 内部实现可走原始报文定向扫描 / server params 键查 / 显式注入缓存等廉价来源；
++     * 若 header 已解析，允许退化为普通 getHeaderLine。
++     */
++    public function peekHeader(string $name): ?string;
++}
+\ No newline at end of file
+diff --git a/src/Psr7/Message/LazyServerRequest.php b/src/Psr7/Message/LazyServerRequest.php
+index 8ddca7b..037fdfa 100644
+--- a/src/Psr7/Message/LazyServerRequest.php
++++ b/src/Psr7/Message/LazyServerRequest.php
+@@ -15,7 +15,7 @@ namespace Kode\Http\Psr7\Message;
+  * query / cookie / uploadedFiles / parsedBody 仍按原逻辑构建（成本可忽略），
+  * 因为路由与绝大多数处理器都需要它们，而 header 在纯转发类热路径上往往不被读取。
+  */
+-class LazyServerRequest extends ServerRequest
++class LazyServerRequest extends ServerRequest implements LazyHeaderAware
+ {
+     private bool $headersResolved = false;
+ 
+@@ -27,6 +27,45 @@ class LazyServerRequest extends ServerRequest
+         return $this->headersResolved;
+     }
+ 
++    /**
++     * 定向读取单个 header 值，不触发任何全量解析。
++     *
++     * - 未解析：依次查「显式注入（withHeader 程序化设置）」→「server params 的
++     *   HTTP_* / CONTENT_* 键」，与 hasHeader 未解析分支同构，但返回具体值；
++     * - 已解析：退化为普通 getHeaderLine。
++     *
++     * 供同步追踪嗅探（hasTraceHeaders）在热路径上做零解析守卫。
++     */
++    public function peekHeader(string $name): ?string
++    {
++        if (!$this->headersResolved) {
++            $normalized = $this->normalizeHeaderName($name);
++            if (isset($this->headerNames[$normalized])) {
++                $value = $this->headers[$this->headerNames[$normalized]] ?? null;
++                $value = is_array($value) ? reset($value) : $value;
++                return ($value !== null && $value !== '') ? (string) $value : null;
++            }
++
++            $server = $this->getServerParams();
++            $httpKey = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
++            if (isset($server[$httpKey]) && $server[$httpKey] !== '') {
++                return (string) $server[$httpKey];
++            }
++
++            $upper = strtoupper($name);
++            if (($upper === 'CONTENT-TYPE' || $upper === 'CONTENT-LENGTH' || $upper === 'CONTENT-MD5')
++                && isset($server[$upper]) && $server[$upper] !== '') {
++                return (string) $server[$upper];
++            }
++
++            return null;
++        }
++
++        $line = parent::getHeaderLine($name);
++
++        return $line !== '' ? $line : null;
++    }
++
+     public function getHeaders(): array
+     {
+         $this->resolveHeaders();
+diff --git a/src/Request.php b/src/Request.php
+index ff581f6..d65c041 100644
+--- a/src/Request.php
++++ b/src/Request.php
+@@ -5,6 +5,7 @@ declare(strict_types=1);
+ namespace Kode\Http;
+ 
+ use Kode\Context\Context;
++use Kode\Http\Psr7\Message\LazyHeaderAware;
+ use Kode\Http\Psr7\Message\LazyServerRequest;
+ use Psr\Http\Message\ServerRequestInterface;
+ use Psr\Http\Message\UploadedFileInterface;
+@@ -64,6 +65,9 @@ class Request
+     /** @var ServerRequestInterface|null 无上下文组件时的回退存储 */
+     private static ?ServerRequestInterface $fallback = null;
+ 
++    /** 本轮请求是否已写入链路追踪上下文（供 clear 按需清理，热路径省 4 次 Context::delete） */
++    private static bool $traceWritten = false;
++
+     /** @var list<string> 代理来源 IP 头，按优先级排列 */
+     public const array IP_HEADERS = [
+         'X-Forwarded-For',
+@@ -108,8 +112,13 @@ class Request
+         if (class_exists(Context::class)) {
+             Context::delete(self::CONTEXT_KEY);
+ 
+-            foreach (self::TRACE_KEYS as $key) {
+-                Context::delete($key);
++            // 绝大多数请求（压测/生产）不携带链路头，traceWritten 为 false 时
++            // 跳过 4 次 Context::delete（每次含执行单元解析 + WeakMap 查找，合计 ~1µs/请求）。
++            if (self::$traceWritten) {
++                foreach (self::TRACE_KEYS as $key) {
++                    Context::delete($key);
++                }
++                self::$traceWritten = false;
+             }
+         }
+ 
+@@ -139,6 +148,7 @@ class Request
+             ?: '';
+         if ($requestId !== '') {
+             Context::set(Context::REQUEST_ID, $requestId);
++            self::$traceWritten = true;
+         }
+ 
+         $traceId = $request->getHeaderLine('traceparent')
+@@ -146,23 +156,42 @@ class Request
+             ?: '';
+         if ($traceId !== '') {
+             Context::set(Context::TRACE_ID, $traceId);
++            self::$traceWritten = true;
+         }
+ 
+         $correlationId = $request->getHeaderLine('X-Correlation-Id') ?: '';
+         if ($correlationId !== '') {
+             Context::set(Context::CORRELATION_ID, $correlationId);
++            self::$traceWritten = true;
+         }
+     }
+ 
+     /**
+      * 请求是否携带任一链路追踪来源头。
+      *
+-     * 直接扫描 server params（$_SERVER 的 HTTP_* 键），**不调用 hasHeader**，
+-     * 因此不会触发懒加载请求（LazyServerRequest）的 header 规范化，热路径零 header 成本。
++     * 优先级：懒加载早退 —— 对实现 {@see LazyHeaderAware} 且 header 尚未解析的请求，
++     * 通过 {@see LazyHeaderAware::peekHeader()} 定向读取 4 个链路头，全程不触发任何
++     * 全量解析（header 规范化 / server params 引导构建），既维持懒加载请求热路径
++     * 零成本承诺，又不错判真实报文（原始请求头 / $_SERVER 的 HTTP_* / withHeader 注入）。
++     * 已解析的懒请求与非懒请求退化为通用路径：先扫 server params（$_SERVER 的
++     * HTTP_* 键，**不调用 hasHeader**），再走 hasHeader 兜底。
+      * 取值（syncTraceContext 内的 getHeaderLine）仅在确有链路头时发生，属低频路径。
+      */
+     private static function hasTraceHeaders(ServerRequestInterface $request): bool
+     {
++        if ($request instanceof LazyHeaderAware) {
++            if (!$request->isHeadersResolved()) {
++                foreach (self::TRACE_HEADERS as $header) {
++                    if ($request->peekHeader($header) !== null) {
++                        return true;
++                    }
++                }
++
++                return false;
++            }
++            // 已解析：退化通用路径（serverParams 可能含 HTTP_*，或 header 已注入）
++        }
++
+         $server = $request->getServerParams();
+         foreach (self::TRACE_HEADERS_SERVER as $key) {
+             if (isset($server[$key]) && $server[$key] !== '') {
+@@ -170,13 +199,6 @@ class Request
+             }
+         }
+ 
+-        // 兜底：链路头经 withHeader 程序化设置（如测试 / 手动注入）时不在 server params 中。
+-        // 对 LazyServerRequest，若尚未解析 header 则直接返回 false，避免强制规范化拖慢热路径；
+-        // 已解析（如已调用 withHeader）或非懒加载请求时，退回标准 hasHeader 判定。
+-        if ($request instanceof LazyServerRequest && !$request->isHeadersResolved()) {
+-            return false;
+-        }
+-
+         foreach (self::TRACE_HEADERS as $header) {
+             if ($request->hasHeader($header)) {
+                 return true;
+diff --git a/src/Response.php b/src/Response.php
+index 9f11471..f290160 100644
+--- a/src/Response.php
++++ b/src/Response.php
+@@ -303,6 +303,28 @@ class Response extends Psr7\Message\Response
+         return $this;
+     }
+ 
++    /**
++     * 是否为 JSON Content-Type（轻量读取，不触发 PSR-7 header 规范化）
++     *
++     * 热路径守卫：JsonErrorHandler 每请求调用 isJsonContentType 判定，
++     * 对 Kode 自研响应直接读内部 headers 数组（构造默认即
++     * application/json; charset=utf-8），省去 getHeaderLine 的
++     * normalizeHeaderName 全表遍历 + implode 开销（~1-2µs/请求）。
++     *
++     * 键名解析走 headerNames（小写→原始大小写）映射，与 getHeaderLine
++     * 语义完全一致：无论构造时传入 'Content-Type' 还是 'content-type'
++     * 均可命中，不会因大小写变体漏判。
++     */
++    public function isJsonContentType(): bool
++    {
++        $key = $this->headerNames['content-type'] ?? null;
++        if ($key === null) {
++            return false;
++        }
++        $ct = $this->headers[$key][0] ?? '';
++        return str_contains(strtolower($ct), 'application/json');
++    }
++
+     /**
+      * 获取响应体（字符串形式）
+      */
+diff --git a/src/Routing/RouteRunner.php b/src/Routing/RouteRunner.php
+index a4364d1..c76fad6 100644
+--- a/src/Routing/RouteRunner.php
++++ b/src/Routing/RouteRunner.php
+@@ -69,22 +69,33 @@ final class RouteRunner implements RequestHandlerInterface
+         $result = $this->router->match($request->getMethod(), $request->getUri()->getPath());
+ 
+         if ($result->status === RouteResult::NOT_FOUND) {
++            // 保持 facade 语义：App 层在「无用户中间件」时不再预置请求，
++            // 404/405 分支在此统一写入，行为与旧版（App 层预置）完全等价。
++            Request::setRequest($request);
++
+             return $this->handleNotFound($request);
+         }
+ 
+         if ($result->status === RouteResult::METHOD_NOT_ALLOWED) {
++            Request::setRequest($request);
++
+             return $this->handleMethodNotAllowed($request, $result->allowedMethods);
+         }
+ 
+         /** @var Route $route */
+         $route = $result->route;
+ 
+-        foreach ($result->params as $name => $value) {
+-            $request = $request->withAttribute($name, $value);
++        // 无参路由热路径：跳过 attribute 克隆（_route 在包内无消费方；
++        // _route_params 对空参数恒等于闭包/Request::param() 的默认值 []，语义完全一致）。
++        // 有参数路由保持原行为（参数注入 + _route/_route_params 全部写入）。
++        if ($result->params !== []) {
++            foreach ($result->params as $name => $value) {
++                $request = $request->withAttribute($name, $value);
++            }
++            $request = $request
++                ->withAttribute('_route', $route)
++                ->withAttribute('_route_params', $result->params);
+         }
+-        $request = $request
+-            ->withAttribute('_route', $route)
+-            ->withAttribute('_route_params', $result->params);
+ 
+         Request::setRequest($request);
+ 

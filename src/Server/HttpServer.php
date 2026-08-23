@@ -150,11 +150,16 @@ final class HttpServer
                 if ($result->status === RouteResult::FOUND) {
                     $route = $result->route;
                     if ($route->getMiddlewares() === []) {
-                        $leanReq = (new KodeServerRequest($message->method(), $message->path()))
-                            ->withAttribute('_route', $route)
-                            ->withAttribute('_route_params', $result->params);
-                        foreach ($result->params as $k => $v) {
-                            $leanReq = $leanReq->withAttribute($k, $v);
+                        $leanReq = new KodeServerRequest($message->method(), $message->path());
+                        // 有参数路由才写入 attribute（_route 无消费方；_route_params 对空参
+                        // 恒等于 Request::param()/att('_route_params', []) 的默认值 []，语义一致）
+                        if ($result->params !== []) {
+                            $leanReq = $leanReq
+                                ->withAttribute('_route', $route)
+                                ->withAttribute('_route_params', $result->params);
+                            foreach ($result->params as $k => $v) {
+                                $leanReq = $leanReq->withAttribute($k, $v);
+                            }
                         }
                         try {
                             $data = RouteRunner::invoke($route->getHandler(), $leanReq, $result->params);
@@ -162,7 +167,12 @@ final class HttpServer
                         } catch (\Throwable $e) {
                             $response = $this->errorResponse($e, $debug);
                         }
-                        $protocol = preg_match('#HTTP/(\d+\.\d+)#i', $message->protocol(), $m) ? $m[1] : '1.1';
+                        // 热路径协议版本：HTTP/1.1 为压测/生产绝对多数，先做字符串相等判断
+                        // 免去每请求正则分配；仅非常见版本才回退 preg_match。
+                        $protocol = $message->protocol();
+                        $protocol = $protocol === 'HTTP/1.1'
+                            ? '1.1'
+                            : (preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m) ? $m[1] : '1.1');
                         $conn->send(HttpBridge::toRaw($response, $protocol), true);
                         return;
                     }

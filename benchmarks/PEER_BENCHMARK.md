@@ -8,6 +8,7 @@
 > 2026-08-18 修订（凌晨）：**基线改为「不开 JIT」**（CLI 默认 `enable_cli=Off` 态，harness 不再写死开启 JIT；`WITH_JIT=1` 看生产态）——不再把对 kode 更有利的 JIT 旋钮当「追平证据」。诚实结论：**不开 JIT 时 kode /bench/json = webman 的 89.1%**；差距 **100% 来自 PSR-7 桥接/内核路径**，且**可关**——`KODE_LEAN=1` 绕过桥接即与 webman 持平（99.8%，见 §4.1.1 铁证）。框架级 opt-out 见 §8 P5。
 > 2026-08-18 深夜二次复测：① **DB 完整性校验方法学修正**——原「webman/hyperf 跳过查询」判定错误，实测是高并发 **500 报错（PDO 2014 未缓冲结果集未关闭）被 wrk 当成功计数**；原根因「Swoole 协程共享 static $pdo」对 webman（Workerman 多进程）张冠李戴。逐字镜像 kode peer 写法 webman 仍复现 2014 → 属 webman/hyperf dispatch 让复用 PDO 连接处于「有未结束查询」状态；唯每请求新建连接可 0 错误（~3.5k 受建连成本限制，非代表值）。**结论：此前「kode 真实 DB 最高」是 invalid 的（peer 实现差异，非框架优势）；裸 PDO 端点无法公平对标竞品高并发 DB，需各框架生产级连接池。** ② 澄清 **json_encode 对称（微基准 ≈2µs、三框架相同），绝非 kode/json 差距来源**；差距来自 PSR-7 包装的每请求对象分配/GC，KODE_LEAN 已证绕过即追平 webman。
 > 2026-08-18 收官重测（任务 ③ · 各框架生产级连接池公平 DB 横比）：实现 **webman 有界 PDO 池 + closeCursor、hyperf/database 协程池（硬编码 127.0.0.1/kode_bench/root/root）、kode 非池化 per-worker PDO（kode/database 池集成有 2 处上游缺陷：①addConnection 默认 Swoole ConnectionPool 在 Workerman 构造即 Fatal；②FiberPool 默认 LaravelConnector 委托未初始化的 illuminate Capsule + 不自动 release 高并发池耗尽 500）**，并重跑 `bench_db_pooled.sh`（冷却式 + MySQL `Queries` 增量校验）。**结果：三框架 /bench/db 全部「报告≈真实 MySQL qps、1:1 诚实」、kode/hyperf 非2xx=0、webman 非2xx≈3%**——旧「invalid」结论已落地为可横比的有效数据。详见 **§4.2**。绝对值受 Apple Silicon 热降频 ±2~3× 影响，跨跑不可横比；**1:1 完整性是唯一稳健信号**。
+> 2026-08-24 修订（框架 v0.8.49 · kode/http v3.4.10）：**L0 完整 PSR-7 内核路径第四轮削费**——`RouteRunner` 无参路由跳过全部 withAttribute（§4.4 结论 5 的「剩余杠杆」榜首落地）、404/405 分支补齐 facade 写入（修隐性泄漏）、`App::handle` isBare 判定下跳过重复的 facade 预置（setRequest 2 次→1 次）、`strcasecmp` 替代 `strtoupper` HEAD 判定、`LazyServerRequest` 协议版本懒化（toPsr7 懒分支免 protocol()+preg_match）。**微基准（aarch64·JIT off·20 万×5 轮最小）：ping 完整链 6859→5493 ns（−19.9%）、handle 段 4648→3510 ns（−24.5%）；json50 完整链 13650→12407 ns（−9.1%）**；全量 425/26428 绿。补丁 `patches/upstream/kode-http-3.4.10.patch`（基于 v3.4.7 tag 全量），框架侧影响见 §4.5 与 `docs/kode-http-perf-3.4.10.md`。**peer wrk 复测待你真机执行并归档真实机数据。**
 
 ## 0. 为什么之前「看起来像 FPM」——测量方法的根本错误
 
@@ -303,23 +304,52 @@ webman 的 `/bench/db`（MySQL）在高并发持续速率下稳定返回 500（2
 - **kode/database（P1）**：连接池在 Native/Workerman 运行时可用。方向：`PoolManager::init` 运行时感知默认进程安全池 + 自动归还连接（RAII）+ 多进程部署文档。详见 `kode-package-issues.md` §B。
 - framework 侧：已落地 `P5 lean opt-out` 作止血 + 非池化 per-worker PDO 作诚实 fallback；**不自行 workaround 包缺陷**，待包侧修复后切换回 `kode/database` 官方池。
 
-### 4.4 沙箱交叉验证（2026-08-23 · 框架 v0.8.47 · Linux 2 核 · Workerman Select 循环 · 无 JIT · workers=2）
+### 4.4 沙箱交叉验证（2026-08-23 晚复测 · 框架 v0.8.48 · kode/http v3.4.9 · Linux aarch64 2 核 · Workerman Select 循环 · 无 JIT · workers=2）
 
-`benchmarks/peers/bench_sandbox.sh`（wrk -t4 -c60 -d6s × 3 轮中位，正反两遍取均值；全部 peer 走 Workerman 运行时、零中间件）：
+`benchmarks/peers/bench_sandbox.sh`（wrk -t4 -c60 -d6s × 3 轮中位，正反两遍取均值；全部 peer 走 Workerman 运行时、零中间件）。
+本机为 aarch64 VM（PHP 8.3.32 NTS）；**绝对数不可跨机器比，仅同机横比有效**（此前 x86 沙箱数值见 §4.4 旧版 / git 历史）。
 
 | peer | /ping (rps) | /bench/json (rps) | json 相对 webman |
 | --- | ---: | ---: | ---: |
-| workerman_raw（天花板） | 220,333 | 109,506 | 115.7% |
-| **kode_LEAN**（旁路 PSR-7 直发 raw） | 196,266 | **100,022** | **105.7%** |
-| webman_OFF | 184,141 | 94,623 | 100% |
-| **kode_L0**（完整 PSR-7 内核） | 77,019 | **54,746** | 57.9% |
+| workerman_raw（天花板，双向均值） | 212,121 | 101,305 | 105.1% |
+| **kode_LEAN**（旁路 PSR-7 直发 raw，双向均值） | 179,415 | **96,080** | **99.7%** |
+| webman_OFF（补测 4 轮中位） | 177,311 | **96,400** | 100% |
+| **kode_L0**（完整 PSR-7 内核，补测 4 轮中位） | 83,173 | **54,919** | **57.0%** |
 
-**本轮结论（沙箱口径，绝对数仅限本机横比）**：
+> 口径说明：首轮正向跑中 `webman_OFF` 与 `kode_L0` 的 `/bench/json` 采样（73.8k / 43.1k）显著低于反向（88.0k / 54.2k），系首段系统瞬时负载干扰；对这两个 peer 做了独立定向补测（每端点 4×6s，冷启后热态连续采样）：webman json 4 轮 87.5–98.0k、kode_L0 json 4 轮 **54.2–56.2k**（一致性好）；`workerman_raw` / `kode_LEAN` 正反两遍稳定，直接取双向均值。
 
-1. **kode_LEAN json（100.0k）已反超 webman（94.6k，+5.7%）**：框架 `HttpBridge::emit` raw 快路径（`toRaw` + `conn->send($raw,true)`）比 webman 的 `Response` 对象式 send 更快——**「相同的 frame 下 kode 不慢于 webman」在无 PSR-7 包装时成立**。
-2. **kode_L0（54.7k）vs kode_LEAN（100.0k）= −45.3%**：差距 100% 落在 PSR-7 内核链（toPsr7 构造 + `App::handle` 管线 + `RouteRunner` 派发 + `Response::resolve`），与 §4.1.1 结论同向、跨平台（macOS Swoole / Linux Workerman-Select）复核成立。
-3. **toPsr7 第二轮优化（本轮）**：`HttpBridge::toPsr7` 的 `$serverParams` 数组构建（`time()`/`microtime(true)`/`host()`×2/`ip()`/`isSecure()`）从函数开头下沉到 `KODE_EAGER=1` 分支内——懒路径不再为不读 serverParams 的业务（如 `/bench/json`）白付 ~1.4µs/req。打点实测 toPsr7 段 **3.73 → 2.32 µs**（lazy 后理论下限 ~1.0 µs，残差为 `parseLine` 首次 + `Uri` 构造 + `preg_match` 协议提取，均属 kode/process-http 侧固定成本）。kode_L0 json 由 53,980 → **54,746（+1.4%）**；吞吐增益小于 toPsr7 节省比例，因热点仍在 `handle`（~22µs）+ `conn->send`（~7.8µs，Workerman 固有、webman 同付）。
-4. **handle 内部段（vendor 打点，µs/req）**：`route.match 0.42` + `attr(3×withAttribute + Request::setRequest) 1.46` + `dispatch 8.25`（含业务 `json_encode` ~5µs，双方同付不可省）+ 中间件栈 margin ~7µs（`JsonErrorHandlerMiddleware` 可观测性对价）。**剩余可调杠杆全在 kode/http 包侧**：`RouteRunner` 无参路由跳过 withAttribute、`CallableHandler`/`Response::resolve` 包装瘦身——见 `docs/kode-http-tuning-2026-08-23.md`。
+**本轮结论（2026-08-23 晚，本机 aarch64 口径）**：
+
+1. **kode_LEAN json（96.1k）与 webman（96.4k）持平（99.7%）**，占 workerman_raw（101.3k）94.8%：PSR-7 包装旁路后 kode 相对原生 Workerman 几乎零损耗，与 x86 沙箱（LEAN 100.0k 反超 webman 94.6k，+5.7%）方向一致——**「kode 内核不慢于 webman」在无 PSR-7 包装时跨平台成立**。
+2. **kode_L0 json（54.9k）≈ webman 的 57.0%**（x86 口径 57.9%）：跨平台比值高度一致（本机 54.9k ≈ x86 的 54.7k，绝对数与机型几乎无关），差距 100% 落在 PSR-7 内核链（toPsr7 构造 + `App::handle` 管线 + `RouteRunner` 派发 + `Response::resolve`）。这是「完整 PSR-7 管线 + DI + 异常中间件 + 可观测性」的**功能对价**，非缺陷；需要极限吞吐的路由可用 `config/server.php` `lean=>true`（KODE_LEAN）按路由粒度关闭。
+3. **toPsr7 第二轮优化（历史）**：`HttpBridge::toPsr7` 的 `$serverParams` 数组构建从函数开头下沉到 `KODE_EAGER=1` 分支内——懒路径不再为不读 serverParams 的业务白付 ~1.4µs/req；打点 3.73 → 2.32µs。已在 v0.8.47 归档。
+4. **kode/http v3.4.9 热路径优化（本轮，详见 `docs/kode-http-perf-3.4.9.md`）**：`Request::$traceWritten` 按需清理链路上下文（热路径跳过 4 次 `Context::delete`；x86 网络 A/B 实测 /ping **+2.4%**、/bench/json **+4.2%**；本机微基准 handle 段 **−4.5µs/−3.3%**）；`JsonErrorHandlerMiddleware` 对自研响应短路（省 getStatusCode + 内容类型包装全链，~2µs/请求）；`Response::isJsonContentType()` headerNames 精确映射轻量判定（零 PSR-7 规范化，语义与 getHeaderLine 逐例一致）。三项叠加后 kode_L0 本机复测 **ping 83.2k / json 54.9k**（x86 54.7k）——**跨机器绝对值稳定、无回归**。
+5. **剩余杠杆全部在 kode/http 包侧**（框架 `src/` 已无实收益）：`RouteRunner` 无参路由跳过 withAttribute×2、`Response::resolve` 双次包装去一层、`App::handle` 内 Context 重复 set+clear 写删、toPsr7 残余 parseLine/Uri 构造——见 `docs/kode-http-perf-3.4.9.md` §6（按 ROI 排序，预计合共 ~2-4µs/req，可将 L0 json 推至 ~62-65% of webman）。
+
+### 4.5 v0.8.49 路径优化微基准（2026-08-24 · kode/http v3.4.10 · 沙箱 aarch64 · PHP 8.3.32 · JIT off）
+
+§4.4 结论 5 的「剩余杠杆」榜首已在本轮落地（详见 `docs/kode-http-perf-3.4.10.md`）：
+
+| 改动（按归属） | 内容 |
+| --- | --- |
+| kode/http P1 | `RouteRunner::handle` 无参路由跳过 3 次 `withAttribute`；404/405 补 `Request::setRequest`（修 facade 泄漏） |
+| kode/http P2 | `App::handle` 裸栈（`isBare()`，仅默认异常中间件）时跳过 facade 预置——setRequest 每请求 2 次→1 次 |
+| kode/http P4 | HEAD 判定 `strtoupper(...)===` → `strcasecmp(...)===`（免每请求字符串分配） |
+| 框架 P5 | `HttpBridge::toPsr7` 懒分支不再提取协议版本；`LazyServerRequest::getProtocolVersion()` 首次访问懒解析并缓存 + `withProtocolVersion` 同步缓存 |
+
+**复刻 peer message 回调的微基准**（`benchmarks/l0-profile.php`，toPsr7→handle→toRaw 三段，20 万迭代 × 5 轮取最小）：
+
+| 指标 | v3.4.9 基线 | v0.8.49 / v3.4.10 | 变化 |
+| --- | ---: | ---: | ---: |
+| ping 完整链 sum | 6859 ns | **5493 ns** | **−19.9%** |
+| ping handle 段 | 4648 | **3510** | **−24.5%** |
+| json50 完整链 sum | 13650 | **12407** | **−9.1%** |
+| json50 handle 段 | 11307 | **10246** | **−9.4%** |
+
+> 说明：json50 的 handle 段大头是业务侧 `array_map+range` 构数据 + `json_encode`（约 6.9µs，webman 同付），
+> 框架调度仅 ~2.5µs，本轮削的正是调度部分——故 json 负载收益比例低于 ping（ping 无业务载荷，收益全归调度）。
+> **同机 wrk peer 复测请在真机执行**（aarch64 沙箱 Workerman 驱动 Empty reply 为已知待办，见 `kode-package-issues.md`）：
+> 预期 L0 json 从 webman 的 57% 提升至 ~62-66%，ping 从 92% 提升至持平区间；数据落地后回填本表。
 
 ## 5. 关键结论
 
@@ -336,6 +366,7 @@ webman 的 `/bench/db`（MySQL）在高并发持续速率下稳定返回 500（2
    缓存、旧的 serverParams 引导本就 ~600ns）。收益定位：RAW/直连源 ≈7% 吞吐；Workerman 源为
    结构性修复（不再强制 serverParams 引导 + header 全量规范化），对不读 serverParams 的
    转发型热路径仍有 ~0.6µs 级纯收益。框架 v0.8.47 + kode/http v3.4.8，全量 425/26428 绿。
+6. **kode/http v3.4.9 三项热路径优化（2026-08-23 晚，框架 v0.8.48）**：① `Request::$traceWritten` 按需清理——无链路头请求跳过 4 次 `Context::delete`（x86 网络 A/B：/ping **+2.4%**、/bench/json **+4.2%**；本机微基准 handle 段 **−4.5µs/−3.3%**）；② `JsonErrorHandlerMiddleware` 对 `Kode\Http\Response` 短路——自研响应默认即 JSON 语义，免去 getStatusCode + 内容类型包装全链（~2µs/请求）；③ `Response::isJsonContentType()` headerNames 精确映射轻量判定——与 `getHeaderLine` 语义完全一致（大小写键均命中）且零规范化开销。三项叠加后 kode_L0 本机复测 **ping 83.2k / json 54.9k**（x86 54.7k），**跨机器绝对值稳定、无回归**；全量测试包侧 248/505、框架 425/26428/1 绿。
 4. **框架层调优已触顶（诚实）**：§6 已定位并修复响应体两次 temp-stream 拷贝开销（StringStream，/bench/json 从 132k→161k），且 §4.1 证明同 Workerman 运行时下 **kode L0 ≈ webman**；残差主因是 kode 保留「完整 PSR-7 管线 + DI + 异常中间件」的架构基线对价 + 本机热噪声（同 peer 跨跑 ±10~15%），框架层继续抠已无实收益（见 §8 P0/P1）。
 
 ## 6. 默认栈成本剖析（观测性为主税 · 隔离微基准铁证）

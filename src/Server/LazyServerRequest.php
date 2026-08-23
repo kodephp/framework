@@ -91,6 +91,9 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
     /** @var bool 原始请求体是否已从原生读取 */
     private bool $rawBodyResolved = false;
 
+    /** @var string|null 懒惰协议版本缓存（getProtocolVersion() 首次访问才解析一次） */
+    private ?string $lazyProtocolVersion = null;
+
     /** @var bool 构造时是否显式传入服务器参数（跳过懒解析） */
     private bool $hasExplicitServerParams;
 
@@ -121,7 +124,12 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         $this->hasExplicitHeaders      = $headers !== [];
         $this->hasExplicitBody         = $body !== null;
 
-        parent::__construct($method, $uri, $serverParams, $headers, $body, $protocolVersion);
+        // 协议版本懒化：默认 '1.1' 的常见热路径（HTTP/1.1 请求）不缓存任何值，
+        // 交给 getProtocolVersion() 首次访问时从 native 精确提取；
+        // 显式传入非默认版本（如 EAGER 分支提取到 HTTP/1.0）则直接采用。
+        $this->lazyProtocolVersion = $protocolVersion !== '1.1' ? $protocolVersion : null;
+
+        parent::__construct($method, $uri, $serverParams, $headers, $body, $this->lazyProtocolVersion ?? '1.1');
         $this->native = $native;
     }
 
@@ -150,6 +158,37 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
             'REQUEST_TIME_FLOAT' => microtime(true),
             'HTTPS'              => $native->isSecure() ? 'on' : 'off',
         ];
+    }
+
+    /**
+     * 协议版本：首次访问才从原生请求解析并缓存。
+     *
+     * 热路径（路由匹配 + 响应物化）不消费协议版本，构造时不再急切提取
+     * （HttpBridge::toPsr7 懒分支因此省去 protocol() 调用 + 正则）。仅在
+     * 业务/中间件真正调用 {@see getProtocolVersion()} 时才付出解析成本，
+     * 语义与旧实现（构造期提取）完全一致。
+     */
+    public function getProtocolVersion(): string
+    {
+        if ($this->lazyProtocolVersion === null) {
+            $protocol = $this->native->protocol();
+
+            $this->lazyProtocolVersion = preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m) ? $m[1] : '1.1';
+        }
+
+        return $this->lazyProtocolVersion;
+    }
+
+    /**
+     * 与基类（可变风格）保持一致：原地更新协议版本并同步懒解析缓存，
+     * 避免 with 之后 getProtocolVersion() 读到旧缓存值。
+     */
+    public function withProtocolVersion(string $version): static
+    {
+        parent::withProtocolVersion($version);
+        $this->lazyProtocolVersion = $version;
+
+        return $this;
     }
 
     public function getQueryParams(): array

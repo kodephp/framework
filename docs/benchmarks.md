@@ -7,6 +7,12 @@
 > 立场：kode 是**常驻内存框架**，吞吐 12~18 万 rps，与 webman/hyperf 同量级，**绝非传统 FPM（~5k）**。  
 > 本文**不**列 FPM 框架的 plaintext 数字做吞吐横比——FPM 与常驻内存的运行模型根本不同，直比会误导（见第三节说明）。
 
+> **最新进展（v0.8.49 · kode/http v3.4.10 · 2026-08-24）**：L0 热路径完成第四轮削费——`RouteRunner` 空参路由跳过 attribute
+> 写入、`App::handle` 裸栈跳过重复 facade 预置、HTTP/1.1 协议版本懒解析（改动清单见 `PEER_BENCHMARK.md` §4.5，
+> 逐文件核对见 `docs/kode-http-perf-3.4.10.md`，补丁见 `patches/upstream/kode-http-3.4.10.patch`）。
+> 微基准完整链 **ping 6859→5493 ns（−19.9%）、json50 13650→12407 ns（−9.1%）**，handle 段分别 −24.5% / −9.4%。
+> 真机 wrk 复测以 §三 矩阵同 harness 执行为准，预期 kode L0 `/bench/json` 比值自 74% 上行；数据落地后回填 §三。
+
 ---
 
 ## 一、压测口径
