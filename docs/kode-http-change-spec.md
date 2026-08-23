@@ -5,7 +5,7 @@
 > `LazyServerRequest`（框架仓库内，提交 `54fc797`/`5211c39`）回收；
 > `KODE_LEAN=1` 已证明绕过 PSR-7 桥接 + `App::handle` + emit 后 kode json ≈ webman 99.8%。
 >
-> **状态（2026-08-23 · 框架 v0.8.44 · 实测安装 3.4.6 复核）**：
+> **状态（2026-08-23 · 框架 v0.8.45 · 实测安装 3.4.6 复核）**：
 > - 方案 B（`syncTraceContext` 无链路头即返回）**已落地 3.4.2**（`b29796c`）。✅
 > - 方案 A（`setRequest` 增加 `syncTrace` 开关）**未单独落地**——B 已足够：`setRequest` 对任意次数调用（App::handle / RouteRunner / Request::json 等）经守卫幂等早退，冗余成本趋近于零。
 > - §3.5：`Response::json()` 走 rawBody 快速路径 —— **已落地上游 3.4.6**：`json()` 即 `(new self())->body(self::encode($payload))`（`Response.php:82`），实测 `Response::json()->hasRawBody()===true`，`Emitter`/`getBodyString()` 快速路径命中。✅

@@ -1,12 +1,13 @@
 # vendor/kode 包修改指引（可选加固）
 
 > 对应审计报告：`audit-report-2026-08-22.md`
-> 框架版本：v0.8.44（`src/Application.php` 的 `VERSION` 已同步）
+> 框架版本：v0.8.45（`src/Application.php` 的 `VERSION` 已同步）
 > 适用范围：**仅限 `vendor/kode/` 下的第三方包**。框架源码（`src/`、`config/`）已在 v0.8.42 全部修复，
 > 本指引中的改动是**可选加固**——不改 vendor，框架也能正确工作（见「五、框架侧规避对照」）。
 >
-> **2026-08-23 更新**：`kode/limiting` 已于 **2026-08-22 发布 2.2.0**，将下文 A/B/C 三处改动全部合入上游；
-> **无需再手动修改 vendor**，只需 `composer update kode/limiting` 即可获得修复（见「二」末尾的验证记录）。
+> **2026-08-23 更新**：`kode/limiting` **2.2.0** 已把 A/B/C 三处改动全部合入上游；`kode/database`
+> **1.15.7**（2026-08-23 发布）已把「八」的 `PdoConnection` 语句缓存/去探活/断连重试合入上游；
+> **两个包均无需再手动修改 vendor**，`composer update` 即可获得修复（见对应节末尾的验证记录）。
 
 ---
 
@@ -16,7 +17,7 @@
 | --- | --- | --- | --- |
 | `kode/limiting` | 2.1.0 → **2.2.0（已修复）** | **无需修改** | 2.2.0 已把静态工厂 prefix 硬编码 / 不收 prefix / storeFromArray 缺 HA 分支三处全部合入上游 |
 | `kode/http` | **3.4.6（部分已修复）** | **2 处待反馈上游** | §3.5（`json()` rawBody 快路径）/§3.6（`getBody()` 非破坏性）已合入 3.4.6/3.4.3；仍有 `SwooleServerAdapter` emit 直发与 `StringStream` 纯内存流共 2 处由框架补丁承载，见「七」 |
-| `kode/database` | **1.15.6（池缺陷已修复）** | **1 处待反馈上游** | B 缺陷（非 Swoole 下池不可用）已由 1.15.6 修复（`PoolManager` 降级 + `ScopedConnection`）；另有 `PdoConnection` 语句缓存/去探活补丁 1 处由框架补丁承载，见「八」 |
+| `kode/database` | **1.15.7（全部已修复）** | **无需修改** | B 缺陷（非 Swoole 下池不可用）已由 1.15.6 修复（`PoolManager` 降级 + `ScopedConnection`）；`PdoConnection` 语句缓存/去探活/断连重试由 **1.15.7** 合入（见「八」），框架侧 database 补丁已移除 |
 | `kode/jwt` | — | 无需修改 | 审计观察项 3 经核对为误报（`issue()` 返回结构与 guard 用法匹配） |
 | `kode/fibers` | — | 无需修改 | 非协程上下文同步执行是刻意语义；框架已通过 `Scheduler::inCoroutine()` 规避 |
 | `kode/messaging` | — | 待验证 | 审计观察项 5（实例缓存语义）需在真实运行环境验证后才能下结论 |
@@ -307,9 +308,18 @@ if ($resource === false) {
 
 ## 八、kode/database 待反馈上游（1 处，由框架补丁承载）
 
-> **现状（2026-08-23）**：`kode/database` 已升级 1.15.6；B 缺陷（`PoolManager` 在非 Swoole 运行时
-> 不可用）已由上游修复（自动降级 `ProcessPool` + 新增 `ScopedConnection` RAII）。下述 1 处仍由
-> 框架侧补丁承载，**建议反馈 kode/database 包仓库**，合入后框架侧补丁即可删除。
+> ### ✅ 2026-08-23：本节已由上游 **v1.15.7**（2026-08-23 发布）合入，无需手动改动
+>
+> 实测核对（PHP 8.3.32 + pdo-sqlite，框架 v0.8.45）：
+> 1. `PdoConnection` 具备 `stmtCache`（预编译语句缓存，上限 `STMT_CACHE_LIMIT`=256，`disconnect()` 清空）；
+> 2. `ensureConnected()` 已连接即复用，**不再每次查询发 `SELECT 1` 探活**（`isConnected()` 仅保留
+>    显式探测用途）；
+> 3. `select`/`insert`/`update`/`delete` 捕获 `PDOException` 后 `disconnect()` 并重试一次（断连重试）。
+> 4. 框架 v0.8.45 已**移除 `patches/kode-database-pdoconnection.patch` 与 `composer.json extra.patches`
+>    中 `kode/database` 条目**，vendor 为纯净 1.15.7；`benchmarks/database-bench.php` 实测语句缓存
+>    命中 SELECT 802.9 ns/op vs 原生每次 prepare 1821.5 ns/op（**-56%**，见 `benchmarks/database-bench.md`）。
+>
+> 以下原文保留作为「上游 1.15.7 相对 1.15.6 改动对照」存档。
 
 ### 8.1 `PdoConnection`：预编译语句缓存 + 去掉每查一次 SELECT 1 探活 + 断连重试
 
@@ -329,14 +339,15 @@ if ($resource === false) {
   4. `select`/`insert`/`update`/`delete` 四个方法改为：`try { …prepareStatement… } catch (PDOException $e) {
      $this->disconnect(); …prepareStatement 重试一次 }`。
   5. `disconnect()` 尾部追加 `$this->stmtCache = [];`。
-- 完整 diff：见框架仓库 `patches/kode-database-pdoconnection.patch`（基于 1.15.x 上下文，可直接
-  `git apply`；已在 1.15.6 上验证兼容——vendor 与纯净版差异即该补丁应用效果）。
+- 完整 diff：已由上游 1.15.7 合入（`vendor/kode/database/src/Connection/PdoConnection.php`）；
+  历史补丁 `patches/kode-database-pdoconnection.patch` 已随框架 v0.8.45 删除。
 - 验证要点：`kode/database` 自带的 TransactionTest/PdoConnectionTest 全绿；框架 `src/Database/ConnectionPool`
   Native 冒烟（select/insert/update/delete 各一次 + 断连重试路径）；`disconnect()` 后语句缓存清空、
   再查询自动重连。
 
 ---
 
-*本指引由静态审读 + 源码级核对产出。v0.8.44（2026-08-23）起已在 PHP 8.3.32 + 真实
-redis-server 7.0.15 环境对限流链路做过运行验证（框架 425 测试全绿、限流三后端实测见
-`benchmarks/limiting-bench.md`）；改动点行号基于当时 `vendor/kode/limiting` 版本。*
+*本指引由静态审读 + 源码级核对产出。v0.8.45（2026-08-23）起已在 PHP 8.3.32 + 真实
+redis-server 7.0.15 环境对限流链路与数据库链路做过运行验证（框架 425 测试全绿、限流三后端与
+数据库语句缓存实测见 `benchmarks/limiting-bench.md` 与 `benchmarks/database-bench.md`）；改动点行号基于当时
+`vendor/kode/limiting` / `vendor/kode/database` 版本。*

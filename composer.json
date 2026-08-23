@@ -19,6 +19,12 @@
         "psr"
     ],
     "license": "MIT",
+    "repositories": [
+        {
+            "type": "git",
+            "url": "https://github.com/kodephp/database.git"
+        }
+    ],
     "authors": [
         {
             "name": "kode"
@@ -96,9 +102,6 @@
     },
     "extra": {
         "patches": {
-            "kode/database": {
-                "PdoConnection 常驻内存优化：去 SELECT 1 探活 + 预编译语句缓存（上限 256），连接失效自动重连重试一次，Swoole 常驻场景提速约 2x": "patches/kode-database-pdoconnection.patch"
-            },
             "kode/http": {
                 "Response::json 直构 + Swoole 发射走内部字符串体，削减常驻内存吞吐路径的每请求开销": "patches/kode-http-response-optimize.patch",
                 "Stream::create 小体量响应体改为 StringStream 内存持有，去掉每响应 fopen('php://temp') 两次整段拷贝（/bench/json 体感翻倍提速，/ping 亦受益）": "patches/kode-http-stringstream.patch"
