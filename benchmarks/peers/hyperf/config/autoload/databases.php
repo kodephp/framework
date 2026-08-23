@@ -13,14 +13,14 @@ use function Hyperf\Support\env;
 
 return [
     'default' => [
-        'driver' => env('DB_DRIVER', 'mysql'),
-        'host' => env('DB_HOST', 'localhost'),
-        'database' => env('DB_DATABASE', 'hyperf'),
-        'port' => env('DB_PORT', 3306),
-        'username' => env('DB_USERNAME', 'root'),
-        'password' => env('DB_PASSWORD', ''),
-        'charset' => env('DB_CHARSET', 'utf8'),
-        'collation' => env('DB_COLLATION', 'utf8_unicode_ci'),
+        'driver' => 'mysql',
+        'host' => '127.0.0.1',
+        'database' => 'kode_bench',
+        'port' => 3306,
+        'username' => 'root',
+        'password' => 'root',
+        'charset' => 'utf8',
+        'collation' => 'utf8_unicode_ci',
         'prefix' => env('DB_PREFIX', ''),
         'pool' => [
             'min_connections' => 1,
@@ -36,6 +36,24 @@ return [
                 'force_casts' => true,
                 'inheritance' => 'Model',
             ],
+        ],
+    ],
+    'pgsql' => [
+        'driver' => 'pgsql',
+        'host' => '127.0.0.1',
+        'database' => 'kode_bench',
+        'port' => 5432,
+        'username' => 'root',
+        'password' => '',
+        'charset' => 'utf8',
+        'prefix' => '',
+        'pool' => [
+            'min_connections' => 1,
+            'max_connections' => 10,
+            'connect_timeout' => 10.0,
+            'wait_timeout' => 3.0,
+            'heartbeat' => -1,
+            'max_idle_time' => 60.0,
         ],
     ],
 ];

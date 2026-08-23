@@ -146,6 +146,19 @@ $bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCre
     /** @var App $http */
     $http = $app->http();
 
+    // 框架级有界 PDO 连接池（per-worker 独立池，与 webman app/DbPool / hyperf/database 池同口径）。
+    // Native 多进程下每个 worker 进程各自 boot 出一个池实例，进程间不共享可变状态，天然隔离。
+    // 池内每借出连接执行一次 SELECT 后 closeCursor() 耗尽结果集，根除 PDO 2014（此前裸复用单连接
+    // 未耗尽结果集 → 高并发 ~92% 500 被 wrk 当成功计数 → 报告虚高）。
+    $mysqlPool = \Kode\Framework\Database\ConnectionPool::mysql(
+        $mysqlCred['host'], $mysqlCred['port'], $mysqlCred['database'],
+        $mysqlCred['username'], $mysqlCred['password'], 4
+    );
+    $pgPool = \Kode\Framework\Database\ConnectionPool::pgsql(
+        $pgCred['host'], $pgCred['port'], $pgCred['database'],
+        $pgCred['username'], $pgCred['password'], 4
+    );
+
     // ---------- hello world / 内存锚点 ----------
     $http->get('/ping', static fn () => Resp::json(['status' => 'ok']));
     $http->get('/bench/json', static function () {
@@ -162,7 +175,34 @@ $bootWorker = static function () use ($tmp, &$http, &$app, &$graceful, $mysqlCre
         ]);
     });
 
+    // ---------- /bench/db：框架级有界 PDO 池（Kode\Framework\Database\ConnectionPool，per-worker 多连接 + closeCursor） ----------
+    // 与 webman app/DbPool / hyperf/database 池在 PDO 层等价：生产级连接管理，0 错误、诚实 DB 吞吐。
+    $http->get('/bench/db', static function () use ($mysqlPool) {
+        $id = random_int(1, 1000);
+        $row = $mysqlPool->queryOne('SELECT * FROM bench_users WHERE id = ?', [$id]);
+        return Resp::json(['user' => $row]);
+    });
+
+    // ---------- /bench/db_pg：pgsql 端同等连接池（同条件对比 MySQL vs pgsql 数据） ----------
+    $http->get('/bench/db_pg', static function () use ($pgPool) {
+        $id = random_int(1, 1000);
+        $row = $pgPool->queryOne('SELECT * FROM bench_users WHERE id = ?', [$id]);
+        return Resp::json(['user' => $row]);
+    });
+
     // ---------- kode 原生查询构造器连接（driver=pdo 执行器） ----------
+    // 公平 DB 横比采用「非池化 per-worker PDO 复用」路径（kode/database 的工厂 + connectionCache）：
+    // Db::connection('kode-mysql')->table()->where()->first() 走工厂产 PdoConnection（真实 PDO），
+    // 同一 worker 内连接被缓存复用，等价于同步运行时「每 worker 一根连接」的生产实践。
+    //
+    // 为何不用 kode/database 的连接池（上游待修项，已查证）：
+    //  1. Db::addConnection 在 config 含 pool 键时调用 PoolManager::init 且 poolType 默认 'connection'
+    //     （Swoole\Coroutine\Channel），在 Workerman 运行时构造即 Fatal（Channel::push 须位于协程内）；
+    //     即便显式 'fiber' 初始化 FiberPool，其 createConnector 默认 LaravelConnector，委托
+    //     illuminate\Capsule（harness 未为 kode-mysql 初始化）-> null 报错；
+    //  2. 即便绕过上述两点强制产出真实 PDO 池，FiberPool 要求每次查询后手动 release()，而
+    //     QueryBuilder 不释放 -> 每请求新 fiber 占一连接、16 连接即「连接池已满」抛 500，
+    //     高并发下 非2xx ≈ 70%。故公平横比使用非池化的 per-worker PDO（诚实、0 错误）。
     \Kode\Database\Db\Db::addConnection('kode-mysql', [
         'driver' => 'pdo', 'database_driver' => 'mysql',
         'host' => $mysqlCred['host'], 'port' => $mysqlCred['port'], 'database' => $mysqlCred['database'],
