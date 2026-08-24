@@ -1,10 +1,10 @@
 # kode/http v3.4.10 热路径补充优化（RouteRunner 空参 / App isBare / 协议版本懒化）
 
 > 日期：2026-08-24 · 框架 v0.8.49（配套：`benchmarks/l0-profile.php` 微基准）
-> 基线：补丁基于包仓库 **v3.4.7 tag**（`40c09ab`）生成，`patches/upstream/kode-http-3.4.10.patch` 已含
-> v3.4.8/v3.4.9（traceWritten / JsonErrorHandler 短路 / isJsonContentType / LazyHeaderAware）与本章全部改动。
-> 若你的包仓库已合入 3.4.8/3.4.9，请只按「§2 本轮改动（3.4.10 增量）」手工核对；若 HEAD 仍在 v3.4.7，
-> 直接整包应用补丁即可。
+> 基线：补丁 `patches/upstream/kode-http-3.4.10.patch` 为**基于包仓库 v3.4.9（`a0a6d9d`）的纯增量**——只含
+> v3.4.10 需要追加的 4 处（`composer.json` 版本、`src/App.php`、`src/Middleware/MiddlewareDispatcher.php`、
+> `src/Routing/RouteRunner.php`），**已合入 3.4.8/3.4.9 的仓库直接 `git apply` 即可**（4 文件 +38/−9）。
+> 若你的包仓库仍停在 v3.4.7，需先合入 3.4.8/3.4.9 相关提交（`2718f99`、`a0a6d9d`）再应用本补丁。
 
 ## 0. 背景：3.4.9 之后还剩什么
 
@@ -29,7 +29,7 @@ PHP 8.3.32、JIT off、20 万迭代取最小）显示完整 PSR-7 链路（toPsr
 | --- | --- | --- | --- | --- |
 | P1 | `src/Routing/RouteRunner.php` | `handle()` | 无参路由跳过全部 `withAttribute`（含 `_route`/`_route_params`）；404/405 分支补 `Request::setRequest` | 空参路由（压测/生产绝对多数）免 3 次属性数组写入；404/405 不再泄漏 facade |
 | P2 | `src/App.php` + `src/Middleware/MiddlewareDispatcher.php` | `handle()` + `isBare()` | 仅默认异常中间件（`middlewares <= 1`）时跳过 App 层 facade 预置，写入责任交由 RouteRunner（FOUND/404/405 已全覆盖） | 热路径 `Request::setRequest` 从 2 次降为 1 次，~700ns/请求 |
-| P3 | `src/Request.php` | `hasTraceHeaders()` | 对 `LazyHeaderAware` 且 header 未解析的请求走 `peekHeader()` 定向读取 4 个链路头（stripos 单头扫描），不再触发全量 header 规范化 / serverParams 引导构建 | 懒请求 setRequest 内的嗅探守卫不破坏「懒加载零解析」承诺（已在 3.4.8/3.4.9 落地，随补丁一并交付） |
+| P3 | `src/Request.php` | `hasTraceHeaders()` | 对 `LazyHeaderAware` 且 header 未解析的请求走 `peekHeader()` 定向读取 4 个链路头（stripos 单头扫描），不再触发全量 header 规范化 / serverParams 引导构建 | 懒请求 setRequest 内的嗅探守卫不破坏「懒加载零解析」承诺（**已在 3.4.8/3.4.9 合入，本 3.4.10 增量补丁不含**） |
 | P4 | `src/App.php` | `handle()` | HEAD 判定 `strtoupper(...) === 'HEAD'` 改为 `strcasecmp(...) === 0` | 免每请求 `strtoupper` 字符串分配（~50ns） |
 | P5 | 框架侧 `src/Server/LazyServerRequest.php`（不在本补丁） | `getProtocolVersion()` | 协议版本从构造期 `preg_match` 提取改为**首次访问才懒解析并缓存**；`withProtocolVersion` 同步缓存；`HttpBridge::toPsr7` 懒分支不再传第 7 参 | 热路径免 `protocol()` 调用 + 正则 + 字符串拷贝（~100-200ns，见框架文档） |
 
@@ -184,7 +184,7 @@ try {
 
 ## 3. 如何应用
 
-### 3.1 你的包仓库 HEAD = v3.4.7（推荐，整包应用）
+### 3.1 你的包仓库 HEAD = v3.4.9（`a0a6d9d`，推荐，增量应用）
 
 ```bash
 # 在 kode/http 仓库根目录
@@ -193,10 +193,10 @@ git apply patches/upstream/kode-http-3.4.10.patch   # 或 cp 到仓库根后 git
 # 提交并打 tag：git tag v3.4.10
 ```
 
-### 3.2 你的包仓库已含 3.4.8/3.4.9 改动
+### 3.2 你的包仓库已在 v3.4.10（本增量已含 3.4.8/3.4.9）
 
 只手工核对 §2.1 / §2.2 / §2.3 三处代码（`RouteRunner` / `MiddlewareDispatcher` / `App`），
-其余（Request、Response、JsonErrorHandlerMiddleware、LazyHeaderAware、包内 LazyServerRequest）跳过。
+其余（Request、Response、JsonErrorHandlerMiddleware、LazyHeaderAware、包内 LazyServerRequest）已在 3.4.8/3.4.9 合入，跳过。
 
 ### 3.3 验证
 
