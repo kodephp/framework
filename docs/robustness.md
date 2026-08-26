@@ -66,7 +66,7 @@ $mw->process($req, $handler); // handler 抛任何 Throwable → 结构化 JSON�
 服务启动时的任何未捕获异常，都会被 `KodeCli::fail()` 收口：
 
 ```text
-❌ RuntimeException: 应用启动失败（/path/to/app）：Class "App\No\Such\Provider" not found
+❌ RuntimeException: 应用启动失败（/path/to/app）：Class "app\No\Such\Provider" not found
 ```
 
 - 以**非 0 退出码（1）**结束，便于 CI / 编排系统感知失败；
@@ -403,10 +403,10 @@ if (!feature('beta-search')) {
 接入远程中心（零框架改动）：
 
 ```php
-// App\Config\NacosConfigSource implements \Kode\Framework\Config\ConfigSource
+// app\Config\NacosConfigSource implements \Kode\Framework\Config\ConfigSource
 // 构造接收 ['server'=>...,'dataId'=>...]，load() 拉取并解析成数组返回即可。
 // 然后在 config/center.php 的 sources 加一项：
-['class' => App\Config\NacosConfigSource::class, 'config' => ['server' => env('NACOS_ADDR'), 'dataId' => 'my-app']]
+['class' => app\Config\NacosConfigSource::class, 'config' => ['server' => env('NACOS_ADDR'), 'dataId' => 'my-app']]
 ```
 
 运行期再配置（监听事件做不重启调整）：
@@ -463,7 +463,7 @@ reload 变化键 + 事件派发、非可重载源跳过、诊断 API）、`tests
 接入真实分布式发现（零框架改动）：
 
 ```php
-// App\Discovery\ConsulRegistry implements \Kode\Framework\ServiceDiscovery\Contracts\ServiceRegistry
+// app\Discovery\ConsulRegistry implements \Kode\Framework\ServiceDiscovery\Contracts\ServiceRegistry
 // 构造接收 ['address'=>..., 'token'=>...]，discover() 调 Consul Catalog API 返回 ServiceInstance[]。
 // 然后在 ServiceDiscoveryServiceProvider 的 boot() 中把内置 StaticServiceRegistry
 // 换成 $this->container->instance(ServiceRegistry::class, new ConsulRegistry($cfg));

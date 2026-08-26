@@ -58,7 +58,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.49';
+    public const VERSION = '0.8.51';
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。
@@ -108,13 +108,16 @@ final class Application
 
     /**
      * 便捷启动入口。
+     *
+     * @param array<string, mixed> $configOverrides 启动期配置覆盖（最高优先级，
+     *                                               用于测试覆写 config/*.php 的键；生产可留空）
      */
-    public static function make(string $basePath): static
+    public static function make(string $basePath, array $configOverrides = []): static
     {
-        return (new static($basePath))->bootstrap();
+        return (new static($basePath))->bootstrap($configOverrides);
     }
 
-    public function bootstrap(): static
+    public function bootstrap(array $configOverrides = []): static
     {
         // 提前暴露外壳实例：让 app/bootstrap.php 等能取到本实例。
         self::$instance = $this;
@@ -132,6 +135,7 @@ final class Application
                 // 嵌套数组，因此此处必须用嵌套结构（而非字面键 'path.base'）。
                 'config'      => [
                     'path' => ['base' => $this->basePath],
+                    ...$configOverrides,
                 ],
             ]);
         } catch (\Throwable $e) {

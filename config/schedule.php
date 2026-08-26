@@ -20,7 +20,7 @@ return [
     // bin/kode 在引导后会用真实的 basePath 拼成绝对路径。多应用/模块化：
     // 追加更多 key 即可（如 'admin' => 'modules/admin/Tasks'）。
     'paths' => [
-        'app' => 'app/Tasks',
+        'app' => 'app/tasks',
     ],
 
     // 插件自动发现（默认关闭；开启后扫描 plugins/<name>/src/Tasks 作为独立模块来源）。

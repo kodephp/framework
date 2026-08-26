@@ -43,7 +43,7 @@ final class SchedulingServiceProvider extends ServiceProvider
     {
         try {
             /** @var array<string, string> $paths */
-            $paths = (array) $this->config('schedule.paths', ['app' => 'app/Tasks']);
+            $paths = (array) $this->config('schedule.paths', ['app' => 'app/tasks']);
 
             $dirs = [];
             foreach ($paths as $source => $rel) {
@@ -61,7 +61,7 @@ final class SchedulingServiceProvider extends ServiceProvider
                 ));
             }
         } catch (\Throwable $e) {
-            // 扫描失败（app/Tasks 尚未初始化等）不应阻断启动。
+            // 扫描失败（app/tasks 尚未初始化等）不应阻断启动。
             logger()->warning('[schedule] 任务扫描失败：' . $e->getMessage());
         }
     }

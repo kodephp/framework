@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Tests;
 
+use Kode\Framework\Process\ConfiguredWorker;
 use Kode\Framework\Process\ProcessManager;
 use Kode\Framework\Process\Worker;
 use PHPUnit\Framework\TestCase;
@@ -20,6 +21,8 @@ final class ProcessTest extends TestCase
     {
         // 每个用例前清空生命周期记录，避免用例间污染。
         LifecycleWorker::$log = [];
+        SlotAwareWorker::$log = [];
+        OnceWorker::$log = [];
     }
 
     private function makeWorker(string $name, float $interval = 1.0, int $instances = 1): Worker
@@ -50,7 +53,7 @@ final class ProcessTest extends TestCase
     {
         $m = new ProcessManager();
         $this->expectException(\InvalidArgumentException::class);
-        $m->registerClass('App\Process\DoesNotExistWorker');
+        $m->registerClass('app\process\DoesNotExistWorker');
     }
 
     public function testRegisterClassRejectsNonWorker(): void
@@ -82,6 +85,82 @@ final class ProcessTest extends TestCase
 
         self::assertTrue($m->has('p1'));
         self::assertSame(3.0, $m->workers()['p1']->interval());
+    }
+
+    public function testRegisterFromConfigDeclarativeKeys(): void
+    {
+        $m = new ProcessManager();
+        $m->registerFromConfig([
+            'workers' => [
+                [
+                    'class'    => RecordWorker::class, // 名称固定为 record
+                    'config'   => [],
+                    'count'    => 4,
+                    'interval' => 2.5,
+                    'slots'    => [0, 2],
+                    'once'     => true,
+                ],
+            ],
+        ]);
+
+        $w = $m->workers()['record'];
+        self::assertInstanceOf(ConfiguredWorker::class, $w);
+        self::assertSame(4, $w->instances());
+        self::assertSame(2.5, $w->interval());
+        self::assertSame([0, 2], $w->slots());
+        self::assertTrue($w->once());
+    }
+
+    public function testDryRunRespectsDeclaredSlots(): void
+    {
+        // 声明 slots=[0]（仅主进程槽位执行）：dryRun 只跑槽位 0 一次。
+        $w = new SlotAwareWorker('sa', 1, 3);
+        $m = new ProcessManager();
+        $m->register(new ConfiguredWorker($w, ['slots' => [0]]));
+
+        $ran = $m->dryRun();
+
+        self::assertSame(['sa'], $ran);
+        self::assertSame(['handle:sa:0'], SlotAwareWorker::$log);
+    }
+
+    public function testDryRunRunsEverySlotWhenUnconstrained(): void
+    {
+        $w = new SlotAwareWorker('multi', 1, 3);
+        $m = new ProcessManager();
+        $m->register($w);
+
+        $ran = $m->dryRun();
+
+        self::assertSame(['multi', 'multi', 'multi'], $ran);
+        self::assertSame(
+            ['handle:multi:0', 'handle:multi:1', 'handle:multi:2'],
+            SlotAwareWorker::$log
+        );
+    }
+
+    public function testDryRunIgnoresOutOfRangeSlots(): void
+    {
+        // slots 越界（5 >= instances=2）被过滤；过滤后为空时兜底执行槽位 0。
+        $w = new SlotAwareWorker('oob', 1, 2);
+        $m = new ProcessManager();
+        $m->register(new ConfiguredWorker($w, ['slots' => [5]]));
+
+        $ran = $m->dryRun();
+
+        self::assertSame(['oob'], $ran);
+        self::assertSame(['handle:oob:0'], SlotAwareWorker::$log);
+    }
+
+    public function testOnceWorkerRunsOnceInDryRun(): void
+    {
+        $m = new ProcessManager();
+        $m->register(new OnceWorker('job'));
+
+        $ran = $m->dryRun();
+
+        self::assertSame(['job'], $ran);
+        self::assertSame(['onStart:job', 'handle:job', 'onStop:job'], OnceWorker::$log);
     }
 
     public function testDryRunExecutesLifecycleInOrderWithoutForking(): void
@@ -196,5 +275,77 @@ final class ParamWorker extends Worker
     public function interval(): float
     {
         return $this->interval;
+    }
+}
+
+/**
+ * 槽位感知 worker：handle(int $slot) 记录每个槽位的执行，供 slot 语义断言。
+ */
+final class SlotAwareWorker extends Worker
+{
+    public static array $log = [];
+
+    public function __construct(
+        private string $n,
+        private float $iv = 1.0,
+        private int $inst = 1
+    ) {
+    }
+
+    public function name(): string
+    {
+        return $this->n;
+    }
+
+    public function handle(int $slot = 0): void
+    {
+        self::$log[] = 'handle:' . $this->n . ':' . $slot;
+    }
+
+    public function interval(): float
+    {
+        return $this->iv;
+    }
+
+    public function instances(): int
+    {
+        return $this->inst;
+    }
+}
+
+/**
+ * 一次性 worker：once() = true，记录生命周期供 dryRun 断言。
+ */
+final class OnceWorker extends Worker
+{
+    public static array $log = [];
+
+    public function __construct(private string $n)
+    {
+    }
+
+    public function name(): string
+    {
+        return $this->n;
+    }
+
+    public function once(): bool
+    {
+        return true;
+    }
+
+    public function handle(): void
+    {
+        self::$log[] = 'handle:' . $this->n;
+    }
+
+    public function onStart(): void
+    {
+        self::$log[] = 'onStart:' . $this->n;
+    }
+
+    public function onStop(): void
+    {
+        self::$log[] = 'onStop:' . $this->n;
     }
 }

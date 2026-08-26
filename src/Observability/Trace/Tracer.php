@@ -39,6 +39,13 @@ final class Tracer
      */
     private static array $outbox = [];
 
+    /**
+     * outbox 逻辑头指针：超出容量上限（max_outbox）后不再 array_slice 物理裁剪，
+     * 而是步进 head 语义丢弃最旧 span（零复制）。drain / resetOutbox 时一并归零，
+     * 保证物理数组不会长期膨胀（峰值 ≤ 2×cap + 1 个元素）。
+     */
+    private static int $outboxHead = 0;
+
     private ?SpanExporter $exporter = null;
 
     /**
@@ -200,10 +207,24 @@ final class Tracer
         }
 
         // 异步：当前执行单元的 span 合并进进程级 outbox，清空本单元缓冲。
-        self::$outbox = array_merge(self::$outbox, $buffer);
+        // 逐元素 append（PHP 数组尾部追加摊销 O(1)），替代 array_merge 的每请求
+        // O(N) 全量复制；cap 裁剪改走 outboxHead 头指针「逻辑丢弃」（零复制），
+        // 彻底消除压测/高流量且无 drain 定时器时 outbox 增长引发的数组乒乓
+        // （outbox 4095 时旧实现单次 end 高达 ~20µs，是 L4/L5 梯度断层的主因）。
+        foreach ($buffer as $span) {
+            self::$outbox[] = $span;
+        }
         $cap = $this->maxOutbox();
-        if (count(self::$outbox) > $cap) {
-            self::$outbox = array_slice(self::$outbox, count(self::$outbox) - $cap);
+        if (count(self::$outbox) - self::$outboxHead > $cap) {
+            self::$outboxHead++;
+        }
+        // 物理裁剪：头指针越过 2×cap 时把已逻辑丢弃的最旧段一次清掉。
+        // drain（定时器/停机钩子）不存在时 outbox 数组仍会随请求物理增长，
+        // 长跑（native/CLI 常驻、长时间压测）会演变为无界内存泄漏；
+        // 每 2×cap 次入队触发一次 O(2×cap) 裁剪，摊薄后仍为 O(1)，内存上限封顶。
+        if (self::$outboxHead >= 2 * $cap) {
+            self::$outbox = array_slice(self::$outbox, self::$outboxHead);
+            self::$outboxHead = 0;
         }
         Context::set(self::CTX_BUFFER, []);
 
@@ -226,7 +247,10 @@ final class Tracer
             return 0;
         }
 
-        $pending = array_merge($this->buffer(), self::$outbox);
+        $pending = array_merge(
+            $this->buffer(),
+            self::$outboxHead > 0 ? array_slice(self::$outbox, self::$outboxHead) : self::$outbox,
+        );
         if ($pending === []) {
             return 0;
         }
@@ -234,6 +258,7 @@ final class Tracer
         $exporter = $this->exporter();
         if ($exporter === null) {
             self::$outbox = [];
+            self::$outboxHead = 0;
             Context::set(self::CTX_BUFFER, []);
 
             return 0;
@@ -244,6 +269,7 @@ final class Tracer
         try {
             $exporter->export($pending);
             self::$outbox = [];
+            self::$outboxHead = 0;
             Context::set(self::CTX_BUFFER, []);
             $this->dispatch(new SpansFlushed($count, $name, true));
 
@@ -299,6 +325,7 @@ final class Tracer
     public static function resetOutbox(): void
     {
         self::$outbox = [];
+        self::$outboxHead = 0;
     }
 
     // ------------------------------------------------------------------
@@ -321,7 +348,15 @@ final class Tracer
     private function popStack(Span $span): void
     {
         $stack = $this->stack();
-        $stack = array_values(array_filter($stack, static fn (Span $s): bool => $s !== $span));
+
+        // 快路径：叶子 span 结束恒在栈顶（end 的调用语义），直接 array_pop O(1) 零分配；
+        // 仅当中段 span 乱序结束（异常/嵌套跳过）才退回 O(n) 过滤兜底。
+        if ($stack !== [] && $stack[array_key_last($stack)] === $span) {
+            array_pop($stack);
+        } else {
+            $stack = array_values(array_filter($stack, static fn (Span $s): bool => $s !== $span));
+        }
+
         Context::set(self::CTX_STACK, $stack);
     }
 

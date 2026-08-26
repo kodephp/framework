@@ -15,7 +15,7 @@ use PHPUnit\Framework\TestCase;
  * AOP（P1）接线验证：
  *  - AspectScanner 能按 PSR-4 发现标注 #[Aspect] 的切面类；
  *  - AopServiceProvider 把内核接进生命周期（可被 resolve / aop() 助手取到）；
- *  - config/aop.php 的 paths 自动发现 app/Aop 下真实切面并织入。
+ *  - config/aop.php 的 paths 自动发现 app/aop 下真实切面并织入。
  */
 final class AopProviderTest extends TestCase
 {
@@ -55,7 +55,7 @@ final class AopProviderTest extends TestCase
         $diagnostics = $kernel->diagnostics();
 
         self::assertTrue($diagnostics['enabled']);
-        // app/Aop 下的 #[Aspect] 应被自动发现并织入（无需在 bootstrap.php 手动注册）。
-        self::assertGreaterThanOrEqual(1, $diagnostics['aspects'], 'app/Aop 下的切面应被自动发现');
+        // app/aop 下的 #[Aspect] 应被自动发现并织入（无需在 bootstrap.php 手动注册）。
+        self::assertGreaterThanOrEqual(1, $diagnostics['aspects'], 'app/aop 下的切面应被自动发现');
     }
 }

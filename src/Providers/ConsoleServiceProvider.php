@@ -38,7 +38,7 @@ use Kode\Framework\Providers\ServiceProvider;
 /**
  * 控制台服务提供者（kode/console）
  *
- * 构建 Kernel，注册 config 中声明的命令，并自动扫描 app/Console/Commands 目录。
+ * 构建 Kernel，注册 config 中声明的命令，并自动扫描 app/console 目录。
  */
 final class ConsoleServiceProvider extends ServiceProvider
 {
@@ -59,10 +59,10 @@ final class ConsoleServiceProvider extends ServiceProvider
             $kernel->addMany($commands);
         }
 
-        $dir = $this->config('path.base') . '/app/Console/Commands';
+        $dir = $this->config('path.base') . '/app/console';
         if (is_dir($dir)) {
             foreach (glob($dir . '/*Command.php') ?: [] as $file) {
-                $class = 'App\\Console\\Commands\\' . basename($file, '.php');
+                $class = '\app\\console\\' . basename($file, '.php');
                 if (class_exists($class)) {
                     $kernel->add($class);
                 }

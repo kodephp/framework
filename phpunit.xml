@@ -36,6 +36,8 @@
         <!-- 框架默认改为「按需开启（opt-in）」：以下跨切面能力 config 默认值已翻转为 false。
              测试环境统一显式开启，使既有「能力启用」类测试维持绿；框架真实默认仍为零开销。 -->
         <env name="CORS_ENABLED" value="true"/>
+        <env name="CSRF_ENABLED" value="true"/>
+        <env name="LIMITING_ENABLED" value="true"/>
         <env name="SECURITY_HEADERS_ENABLED" value="true"/>
         <env name="SECURITY_REQUEST_ID" value="true"/>
         <env name="OBS_METRICS_ENABLED" value="true"/>

@@ -43,7 +43,7 @@ return [
 /*
  * 接入真实分布式发现（零框架改动示例）：
  *
- *   // App\Discovery\ConsulRegistry implements \Kode\Framework\ServiceDiscovery\Contracts\ServiceRegistry
+ *   // app\discovery\ConsulRegistry implements \Kode\Framework\ServiceDiscovery\Contracts\ServiceRegistry
  *   // 构造接收 ['address'=>..., 'token'=>...]，discover() 调 Consul Catalog API 返回 ServiceInstance[]。
  *   // 然后在 ServiceDiscoveryServiceProvider 的 boot() 中把内置 StaticServiceRegistry
  *   // 换成 $this->container->instance(ServiceRegistry::class, new ConsulRegistry($cfg));

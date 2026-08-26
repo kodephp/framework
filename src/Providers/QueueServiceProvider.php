@@ -33,7 +33,7 @@ final class QueueServiceProvider extends ServiceProvider
 
         $this->container->alias('queue', Queue::class);
 
-        // 消费端：自动发现 app/Jobs、app/Tasks 下标注 #[AsJob] 的任务类，
+        // 消费端：自动发现 app/jobs、app/tasks 下标注 #[AsJob] 的任务类，
         // 并合并 config/queue.php 的 workers 显式映射，注册为单例供 queue:work 复用。
         $this->container->singleton(HandlerResolver::class, function (): HandlerResolver {
             $resolver = new HandlerResolver($this->container);
@@ -67,13 +67,13 @@ final class QueueServiceProvider extends ServiceProvider
     {
         $base = rtrim((string) $this->config('path.base', (string) getcwd()), '/');
         /** @var list<string> $dirs */
-        $dirs = (array) $this->config('queue.jobs_dir', ['app/Jobs', 'app/Tasks']);
+        $dirs = (array) $this->config('queue.jobs_dir', ['app/jobs', 'app/tasks']);
 
         $map = [];
         foreach ($dirs as $rel) {
             $abs = str_starts_with($rel, '/') ? $rel : $base . '/' . ltrim($rel, '/');
-            // app/Jobs -> App\Jobs\；app/Tasks -> App\Tasks\
-            $ns = 'App\\' . str_replace('/', '\\', trim($rel, '/')) . '\\';
+            // app/jobs -> \app\jobs\；app/tasks -> \app\tasks\
+            $ns = '\app\\' . str_replace('/', '\\', trim($rel, '/')) . '\\';
             $map[$ns] = $abs;
         }
 

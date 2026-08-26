@@ -88,7 +88,7 @@
     "autoload-dev": {
         "psr-4": {
             "Kode\\Framework\\Tests\\": "tests/",
-            "App\\": "app/"
+            "app\\": "app/"
         }
     },
     "bin": [

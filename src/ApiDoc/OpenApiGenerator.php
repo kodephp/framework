@@ -30,6 +30,9 @@ final class OpenApiGenerator
     /** 跳过自动生成的辅助方法（GET 路由已隐含 HEAD / OPTIONS 由框架托管） */
     private const SKIP_METHODS = ['HEAD', 'OPTIONS'];
 
+    /** 生成的 spec 缓存：路由表不变时复用，避免每个 /docs/openapi.json 请求重复遍历/反射。 */
+    private ?array $specCache = null;
+
     /**
      * @param array<string, mixed> $config config/apidoc.php
      */
@@ -43,10 +46,18 @@ final class OpenApiGenerator
     /**
      * 生成完整 OpenAPI 3.0 spec 数组。
      *
+     * 结果按「提前扫描缓存」策略缓存：路由表在启动期一次性注册完毕（含
+     * #[OpenApi] 补充片段与参数，均于扫描期登记），故后续生成直接复用首份 spec。
+     * 运行期动态注册路由时调用 {@see invalidate()} 使缓存失效。
+     *
      * @return array<string, mixed>
      */
     public function generate(): array
     {
+        if ($this->specCache !== null) {
+            return $this->specCache;
+        }
+
         $paths = [];
 
         foreach ($this->app->getRouter()->getRoutes() as $route) {
@@ -56,12 +67,20 @@ final class OpenApiGenerator
         // 仅保留有操作的路径
         $paths = array_filter($paths, static fn(array $methods): bool => $methods !== []);
 
-        return [
+        return $this->specCache = [
             'openapi' => '3.0.3',
             'info' => $this->buildInfo(),
             'servers' => $this->buildServers(),
             'paths' => $paths,
         ];
+    }
+
+    /**
+     * 使 spec 缓存失效（运行期动态注册/移除路由后调用）。
+     */
+    public function invalidate(): void
+    {
+        $this->specCache = null;
     }
 
     /**
@@ -239,6 +258,12 @@ final class OpenApiGenerator
     /**
      * 从路径与已知参数名构建路径参数定义。
      *
+     * 参数结构化：
+     *  - 名称与位置（in: path）来自路由模式；
+     *  - required 由可选标记（{name?}）推导；
+     *  - schema 类型由约束推断：{id:\d+} → integer，{price:\d+\.\d+} → number，
+     *    无约束其余 → string（OpenAPI 无法表达正则约束，故以标量类型近似）。
+     *
      * @param list<string> $paramNames
      * @return list<array<string, mixed>>
      */
@@ -252,11 +277,33 @@ final class OpenApiGenerator
                 'name' => $name,
                 'in' => 'path',
                 'required' => $required,
-                'schema' => ['type' => 'string'],
+                'schema' => ['type' => $this->paramType($pattern, $name)],
             ];
         }
 
         return $result;
+    }
+
+    /**
+     * 从路径约束推断 OpenAPI 标量类型。
+     *
+     * @param string $name 参数名（字母数字下划线，无正则特殊字符）
+     */
+    private function paramType(string $pattern, string $name): string
+    {
+        if (preg_match('#\{' . preg_quote($name, '#') . ':([^}]*)\}#', $pattern, $m) === 1) {
+            $constraint = $m[1];
+            // 约束是正则字面量（如 \d+\.\d+），逐 token 字面匹配：
+            // \\d（字面反斜杠+d）、\+（字面加号）、\.（字面点）。
+            if (preg_match('#^\\\\d\\+\\\\\\.\\\\d\\+$#', $constraint) === 1) {
+                return 'number';
+            }
+            if (preg_match('#^\\\\d\\+$#', $constraint) === 1) {
+                return 'integer';
+            }
+        }
+
+        return 'string';
     }
 
     /**

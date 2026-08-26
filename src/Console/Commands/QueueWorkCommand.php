@@ -28,7 +28,7 @@ use Psr\Container\ContainerInterface;
  * 处理器来源（三者合并，前者优先）：
  *   1. QueueServiceProvider 绑定、自动扫描 #[AsJob] 得到的 HandlerResolver 单例；
  *   2. config/queue.php 的 `workers`（任务名 => 处理器类/闭包）；
- *   3. app/Jobs、app/Tasks 下标注 #[AsJob] 的任务类（自动发现）。
+ *   3. app/jobs、app/tasks 下标注 #[AsJob] 的任务类（自动发现）。
  */
 #[AsCommand(
     name: 'queue:work',
@@ -188,12 +188,12 @@ final class QueueWorkCommand extends Command
     {
         $base = rtrim((string) config('path.base', (string) getcwd()), '/');
         /** @var list<string> $dirs */
-        $dirs = (array) config('queue.jobs_dir', ['app/Jobs', 'app/Tasks']);
+        $dirs = (array) config('queue.jobs_dir', ['app/jobs', 'app/tasks']);
 
         $map = [];
         foreach ($dirs as $rel) {
             $abs = str_starts_with($rel, '/') ? $rel : $base . '/' . ltrim($rel, '/');
-            $ns = 'App\\' . str_replace('/', '\\', trim($rel, '/')) . '\\';
+            $ns = '\app\\' . str_replace('/', '\\', trim($rel, '/')) . '\\';
             $map[$ns] = $abs;
         }
 

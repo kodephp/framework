@@ -6,7 +6,7 @@
 
 return [
     'name' => env('APP_NAME', 'kode-app'),
-    'debug' => (bool) env('APP_DEBUG', true),
+    'debug' => (bool) env('APP_DEBUG', false),
     'timezone' => env('APP_TIMEZONE', 'Asia/Shanghai'),
     'env' => env('APP_ENV', 'local'),
 

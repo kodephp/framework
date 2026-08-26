@@ -4,7 +4,7 @@
 在 `config/plugins.php` 的 `plugins` 数组里声明即可启用。框架启动期会实例化并依次调用
 `register()` / `boot()`，插件通过 `PluginManager` 注册路由 / 服务 / 监听器 / 命令。
 
-示例插件（`app/Plugins/DemoPlugin.php`）：
+示例插件（`app/plugins/DemoPlugin.php`）：
 
 ```php
 use Kode\Framework\Plugin\PluginInterface;
@@ -29,7 +29,7 @@ final class DemoPlugin implements PluginInterface
 开启（`config/plugins.php`）：
 
 ```php
-return ['plugins' => [\App\Plugins\DemoPlugin::class]];
+return ['plugins' => [\app\Plugins\DemoPlugin::class]];
 ```
 
 `PluginManager` 提供的注册接口：

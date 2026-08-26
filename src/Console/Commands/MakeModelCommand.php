@@ -16,7 +16,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
  */
 #[AsCommand(
     name: 'make:model',
-    description: '生成数据模型（app/Models）',
+    description: '生成数据模型（app/models）',
     usage: 'make:model {name} {--force}',
 )]
 final class MakeModelCommand extends Command
@@ -46,7 +46,7 @@ final class MakeModelCommand extends Command
 
 declare(strict_types=1);
 
-namespace App\Models;
+namespace app\models;
 
 use Kode\Framework\Database\Model;
 
@@ -66,7 +66,7 @@ final class {$class} extends Model
 
 PHP;
 
-        $path = $this->path('app/Models/' . $class . '.php');
+        $path = $this->path('app/models/' . $class . '.php');
         if (!$this->writeFile($path, $content, $this->flag('force', false))) {
             $this->warn("已存在，跳过（用 --force 覆盖）：{$path}");
 

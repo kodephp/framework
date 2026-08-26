@@ -112,25 +112,27 @@ final class AccessLogMiddleware implements MiddlewareInterface
     }
 
     /**
-     * 离路径批量落盘阈值：队列积压达到该条数即触发一次批量 flush。
-     * 这是修复「常驻进程下访问日志队列无限累积 → worker OOM」的关键——
-     * 旧实现只在优雅停机时 flush，持续高并发会把全部请求积压进内存直至内存耗尽；
-     * 现改为「阈值触发批量落盘」，队列长度恒有界（≤ BATCH），I/O 被均摊到每 BATCH 个请求，
-     * 既防 OOM 又不丢日志、热路径仅多一次计数比较。
+     * 队列入队已完全移出请求热路径——真实落盘由 LogServiceProvider 注册的运行时
+     * Timer / 停机钩子离请求路径执行，热路径只做一次内存入队（µs 级），绝不做任何
+     * 文件 I/O。
+     *
+     * 历史教训（已重构移除）：早期版本曾在队列积压 ≥ 256 条时于请求线程内同步
+     * flush 全队列，高并发下把数千条 Monolog 写入（数十 ms）压进单个请求，且写入
+     * 越慢积压越多 → 雪崩：能力梯度 L3(+日志) 一档 rps 从 L2 骤降 87%。队列有界性
+     * 改由 AccessLogSink::MAX（8192，超限丢新）保障——访问日志在极端过载下可丢弃，
+     * 优于 worker OOM / 请求线程阻塞。
      */
-    private const BATCH = 256;
 
     /**
-     * 落盘：异步（sink 已注入且开启）时仅内存入队，离请求路径再批量写入；
-     * 否则（无 sink 或 async=false）直接同步写 logger，保证向后兼容与审计强一致场景。
+     * 落盘：异步（sink 已注入且开启）时仅内存入队，离请求路径（运行时周期
+     * Timer / shutdown 钩子，见 {@see \Kode\Framework\Providers\LogServiceProvider}）
+     * 再批量写入；否则（无 sink 或 async=false）直接同步写 logger，保证向后兼容
+     * 与审计强一致场景。无论哪条路径，请求线程内都**不执行 flush**。
      */
     private function write(string $level, array $context): void
     {
         if ($this->sink !== null && $this->async) {
             $this->sink->emit($level, 'access', $context);
-            if ($this->sink->pending() >= self::BATCH) {
-                $this->sink->flush($this->logger);
-            }
             return;
         }
 

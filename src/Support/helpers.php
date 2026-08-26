@@ -426,7 +426,7 @@ if (!function_exists('process')) {
      * 获取常驻进程管理器（框架自建，基于 kode/process 的 fork + Timer 原语）。
      *
      * 用法：
-     *   process()->register(new App\Process\HeartbeatWorker);
+     *   process()->register(new \app\process\HeartbeatWorker);
      *   process()->dryRun();        // 无 fork 验证逻辑
      *   process()->start();         // 真正 fork 常驻进程（CLI + pcntl）
      */

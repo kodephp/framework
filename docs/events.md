@@ -2,12 +2,12 @@
 
 ```php
 // 监听（config/event.php 的 listeners 也可声明）
-Event::listen(\App\Events\UserRegistered::class, function (\App\Events\UserRegistered $e) {
+Event::listen(\app\Events\UserRegistered::class, function (\app\Events\UserRegistered $e) {
     // 发欢迎邮件、打点……
 });
 
 // 触发
-event(new \App\Events\UserRegistered($uid));
+event(new \app\Events\UserRegistered($uid));
 ```
 
 **订阅者**（一个类批量注册多个监听器，对齐 webman/hyperf 的 subscribe 风格）：
@@ -29,6 +29,6 @@ final class UserEventSubscriber implements SubscriberInterface
 在 `config/event.php` 的 `subscribe` 数组里声明类名即可启用：
 
 ```php
-return ['subscribe' => [\App\Listeners\UserEventSubscriber::class]];
+return ['subscribe' => [\app\Listeners\UserEventSubscriber::class]];
 ```
 

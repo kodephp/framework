@@ -14,6 +14,6 @@
 return [
     'plugins' => [
         // 示例：
-        // \App\Plugins\BlogPlugin::class,
+        // \app\plugins\BlogPlugin::class,
     ],
 ];

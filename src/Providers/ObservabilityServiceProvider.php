@@ -46,8 +46,16 @@ final class ObservabilityServiceProvider extends ServiceProvider
 
         // ---- 自动请求指标 ----
         if (!empty($this->config('observability.metrics.enabled', true))) {
-            $app->use(new MetricsMiddleware($registry, (array) $this->config('observability.metrics', [])));
-            $this->registerMetricsEndpoint($app, $registry);
+            // 可关闭「挂载请求指标中间件」（保留 registry / 端点 / 门面）。
+            // 供压测隔离：区分「中间件每请求成本」与「observability 组其余启动副作用」。
+            if (!empty($this->config('observability.metrics.middleware_enabled', true))) {
+                $app->use(new MetricsMiddleware($registry, (array) $this->config('observability.metrics', [])));
+            }
+            // 指标抓取端点默认注册；纯内网旁路采集（独立 metric agent 定时 scrape /
+            // 网关统一抓取）时可关闭，避免业务路由表多一行匹配。
+            if (!empty($this->config('observability.metrics.register_endpoint', true))) {
+                $this->registerMetricsEndpoint($app, $registry);
+            }
         }
     }
 

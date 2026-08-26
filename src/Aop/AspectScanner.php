@@ -14,7 +14,7 @@ use Kode\Attributes\Reader;
  * 无需在配置里逐条登记切面。AopServiceProvider 据此把发现的切面注册进 AOP 内核。
  *
  * 扫描到的是「标注了 #[Aspect] 的类」；类里方法上再标 #[Before]/#[After]/#[Around] 等
- * 并声明 Pointcut 表达式（如 execution(* App\Service\*->*(..))），即完成织入声明。
+ * 并声明 Pointcut 表达式（如 execution(* \app\service\*->*(..))），即完成织入声明。
  */
 final class AspectScanner
 {

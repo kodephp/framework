@@ -20,6 +20,14 @@ return [
         // 端点路径
         'path' => env('OBS_METRICS_PATH', '/metrics'),
 
+        // 可选：是否挂载请求指标采集中间件（默认 true）。关闭后保留 registry / 端点 / 门面，
+        // 仅移除每请求采集（压测隔离用：区分「中间件每请求成本」与「observability 组其余副作用」）。
+        // 'middleware_enabled' => (bool) env('OBS_METRICS_MIDDLEWARE_ENABLED', true),
+
+        // 可选：是否注册指标抓取端点 /metrics（默认 true）。纯内网旁路采集（独立 metric agent
+        // 定时 scrape / 网关统一抓取）可关闭，避免业务路由表多一行匹配。
+        // 'register_endpoint' => (bool) env('OBS_METRICS_REGISTER_ENDPOINT', true),
+
         /*
          * 端点保护策略（指标含 QPS / 错误率等敏感运营数据，生产勿公开）：
          *  - 'token'：需携带 ?token=<TOKEN> 或 Authorization: Bearer <TOKEN>

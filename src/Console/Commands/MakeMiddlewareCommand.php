@@ -16,7 +16,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
  */
 #[AsCommand(
     name: 'make:middleware',
-    description: '生成 HTTP 中间件（app/Http/Middleware）',
+    description: '生成 HTTP 中间件（app/http/middleware）',
     usage: 'make:middleware {name} {--force}',
 )]
 final class MakeMiddlewareCommand extends Command
@@ -48,7 +48,7 @@ final class MakeMiddlewareCommand extends Command
 
 declare(strict_types=1);
 
-namespace App\Http\Middleware;
+namespace app\http\middleware;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -73,7 +73,7 @@ final class {$class} implements MiddlewareInterface
 
 PHP;
 
-        $path = $this->path('app/Http/Middleware/' . $class . '.php');
+        $path = $this->path('app/http/middleware/' . $class . '.php');
         if (!$this->writeFile($path, $content, $this->flag('force', false))) {
             $this->warn("已存在，跳过（用 --force 覆盖）：{$path}");
 

@@ -154,7 +154,7 @@ final class RobustnessTest extends TestCase
         mkdir($dir . '/config', 0o755, true);
         // 指向一个不存在的 provider 类：CoreApp::boot 实例化时必然失败，
         // 应被 Application 包成带上下文的 RuntimeException。
-        file_put_contents($dir . '/config/app.php', "<?php return ['providers' => ['App\\\\No\\\\Such\\\\Provider']];");
+        file_put_contents($dir . '/config/app.php', "<?php return ['providers' => ['\app\\\\no\\\\such\\\\Provider']];");
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('应用启动失败');

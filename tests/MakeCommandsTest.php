@@ -71,21 +71,21 @@ final class MakeCommandsTest extends TestCase
     {
         $code = $this->execute(new MakeControllerCommand($this->tmp), ['User']);
         self::assertSame(0, $code);
-        $this->assertGenerated('app/Http/Controllers/UserController.php', 'class UserController extends Controller');
-        $this->assertGenerated('app/Http/Controllers/UserController.php', 'namespace App\Http\Controllers;');
+        $this->assertGenerated('app/http/controllers/UserController.php', 'class UserController extends Controller');
+        $this->assertGenerated('app/http/controllers/UserController.php', 'namespace app\http\controllers;');
     }
 
     public function testMakeControllerKeepsSuffix(): void
     {
         $this->execute(new MakeControllerCommand($this->tmp), ['UserController']);
-        $this->assertGenerated('app/Http/Controllers/UserController.php', 'class UserController extends Controller');
+        $this->assertGenerated('app/http/controllers/UserController.php', 'class UserController extends Controller');
     }
 
     public function testMakeModel(): void
     {
         $this->execute(new MakeModelCommand($this->tmp), ['Post']);
-        $this->assertGenerated('app/Models/Post.php', 'class Post extends Model');
-        $this->assertGenerated('app/Models/Post.php', "protected string \$table = 'posts';");
+        $this->assertGenerated('app/models/Post.php', 'class Post extends Model');
+        $this->assertGenerated('app/models/Post.php', "protected string \$table = 'posts';");
     }
 
     public function testMakeMigration(): void
@@ -99,14 +99,14 @@ final class MakeCommandsTest extends TestCase
     public function testMakeMiddleware(): void
     {
         $this->execute(new MakeMiddlewareCommand($this->tmp), ['Auth']);
-        $this->assertGenerated('app/Http/Middleware/AuthMiddleware.php', 'class AuthMiddleware implements MiddlewareInterface');
+        $this->assertGenerated('app/http/middleware/AuthMiddleware.php', 'class AuthMiddleware implements MiddlewareInterface');
     }
 
     public function testMakeCommand(): void
     {
         $this->execute(new MakeCommandCommand($this->tmp), ['SendNewsletter']);
-        $this->assertGenerated('app/Console/Commands/SendNewsletterCommand.php', 'class SendNewsletterCommand extends Command');
-        $this->assertGenerated('app/Console/Commands/SendNewsletterCommand.php', "name: 'send_newsletter'");
+        $this->assertGenerated('app/console/SendNewsletterCommand.php', 'class SendNewsletterCommand extends Command');
+        $this->assertGenerated('app/console/SendNewsletterCommand.php', "name: 'send_newsletter'");
     }
 
     public function testSkipWhenExistsWithoutForce(): void

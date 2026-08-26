@@ -201,6 +201,34 @@ final class TracingTest extends TestCase
         self::assertCount(1, $sink);
     }
 
+    public function testOutboxPhysicalTrimWithoutDrain(): void
+    {
+        $sink = [];
+        // 压测 / 长跑模拟：常驻进程无 drain 定时器时纯入队不导出。
+        $t = new Tracer(
+            true,
+            ['flush_on_request_end' => true, 'async' => true, 'sample_ratio' => 1.0, 'max_outbox' => 4],
+            null,
+            $this->exporterResolver($sink),
+        );
+
+        for ($i = 0; $i < 500; $i++) {
+            $root = $t->start('req');
+            $t->end($root);
+        }
+
+        // 物理数组必须被裁剪回有界（防无 drain 长跑内存泄漏），
+        // 上限 = 逻辑保留窗口 cap + 触发裁剪阈值 2×cap 的余量。
+        $rc = new \ReflectionClass(Tracer::class);
+        $outbox = $rc->getStaticPropertyValue('outbox');
+        self::assertLessThanOrEqual(4 * 3 + 1, count($outbox), 'outbox 物理数组应被裁剪为有界');
+
+        // 裁剪不得丢数据：drain 仍能取回逻辑保留窗口内的最近 span。
+        $n = $t->drain();
+        self::assertSame(4, $n);
+        self::assertCount(4, $sink);
+    }
+
     public function testFileExporterWritesNdjson(): void
     {
         $path = sys_get_temp_dir() . '/kode-trace-test-' . uniqid() . '.ndjson';

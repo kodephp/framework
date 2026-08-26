@@ -46,18 +46,38 @@ abstract class TestCase extends BaseTestCase
     protected string $basePath = '';
 
     /**
+     * 启动期配置覆盖（最高优先级，透传给 Application::make 的 configOverrides）。
+     * 子类可设置以覆写 config/*.php 的键（如 ['apidoc' => ['enabled' => true]]）。
+     *
+     * @var array<string, mixed>
+     */
+    protected array $configOverrides = [];
+
+    /**
+     * 是否要求「独立的进程级应用实例」（默认 false：跨测试复用首次 boot 的应用，
+     * 保留 static 注册型路由惯例——如 FrameworkSmoke 用 static 标记只注册一次路由）。
+     *
+     * 需要不同于既有实例的配置时置 true（如 apidoc 显式开/关），boot 前会重建 kode/core 单例。
+     */
+    protected bool $independentApp = false;
+
+    /**
      * 启动（或复用）框架应用。
      *
      * @param string $basePath 项目根（含 app/ config/ 的目录）。空则取 getcwd()。
      */
     protected function bootApp(string $basePath = ''): Application
     {
+        if ($this->independentApp) {
+            $this->resetCoreAppSingleton();
+        }
+
         if (self::$app !== null) {
             return self::$app;
         }
 
         $root = $basePath !== '' ? rtrim($basePath, '/') : getcwd();
-        self::$app = Application::make($root);
+        self::$app = Application::make($root, $this->configOverrides);
 
         return self::$app;
     }
@@ -125,11 +145,29 @@ abstract class TestCase extends BaseTestCase
 
     /**
      * 测试后清理应用单例，避免用例间串扰。
+     *
+     * 同时重置 kode/core 的进程级 App 单例（CoreApp::boot() 重复调用会直接返回
+     * 首个实例，导致后启动测试的 config overrides / providers 无法生效），
+     * 保证每个测试类都拿到独立、按自身配置引导的应用。
      */
     protected function tearDown(): void
     {
         self::$app = null;
+
+        if ($this->independentApp) {
+            $this->resetCoreAppSingleton();
+        }
+
         parent::tearDown();
+    }
+
+    /**
+     * 重置 kode/core 进程级 App 单例（供要求独立引导的测试类使用）。
+     */
+    private function resetCoreAppSingleton(): void
+    {
+        $coreApp = new \ReflectionClass(\Kode\Core\App::class);
+        $coreApp->getProperty('instance')->setValue(null, null);
     }
 }
 

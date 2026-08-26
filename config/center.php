@@ -26,7 +26,7 @@ return [
         //   - 远程中心拉取到本地的镜像缓存（应用侧 watch 后写此文件，再调 config:center:reload）；
         //   - 运维不重新部署即可改线上配置（写 center.local.php，gitignore 不提交）。
         // 远程中心接入示例（应用自行实现）：
-        //   ['class' => App\Config\NacosConfigSource::class, 'config' => ['server' => '...', 'dataId' => '...']]
+        //   ['class' => app\config\NacosConfigSource::class, 'config' => ['server' => '...', 'dataId' => '...']]
         [
             'class' => \Kode\Framework\Config\FileConfigSource::class,
             'config' => [

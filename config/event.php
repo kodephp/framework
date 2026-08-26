@@ -11,11 +11,11 @@
 return [
     'listeners' => [
         // 示例：
-        // \App\Events\UserRegistered::class => [\App\Listeners\SendWelcomeEmail::class],
+        // \app\events\UserRegistered::class => [\app\listeners\SendWelcomeEmail::class],
     ],
 
     'subscribe' => [
         // 示例：
-        // \App\Listeners\UserEventSubscriber::class,
+        // \app\listeners\UserEventSubscriber::class,
     ],
 ];

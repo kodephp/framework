@@ -12,7 +12,7 @@ OpenAPI 规范里，只有「路由 + 路径参数」能从代码可靠推断；
 | 内容 | 来源 | 是否需要声明 |
 | --- | --- | --- |
 | `paths` / `methods` / `operationId` | 路由注册 | 自动 |
-| 路径参数（`{id}`） | 路由模式 | 自动（含 `{id?}` → `required:false`） |
+| 路径参数（`{id}`） | 路由模式 | 自动（`{id?}` → `required:false`；`{id:\d+}` → `integer`、`{id:\d+\.\d+}` → `number`） |
 | 查询/Header/Cookie 参数 | — | **需 `#[OpenApi]` 声明** |
 | 请求体字段 | — | **需 `#[OpenApi]` 声明** |
 | 响应结构与示例 | — | **需 `#[OpenApi]` 声明**（默认仅 `200 => OK`） |
@@ -23,15 +23,19 @@ OpenAPI 规范里，只有「路由 + 路径参数」能从代码可靠推断；
 
 ## 二、端点（运行时自动生成，供联调/Swagger UI）
 
+> **默认关闭**：`enabled=false` 时不挂载 `/docs` 与 `/docs/openapi.json`（端点返回 404）。
+> 需要在线浏览时在 `config/apidoc.php` 显式开启；只做交付物（CI / 下游工具）时用
+> `bin/kode apidoc:generate`，无需暴露公网端点。
+
 | 路径 | 说明 |
 | --- | --- |
-| `/docs/openapi.json` | 实时生成的 OpenAPI 3.0 spec |
+| `/docs/openapi.json` | 实时生成的 OpenAPI 3.0 spec（路由表启动期一次性扫描并缓存，重复请求零反射） |
 | `/docs` | Swagger UI 浏览页（默认经 unpkg CDN 加载静态资源） |
 
 ```php
 // config/apidoc.php
 return [
-    'enabled'   => true,
+    'enabled'   => false,      // 默认关闭；置 true 才挂载 /docs 与 /docs/openapi.json
     'title'     => env('APP_NAME', 'Kode Framework API'),
     'version'   => '1.0.0',
     'description' => '由 Kode Framework 自动生成的 API 文档',

@@ -9,8 +9,9 @@ declare(strict_types=1);
  * 控制器方法可用 #[OpenApi] 属性补充 summary / description / tags / requestBody / responses。
  */
 return [
-    // 总开关
-    'enabled' => true,
+    // 总开关（默认关闭：不挂载 /docs 与 /docs/openapi.json 端点）。
+    // 需要在线浏览 API 文档时置为 true；离线生成请走 `bin/kode apidoc:generate`。
+    'enabled' => false,
 
     // OpenAPI info
     'title' => env('APP_NAME', 'Kode Framework API'),

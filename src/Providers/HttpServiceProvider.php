@@ -651,6 +651,7 @@ final class HttpServiceProvider extends ServiceProvider
         // 会退化为相对 CWD，故此处用真实的 path.base 拼成绝对路径，避免依赖工作目录。
         $base = (string) $this->config('path.base', '');
         $dirs = $this->resolveAbsoluteDirs($dirs, $base);
+        $dirs = $this->withApplicationControllerDirs($dirs);
         $dirs = $this->withPluginControllerDirs($dirs);
         $scanner->scan($dirs);
     }
@@ -711,11 +712,67 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
+     * 多应用自动发现（零开关）：app/{App}/routes.php 存在即视为一个子应用，
+     * 其 http/controllers 或 controllers 目录自动纳入属性路由扫描。
+     *
+     * 约定（与主应用对齐）：
+     *   - 应用目录：app/admin/routes.php、app/api/routes.php ...（目录名即应用名，小写）；
+     *   - 控制器目录：app/{App}/http/controllers 或 app/{App}/controllers；
+     *   - namespace：与目录严格对应（PSR-4 app\ → app/），如
+     *     app/admin/http/controllers/AdminPanelController.php → app\admin\http\controllers\AdminPanelController。
+     *   - 路由来源标签：app:<App>（route:list 分组展示）。
+     *
+     * 不满足「存在 routes.php」的普通目录（app/http、app/services、app/models 等）不受影响，
+     * 不会被误判为子应用。
+     *
+     * @return list<string> 子应用目录绝对路径列表
+     */
+    private function discoverApplications(): array
+    {
+        $base = (string) $this->config('path.base', '');
+        $apps = [];
+
+        foreach (glob($base . '/app/*', GLOB_ONLYDIR) ?: [] as $dir) {
+            if (basename((string) $dir) === 'routes') {
+                continue; // 主应用路由目录（归属主应用，见 resolveRouteSources）
+            }
+            if (is_file($dir . '/routes.php')) {
+                $apps[] = $dir;
+            }
+        }
+
+        return $apps;
+    }
+
+    /**
+     * 把子应用控制器目录纳入属性扫描（自动发现，无需开关）。
+     *
+     * @param array<string, string> $dirs
+     * @return array<string, string>
+     */
+    private function withApplicationControllerDirs(array $dirs): array
+    {
+        foreach ($this->discoverApplications() as $appDir) {
+            $name = basename((string) $appDir);
+            foreach (['http/controllers', 'controllers'] as $rel) {
+                $candidate = $appDir . '/' . $rel;
+                if (is_dir($candidate)) {
+                    $dirs['app:' . $name] = $candidate;
+                    break;
+                }
+            }
+        }
+
+        return $dirs;
+    }
+
+    /**
      * 解析所有路由来源（标签 => 文件路径），全部自动发现，无需配置开关。
      *
      * 顺序：
      *  - 主应用 app/routes.php（单一入口文件，标签 app）；
      *  - app/routes/*.php 全部文件（每个文件一个来源，标签 routes:<filename>）；
+     *  - 子应用 app/{App}/routes.php 与 app/{App}/routes/*.php（标签 app:<App>[:<file>]）；
      *  - config/routes.php 的 sources 额外声明；
      *  - plugins/<name>/routes.php 自动发现（标签 plugin:<name>）。
      *
@@ -739,6 +796,22 @@ final class HttpServiceProvider extends ServiceProvider
             }
             $label = 'routes:' . basename((string) $file, '.php');
             $sources[$label] = $file;
+        }
+
+        // 多应用自动发现：app/{App}/routes.php + app/{App}/routes/*.php（零开关）。
+        foreach ($this->discoverApplications() as $appDir) {
+            $appName = basename((string) $appDir);
+            $appRoutesFile = $appDir . '/routes.php';
+            if (is_file($appRoutesFile)) {
+                $sources['app:' . $appName] = $appRoutesFile;
+            }
+            foreach (glob($appDir . '/routes/*.php') ?: [] as $file) {
+                if (basename((string) $file) === 'routes.php') {
+                    continue;
+                }
+                $label = 'app:' . $appName . ':' . basename((string) $file, '.php');
+                $sources[$label] = $file;
+            }
         }
 
         /** @var array<string, string> $extra */

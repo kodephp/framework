@@ -34,7 +34,9 @@ final class ApiDocServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        if (empty($this->config('apidoc.enabled', true))) {
+        // 默认关闭：未显式配置 enabled=true 时不挂载任何文档端点，
+        // 需要在线浏览时在 config/apidoc.php 显式开启（离线生成用 apidoc:generate）。
+        if (empty($this->config('apidoc.enabled', false))) {
             return;
         }
 

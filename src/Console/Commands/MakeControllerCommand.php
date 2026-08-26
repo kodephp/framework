@@ -16,7 +16,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
  */
 #[AsCommand(
     name: 'make:controller',
-    description: '生成 HTTP 控制器（app/Http/Controllers）',
+    description: '生成 HTTP 控制器（app/http/controllers）',
     usage: 'make:controller {name} {--force}',
 )]
 final class MakeControllerCommand extends Command
@@ -48,7 +48,7 @@ final class MakeControllerCommand extends Command
 
 declare(strict_types=1);
 
-namespace App\Http\Controllers;
+namespace app\http\controllers;
 
 use Kode\Framework\Http\Controller;
 
@@ -67,7 +67,7 @@ final class {$class} extends Controller
 
 PHP;
 
-        $path = $this->path('app/Http/Controllers/' . $class . '.php');
+        $path = $this->path('app/http/controllers/' . $class . '.php');
         if (!$this->writeFile($path, $content, $this->flag('force', false))) {
             $this->warn("已存在，跳过（用 --force 覆盖）：{$path}");
 

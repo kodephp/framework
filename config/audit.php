@@ -12,8 +12,9 @@
  */
 
 return [
-    // 是否启用审计
-    'enabled' => (bool) env('AUDIT_ENABLED', true),
+    // 是否启用审计（默认关闭：框架对标 webman，默认仅路由+响应+容器DI，
+    // 异常/CORS/安全头/审计等跨切面能力由开发者按业务 opt-in 逐步开启）。
+    'enabled' => (bool) env('AUDIT_ENABLED', false),
 
     // 跳过的基础设施端点（避免噪声）
     'ignore_paths' => [

@@ -128,6 +128,50 @@ final class ApiDocTest extends TestCase
         self::assertStringContainsString('"openapi": "3.0.3"', $json);
     }
 
+    // 参数结构化：路径约束 -> schema 类型
+    public function testNumericPathConstraintInfersIntegerType(): void
+    {
+        [$app, , $gen] = $this->makeGenerator();
+        $app->route(['GET'], '/users/{id:\\d+}', fn() => null);
+
+        $spec = $gen->generate();
+        $param = $spec['paths']['/users/{id}']['get']['parameters'][0];
+
+        self::assertSame(['type' => 'integer'], $param['schema']);
+    }
+
+    public function testDecimalPathConstraintInfersNumberType(): void
+    {
+        [$app, , $gen] = $this->makeGenerator();
+        $app->route(['GET'], '/price/{amount:\\d+\\.\\d+}', fn() => null);
+
+        $spec = $gen->generate();
+        $param = $spec['paths']['/price/{amount}']['get']['parameters'][0];
+
+        self::assertSame(['type' => 'number'], $param['schema']);
+    }
+
+    // 提前扫描缓存：路由表不变时复用 spec，变化后 invalidate 重扫
+    public function testGenerateCachesSpecUntilInvalidated(): void
+    {
+        [$app, , $gen] = $this->makeGenerator();
+        $app->route(['GET'], '/a', fn() => null);
+
+        $first = $gen->generate();
+        self::assertArrayHasKey('/a', $first['paths']);
+
+        // 未失效：新增路由不反映在 spec 中（缓存命中）
+        $app->route(['GET'], '/b', fn() => null);
+        self::assertSame($first, $gen->generate());
+        self::assertArrayNotHasKey('/b', $gen->generate()['paths']);
+
+        // 失效后重扫
+        $gen->invalidate();
+        $refreshed = $gen->generate();
+        self::assertArrayHasKey('/b', $refreshed['paths']);
+        self::assertArrayHasKey('/a', $refreshed['paths']);
+    }
+
     // ------------------------------------------------------------------
     // 集成：真实应用 + /docs 端点
     // ------------------------------------------------------------------
@@ -135,6 +179,10 @@ final class ApiDocTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // apidoc 默认关闭；端点集成用例显式开启（config/apidoc.php enabled=false，走启动期配置覆盖）。
+        // 要求独立进程级实例：enabled=true 与默认配置冲突，需重建 kode/core 单例。
+        $this->independentApp = true;
+        $this->configOverrides = ['apidoc' => ['enabled' => true]];
         $this->bootApp(getcwd());
     }
 

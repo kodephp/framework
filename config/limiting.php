@@ -18,7 +18,10 @@
  */
 
 return [
-    'enabled' => true,
+    // 总开关（默认关，opt-in：LIMITING_ENABLED=true 开启）。
+    // 对标 webman 默认裸内核：限流中间件不默认进管道；开启后仅 #[RateLimit] 标记路由生效
+    // （global.enabled 默认关，不兜底限流未标记路由）。
+    'enabled' => (bool) env('LIMITING_ENABLED', false),
     'driver' => env('RATE_LIMIT_DRIVER', 'memory'),
     // 全局兜底限流：仅当显式开启（RATE_LIMIT_GLOBAL=true）时，对「未声明 #[RateLimit] 的路由」
     // 施加统一限额。默认关闭 —— 限流只作用于 #[RateLimit] 标记的路由，避免无意识地把整站

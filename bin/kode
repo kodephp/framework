@@ -202,7 +202,7 @@ XML;
 
 declare(strict_types=1);
 
-namespace App\Tests;
+namespace app\tests;
 
 use PHPUnit\Framework\TestCase;
 
@@ -277,12 +277,12 @@ TXT;
             ],
             'autoload' => [
                 'psr-4' => [
-                    'App\\' => 'app/',
+                    'app\\' => 'app/',
                 ],
             ],
             'autoload-dev' => [
                 'psr-4' => [
-                    'App\\Tests\\' => 'tests/',
+                    'app\\tests\\' => 'tests/',
                 ],
             ],
             'scripts' => [
@@ -534,7 +534,7 @@ final class KodeCronCommand extends KodeScheduleCommand
 
         $n = count(array_filter($dispatcher->registered(), static fn ($t) => $t->enabled));
         if ($n === 0) {
-            echo "未发现任何启用的 #[Cron] 任务。请在 app/Tasks 下用 #[Cron] 声明任务。\n";
+            echo "未发现任何启用的 #[Cron] 任务。请在 app/tasks 下用 #[Cron] 声明任务。\n";
             exit(0);
         }
 
@@ -642,7 +642,7 @@ final class KodeCli
         echo "  bin/kode apidoc:generate [--output=] [--check]   生成/校验 OpenAPI 文档\n";
         echo "  bin/kode help                      显示本帮助\n\n";
         echo "serve 选项：--host 127.0.0.1  --port 9527  --workers 4\n";
-        echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/Tasks 示例\n";
+        echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/tasks 示例\n";
         echo "迁移文件放在 database/migrations/，文件名形如 2024_01_01_000000_create_users_table.php\n";
         exit(0);
     }

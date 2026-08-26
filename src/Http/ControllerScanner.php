@@ -95,6 +95,20 @@ final class ControllerScanner
                 if ($routeMeta === null) {
                     continue;
                 }
+
+                // 仅 public 方法可注册为路由：
+                //  1. 处理器以 `resolve($class)->{$method}()` 调用，非 public 会因作用域抛 Error；
+                //  2. API 文档（OpenApiGenerator）只导出真实可路由的 public 方法。
+                if (!(new ReflectionMethod($class, $method))->isPublic()) {
+                    error_log(sprintf(
+                        '[kode] 已跳过非 public 路由方法 %s::%s()（仅 public 方法可注册为路由）',
+                        $class,
+                        $method
+                    ));
+
+                    continue;
+                }
+
                 /** @var Route $attr */
                 $attr = $routeMeta->getInstance();
                 $this->register($class, $method, $attr, $prefix, $classMiddleware, $source, $metas);

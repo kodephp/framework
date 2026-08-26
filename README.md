@@ -27,8 +27,8 @@ curl http://127.0.0.1:9527/health
 第一个接口：
 
 ```php
-// app/Http/Controllers/HelloController.php
-namespace App\Http\Controllers;
+// app/http/controllers/HelloController.php
+namespace app\http\controllers;
 
 use Kode\Framework\Http\Controller;
 
@@ -45,7 +45,7 @@ final class HelloController extends Controller
 ```php
 // app/routes.php
 use Kode\Http\App;
-use App\Http\Controllers\HelloController;
+use app\http\controllers\HelloController;
 
 return function (App $app): void {
     $app->get('/hello', fn() => resolve(HelloController::class)->say());
@@ -103,7 +103,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 | 文档 | 看什么 |
 | --- | --- |
 | [入门指南](docs/getting-started.md) | 环境、安装、第一个接口、请求/响应、校验、错误、运行与排错 |
-| [进阶用法](docs/advanced.md) | 路由全解、中间件编写、鉴权、限流、熔断、定时任务、多进程、缓存/队列/数据库/事件/HTTP、配置、日志、门面与助手、控制台、DI 与服务提供者、AOP、插件、部署、测试 |
+| [开发文档总览](docs/README.md) | 路由全解、中间件编写、鉴权、限流、熔断、定时任务、多进程、缓存/队列/数据库/事件/HTTP、配置、日志、门面与助手、控制台、DI 与服务提供者、AOP、插件、部署、测试（docs/ 文档地图） |
 
 > 建议顺序：先照「入门指南」把第一个接口跑通，再按需查阅「进阶用法」。
 
@@ -111,7 +111,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 
 ## 版本
 
-- 当前版本：**[v0.8.49](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.8.51](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

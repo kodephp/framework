@@ -9,8 +9,8 @@ declare(strict_types=1);
  * 本文件 + AopServiceProvider 把内核接进生命周期：按 paths 自动发现 #[Aspect] 切面类
  * （约定优于配置），并合并 aspects 显式登记，统一交给 Aop::bootFromConfig 织入。
  *
- * 切面写法：在 app/Aspects 下建类，标 #[Aspect]，方法上标 #[Before]/#[After]/#[Around] 等，
- * 并用 Pointcut 表达式声明织入点（如 execution(* App\Service\*->*(..))）。
+ * 切面写法：在 app/aspects 下建类，标 #[Aspect]，方法上标 #[Before]/#[After]/#[Around] 等，
+ * 并用 Pointcut 表达式声明织入点（如 execution(* app\service\*->*(..))）。
  */
 
 return [
@@ -18,15 +18,15 @@ return [
     'enabled' => env('AOP_ENABLED', true),
 
     // 自动扫描这些目录下的 #[Aspect] 切面类（key=来源标签，value=相对 basePath 的路径）。
-    // app/Aspects 为约定目录；app/Aop 兼容示例切面所在位置（可追加自定义目录）。
+    // app/aspects 为约定目录；app/aop 兼容示例切面所在位置（可追加自定义目录）。
     'paths' => [
-        'app' => 'app/Aspects',
-        'app_aop' => 'app/Aop',
+        'app' => 'app/aspects',
+        'app_aop' => 'app/aop',
     ],
 
     // 显式登记切面（类名字符串），优先级高于自动发现；一般无需手写，约定优于配置即可。
     'aspects' => [
-        // \App\Aspects\LoggingAspect::class,
+        // \app\aspects\LoggingAspect::class,
     ],
 
     // 代理/织入缓存目录：首次织入生成代理类后缓存，二次启动免重织入，提升性能。

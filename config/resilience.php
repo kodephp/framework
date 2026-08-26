@@ -74,7 +74,7 @@ return [
         'attempts' => (int) env('RETRY_HTTP_ATTEMPTS', 3),
         'timeout' => env('RETRY_HTTP_TIMEOUT') === null ? null : (float) env('RETRY_HTTP_TIMEOUT'),
         'retry_on_status' => array_map('intval', explode(',', (string) env('RETRY_HTTP_STATUS', '502,503,504'))),
-        'retry_on_exception' => [], // 应用层注入（如 [App\Exception\UpstreamUnavailableException::class]）
+        'retry_on_exception' => [], // 应用层注入（如 [app\exception\UpstreamUnavailableException::class]）
     ],
 
     /*

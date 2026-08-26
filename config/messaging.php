@@ -50,6 +50,6 @@ return [
     // ------------------------------------------------------------------
     // 频道 => 处理器类（处理器提供 handle(array $payload) / __invoke / run / execute 之一）。
     'consumers' => [
-        // 'orders:created' => \App\Listeners\OrderCreatedListener::class,
+        // 'orders:created' => \app\listeners\OrderCreatedListener::class,
     ],
 ];

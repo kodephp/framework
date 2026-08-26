@@ -12,13 +12,13 @@ use Kode\Queue\Attribute\AsJob;
  * 约定：调用方传入「命名空间前缀 => 绝对目录」映射，扫描按目录层级推导 FQCN，
  * 与 PSR-4 一致。例如：
  *
- *   ['App\\Jobs\\' => '/base/app/Jobs', 'App\\Tasks\\' => '/base/app/Tasks']
+ *   ['\app\\jobs\\' => '/base/app/jobs', '\app\\tasks\\' => '/base/app/tasks']
  *
- * 则 `app/Jobs/Mail/SendMail.php` 推导为 `App\Jobs\Mail\SendMail`（含子目录层级），
+ * 则 `app/jobs/mail/SendMail.php` 推导为 `\app\jobs\mail\SendMail`（含子目录层级），
  * 业务侧只需 `queue()->push(SendMail::class, $data)` 即可投递，无需手工登记。
  *
- * 注意：必须以「命名空间前缀」为 key（而非把 app/Jobs 整体当命名空间根），否则
- * `app/Jobs/SendMail.php` 会被错推成 `App\SendMail`，class_exists 失败、发现静默失效。
+ * 注意：必须以「命名空间前缀」为 key（而非把 app/jobs 整体当命名空间根），否则
+ * `app/jobs/SendMail.php` 会被错推成 `\app\SendMail`，class_exists 失败、发现静默失效。
  */
 final class JobDiscovery
 {

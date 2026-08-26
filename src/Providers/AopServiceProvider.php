@@ -50,7 +50,7 @@ final class AopServiceProvider extends ServiceProvider
                 $aspects[] = $class;
             }
         } catch (\Throwable $e) {
-            // 扫描失败（app/Aspects 尚未初始化等）不应阻断启动。
+            // 扫描失败（app/aspects 尚未初始化等）不应阻断启动。
             logger()->warning('[aop] 切面扫描失败：' . $e->getMessage());
         }
 

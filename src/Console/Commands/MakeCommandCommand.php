@@ -16,7 +16,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
  */
 #[AsCommand(
     name: 'make:command',
-    description: '生成控制台命令（app/Console/Commands）',
+    description: '生成控制台命令（app/console）',
     usage: 'make:command {name} {--force}',
 )]
 final class MakeCommandCommand extends Command
@@ -51,7 +51,7 @@ final class MakeCommandCommand extends Command
 
 declare(strict_types=1);
 
-namespace App\Console\Commands;
+namespace app\console;
 
 use Kode\Console\Attribute\AsCommand;
 use Kode\Framework\Console\Command;
@@ -76,7 +76,7 @@ final class {$class} extends Command
 
 PHP;
 
-        $path = $this->path('app/Console/Commands/' . $class . '.php');
+        $path = $this->path('app/console/' . $class . '.php');
         if (!$this->writeFile($path, $content, $this->flag('force', false))) {
             $this->warn("已存在，跳过（用 --force 覆盖）：{$path}");
 

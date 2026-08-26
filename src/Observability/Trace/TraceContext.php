@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Observability\Trace;
 
 use Kode\Context\Context;
+use Kode\Http\Psr7\Message\LazyHeaderAware;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
@@ -31,16 +32,40 @@ final class TraceContext
     private const string TRACEPARENT_RE = '/^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/';
 
     /**
-     * 为当前请求确保链路上下文存在。幂等：已存在则不变。
+     * 定向读取入向链路头，零解析优先。
+     *
+     * 对实现 {@see LazyHeaderAware} 的懒请求（框架热路径），走 {@see peekHeader()}——
+     * 原生报文一次 stripos 定向扫描（~75ns/头 @500B 报文），不触发 header 全量规范化
+     * 与 server params 引导构建；非懒请求退化标准 getHeaderLine。
+     */
+    private static function inboundHeader(ServerRequestInterface $request, string $name): string
+    {
+        if ($request instanceof LazyHeaderAware) {
+            return $request->peekHeader($name) ?? '';
+        }
+
+        return $request->getHeaderLine($name);
+    }
+
+    /**
+     * 为当前请求确保链路上下文存在。幂等：Trace ID 与 Span ID 均齐备则不变。
      *
      * 读取优先级：traceparent → (X-Trace-Id + X-Span-Id) → 全新生成。
      * 同时把 trace_id 回写 $_SERVER，桥接 kode/exception 的异常 tracer。
+     *
+     * 热路径（无入向链路）成本：2× peekHeader（~150ns）+ 1× random_bytes(24)（~310ns）+
+     * 2× bin2hex + 3× Context::set + 1× $_SERVER 回写；零 header 全量解析。
+     * 注：曾尝试 SHA-256 计数器 DRBG 派生替代 random_bytes——实测本（native）环境下
+     * hash('sha256') ≈ 625ns > random_bytes+bin2hex ≈ 310ns，为负优化，已回退。
      */
     public static function ensure(ServerRequestInterface $request): void
     {
-        if (Context::has(Context::TRACE_ID)) {
-            // 已存在（例如上游中间件/测试预置），仍同步 $_SERVER 以便异常 tracer 一致。
-            self::syncServer();
+        // 单次 has 复用：完整链路（TRACE + SPAN 齐备）走幂等早退；「仅 TRACE_ID」
+        // （kode/http syncTraceContext / 测试预置）由下方回退补充 span，避免二次查找。
+        $hasTrace = Context::has(Context::TRACE_ID);
+        if ($hasTrace && Context::has(Context::SPAN_ID)) {
+            // 链路完整（例如上游中间件/测试预置），仍同步 $_SERVER 以便异常 tracer 一致。
+            self::syncServer(Context::getString(Context::TRACE_ID));
             return;
         }
 
@@ -48,42 +73,51 @@ final class TraceContext
         $spanId = null;
         $parentSpanId = null;
 
-        $traceparent = $request->getHeaderLine(self::HEADER_TRACEPARENT);
+        $traceparent = self::inboundHeader($request, self::HEADER_TRACEPARENT);
         if ($traceparent !== '' && preg_match(self::TRACEPARENT_RE, $traceparent, $m) === 1) {
             $traceId = $m[2];
             $spanId = $m[3];
             $parentSpanId = null; // 入向 span 成为本服务的 parent
             Context::set(Context::PARENT_SPAN_ID, $m[3]);
         } else {
-            $incomingTrace = $request->getHeaderLine(self::HEADER_TRACE_ID);
-            $incomingSpan = $request->getHeaderLine(self::HEADER_SPAN_ID);
+            $incomingTrace = self::inboundHeader($request, self::HEADER_TRACE_ID);
             if ($incomingTrace !== '') {
                 $traceId = $incomingTrace;
-                $parentSpanId = $incomingSpan !== '' ? $incomingSpan : null;
-                if ($parentSpanId !== null) {
+                $incomingSpan = self::inboundHeader($request, self::HEADER_SPAN_ID);
+                if ($incomingSpan !== '') {
+                    $parentSpanId = $incomingSpan;
                     Context::set(Context::PARENT_SPAN_ID, $parentSpanId);
                 }
             }
         }
 
-        // 单次 CSPRNG 取 24 字节，切片出 trace_id(16) + span_id(8)，
-        // 避免两次 random_bytes 系统调用（每请求热路径）。generateTraceId/SpanId
-        // 仍保留为公开 API 供 Tracer / kode/context 等复用。
-        if ($traceId === null || $spanId === null) {
+        if ($traceId === null) {
+            // 回退 Context 已预置的 TRACE_ID（已由 hasTrace 判定存在），
+            // 保留既有链路值、只补齐缺环的 span_id。
+            $traceId = $hasTrace ? Context::getString(Context::TRACE_ID) : null;
+        }
+        if ($traceId === null) {
+            // 全新链路：单次 CSPRNG 取 24 字节，切片出 trace_id(16) + span_id(8)。
             $rand = random_bytes(24);
-            if ($traceId === null) {
-                $traceId = bin2hex(substr($rand, 0, 16));
-            }
-            if ($spanId === null) {
-                $spanId = bin2hex(substr($rand, 16, 8));
-            }
+            $traceId = bin2hex(substr($rand, 0, 16));
+            $spanId = bin2hex(substr($rand, 16, 8));
+        } elseif ($spanId === null) {
+            // 仅入向带 X-Trace-Id 或 Context 已有 TRACE_ID——span_id 缺环时补齐，
+            // 避免响应 traceparent 复用残留/空值。
+            $spanId = bin2hex(random_bytes(8));
         }
 
-        Context::set(Context::TRACE_ID, $traceId);
-        Context::set(Context::SPAN_ID, $spanId);
-        Context::set(Context::TRACE_FLAGS, Context::get(Context::TRACE_FLAGS) ?? 1);
+        // 单次 merge 批量写：3×Context::set 每次都要重解析执行单元（store()），
+        // merge 只解析一次 + 循环写入，热路径省 2× scope/WeakMap 查找（~0.6µs）。
+        // TRACE_FLAGS 恒置 1（入向 traceparent 的 flags 位仅透传，不参与采样语义，
+        // responseHeaders 已按 ===1 兜底为 '01'），省去 get??1 的额外读取。
+        Context::merge([
+            Context::TRACE_ID    => $traceId,
+            Context::SPAN_ID     => $spanId,
+            Context::TRACE_FLAGS => 1,
+        ]);
 
-        self::syncServer();
+        self::syncServer($traceId);
     }
 
     public static function traceId(): ?string
@@ -154,11 +188,12 @@ final class TraceContext
     /**
      * 把当前 trace_id 同步到 $_SERVER，使 kode/exception 的 DistributedTracer
      * 在异常时复用同一 trace_id（它从 HTTP_X_TRACE_ID 读取父链路）。
+     *
+     * @param string $traceId 已确定的 trace_id（直传，避免二次 Context 读取）
      */
-    private static function syncServer(): void
+    private static function syncServer(string $traceId): void
     {
-        $traceId = self::traceId();
-        if ($traceId !== null) {
+        if ($traceId !== '') {
             $_SERVER['HTTP_X_TRACE_ID'] = $traceId;
         }
     }

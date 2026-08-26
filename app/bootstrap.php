@@ -12,6 +12,6 @@
 use Kode\Framework\Facades\Event;
 
 // 事件监听：收到 PingEvent 时记录日志
-Event::listen(\App\Events\PingEvent::class, function (\App\Events\PingEvent $e): void {
+Event::listen(\app\events\PingEvent::class, function (\app\events\PingEvent $e): void {
     logger()->info('收到 PingEvent: ' . $e->message);
 });

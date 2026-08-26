@@ -12,8 +12,10 @@
  */
 
 return [
-    // 是否启用 CSRF 全局中间件（默认开；全局中间件本身对无关路由零开销）。
-    'enabled' => (bool) env('CSRF_ENABLED', true),
+    // 是否启用 CSRF 全局中间件（默认关，opt-in：CSRF_ENABLED=true 开启）。
+    // 对标 webman 默认裸内核（路由+响应+容器DI）：跨切面能力一律默认关闭，开发者按业务开启。
+    // 开启后全局中间件本身对未被 #[Csrf] 标记的路由仍 O(1) 早退、零开销。
+    'enabled' => (bool) env('CSRF_ENABLED', false),
 
     // 会话中存储令牌的键名。
     'token_key' => env('CSRF_TOKEN_KEY', '_csrf_token'),

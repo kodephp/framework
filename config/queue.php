@@ -45,16 +45,16 @@ return [
     // ------------------------------------------------------------------
 
     // 自动扫描这些目录下的 #[AsJob] 任务类，注册进处理器解析器。
-    // 目录约定位于 app/ 下（App\ 命名空间），可追加自定义目录（绝对路径）。
+    // 目录约定位于 app/ 下（app\ 命名空间），可追加自定义目录（绝对路径）。
     'jobs_dir' => [
-        'app/Jobs',
-        'app/Tasks',
+        'app/jobs',
+        'app/tasks',
     ],
 
     // 显式映射「任务名 => 处理器」（闭包无法写在配置里，这里填类名字符串）。
     // 与 jobs_dir 自动发现合并，显式项优先级更高。
     'workers' => [
-        // 'mail.send' => \App\Jobs\SendMail::class,
+        // 'mail.send' => \app\jobs\SendMail::class,
     ],
 
     // queue:work 的默认运行参数（可被命令行 --xxx 覆盖）。

@@ -1,17 +1,26 @@
-# 压测对比与同类框架功能矩阵
+# 性能基线存档（v0.8.51 真机）
 
-本文档说明 kode/framework 的压测方法、与同类**常驻内存**框架的**真实吞吐对比**，以及对响应速度差距的**客观解读**。  
-实时数字见 [`../benchmarks/PEER_BENCHMARK.md`](../benchmarks/PEER_BENCHMARK.md)（框架吞吐）与  
-[`../benchmarks/DB_SPECTRUM.md`](../benchmarks/DB_SPECTRUM.md)（数据库全频谱），均由 `wrk` 真实压测生成。
+> **归档说明（v0.8.51）**：`benchmarks/` 目录已按用户要求从仓库移除（生产仓库不再携带压测工具链）。
+> 本文保留 v0.8.51 真机横比的核心结论与压测口径，作为**性能基线存档**；复现脚本已删除，
+> 需要重新压测时按「一、压测口径」重建同等 harness 即可。vendor 侧已知问题均已在上游 kode/* 当前版本闭环
+> （kode/http 3.4.11、kode/database 1.15.8、kode/process 5.2.36），跟踪与修复在各 kode/* 仓库进行；
+> 框架仓库 v0.8.51 起不再内嵌 benchmarks/ 与 vendor 问题清单。
 
-> 立场：kode 是**常驻内存框架**，吞吐 12~18 万 rps，与 webman/hyperf 同量级，**绝非传统 FPM（~5k）**。  
-> 本文**不**列 FPM 框架的 plaintext 数字做吞吐横比——FPM 与常驻内存的运行模型根本不同，直比会误导（见第三节说明）。
+本文档说明 kode/framework 的压测方法、与同类**常驻内存**框架的**真实吞吐对比**，以及对响应速度差距的**客观解读**。
 
-> **最新进展（v0.8.49 · kode/http v3.4.10 · 2026-08-24）**：L0 热路径完成第四轮削费——`RouteRunner` 空参路由跳过 attribute
-> 写入、`App::handle` 裸栈跳过重复 facade 预置、HTTP/1.1 协议版本懒解析（改动清单见 `PEER_BENCHMARK.md` §4.5，
-> 逐文件核对见 `docs/kode-http-perf-3.4.10.md`，补丁见 `patches/upstream/kode-http-3.4.10.patch`）。
-> 微基准完整链 **ping 6859→5493 ns（−19.9%）、json50 13650→12407 ns（−9.1%）**，handle 段分别 −24.5% / −9.4%。
-> 真机 wrk 复测以 §三 矩阵同 harness 执行为准，预期 kode L0 `/bench/json` 比值自 74% 上行；数据落地后回填 §三。
+> 立场：kode 是**常驻内存框架**，吞吐与 webman/hyperf 同量级，**绝非传统 FPM（~5k）**。
+> 本文**不**列 FPM 框架的 plaintext 数字做吞吐横比——FPM 与常驻内存的运行模型根本不同，直比会误导。
+
+> **最新基线（框架 v0.8.51 · kode/http 3.4.11 · kode/process 5.2.36 · kode/database 1.15.8 · PHP 8.3.33 · 2026-08-25 真机全量复测）**：
+>
+> - **vs webman（多进程对标）**：裸内核（零跨切面）`/ping` 185,362 vs 190,432（**−2.7%，持平**）；
+>   能力对等档（同 4 中间件）kode **157,632 vs 127,564（+23.6%）**；L5 全开 123,175 与 webman ON 同档（−3.4%）。
+> - **vs hyperf（协程对标）**：kode@Swoole 裸内核 `/ping` **186,630 vs 176,392（+5.8%）**、
+>   `/bench/json` **162,843 vs 147,051（+10.7%）**、MySQL **58,866 vs 28,189（+108.8%）**。
+> - **DB（连接池 + 1:1 真实查询校验）**：MySQL kode 59,225 vs hyperf 33,572（**+76%**）；
+>   pgsql kode 27,922 vs webman 28,358（**持平 −1.5%**，hyperf 此版本不支持 pgsql driver，如实标注）。
+> - **能力梯度 L0→L5**：186,633/166,139（L0）→ 117,822/94,474（L5），累计 −36.9%/−43.1%，
+>   逐档边际成本见 §3。早前「kode 仅为 webman 31%」的差距已由 kode/http v3.4.10 + 框架 P5 关闭（归因见 §3.1）。
 
 ---
 
@@ -19,23 +28,52 @@
 
 | 项    | 说明                                                                                                   |
 | ---- | ---------------------------------------------------------------------------------------------------- |
-| 测量对象 | 常驻内存运行时（Swoole 长生命周期，11 worker = `swoole_cpu_num()`）下的**真实 HTTP 吞吐**：boot 一次、循环 `handle`，排除进程启动噪声                          |
-| 负载工具 | **wrk**（`-t8 -c200 -d8s`，每端点取 3 次中位数）。`ab` 因单线程本地回环仅 ~3 万上限，已废弃                                      |
-| 场景   | 框架吞吐：同两条路由 `/ping`（最小响应）、`/bench/json`（DI + 50 条记录 JSON，无 DB）；数据库：12 端点 × 5 层 × 双库（见 DB_SPECTRUM.md） |
-| 指标   | 吞吐量 req/s、p50/p95/p99 延迟                                                                             |
+| 测量对象 | 常驻内存运行时下的**真实 HTTP 吞吐**：boot 一次、循环 `handle`，排除进程启动噪声                          |
+| 负载工具 | **wrk**。当前统一口径：**`-t8 -c200 -d6s`，4 worker，每端点 3 轮取中位**（冷却式：peer 启动冷却 24s、peer 间 12s、端口级强杀防残留） |
+| 场景   | `/ping`（最小响应）、`/bench/json`（DI + 50 条记录 JSON，无 DB）、`/bench/db`（MySQL 真实查询）、`/bench/db_pg`（pgsql 同 SQL） |
+| 指标   | 吞吐量 req/s、非 2xx 计数、DB 完整性 1:1 校验（压测前后 `SHOW GLOBAL STATUS` / `pg_stat_database` 真实执行速率对比 wrk 报告值） |
 | 横比原则 | **看比值不看绝对数**：本机跨次运行 ±20~30% 热漂移，同轮内相对比例抵消方差                                                          |
 
-> 说明：限流在压测中强制关闭（否则高并发触发 429）；其余生产默认中间件保留，以测得真实全栈成本。
+> 说明：压测中 CSRF/限流/审计均关闭（v0.8.51 起框架默认即 opt-in 全关，对标 webman 裸内核）。
+> **档位口径**：`KODE_PROFILE` / `KODE_ENABLE`（逗号列表逐项开合 cors,security,locale,resilience,logging,observability）/
+> `KODE_AUDIT` / `KODE_RUNTIME`（native|swoole|workerman）。harness 每次启动会**强制重写** tmp 配置
+> （含 csrf/limiting 恒关），防止目录复用导致配置残留串档。
+>
+> **压测时务必 `APP_DEBUG=false`**（.env 默认即 false）：错误详情组装（location/chain）与调试路径
+> 不在请求热路径上，但保持默认生产语义可避免任何 DEBUG 相关分支的干扰，数字更真实。
 
+**无网络环境的替代数据链路（2026-08-25 沙箱补充 · v3.4.11 复核）**：当环境禁用 TCP/wrk（CI、隔离沙箱、无 swoole）时，
+可用**纯内存微基准**（桥接层全链路 `ProcessRequest::fromRaw → toPsr7 → handle → toRaw`，预热 3000 次，二轮取稳）
+做回归复核。沙箱 PHP 8.3.6 apt 构建 + kode/http **3.4.11** 全端点实测（2026-08-25，`/tmp/bench_full2.php` 同构脚本）：
 
+| 端点 | ops/s（二轮） | ns/req（二轮） | Δ vs /ping |
+| --- | ---: | ---: | ---: |
+| `/ping`（最小 json） | 307,170 | 3,256 | —（归档 4.0µs，**−19%**） |
+| `/bench/json`（50×3 动态构造） | 86,291 | 11,589 | +8,333 |
+| `/users/42`（参数路由 `{id:\d+}`） | 266,746 | 3,749 | +493 |
+| `/mid`（1 层洋葱中间件） | 281,204 | 3,556 | +301 |
+| `/nope`（404 miss） | 294,882 | 3,391 | +136 |
+
+**拆解结论（热路径调优方向）**：/bench/json 与 /ping 的 **+8.3µs 几乎 100% 来自 50×3 数组构造 + `json_encode` 语言本征**
+（纯构造+encode 单测 ≈7.7µs，见 §三「json 归因」同法），**框架增量 <0.6µs**（中间件 +0.30µs、参数路由 +0.49µs、404 仅 +0.14µs）。
+桥接层热路径零死角；真正可调点不在框架内，而在**应用侧数据构造/序列化**（如预编译模板、流式响应、减少动态数组层数）。
+路由匹配现状 cache 命中 ≈ **175 ns**（**勿改**——static-first 直查反为 +50% 负优化，见
+kode/http 当前版 §C2/C3）。绝对数与真机不可横比，仅用于回归/账单拆解。
+
+> **⚠️ 沙箱 TCP 数据面硬门槛（2026-08-25 证实，真机 wrk 的唯一替代口径是微基准）**：本次发现沙箱
+> 127.0.0.1 **TCP 连接可握手、数据不投递**——`php bin/kode serve`、标准单进程 `stream_socket_server`、
+> Python `socket` 服务端全部复现「connect OK / 请求发出 / 服务端读到空 / Empty reply」，而 `stream_socket_pair`
+> 与 unix domain socket（跨进程）均正常。**凡依赖 TCP 的 HTTP 压测在沙箱内不可行且与框架无关**，
+> 勿再花时间排查；真机 wrk 横比请按 §一 口径在宿主机执行，沙箱只出微基准相对数据。
 
 ---
 
 ## 二、功能矩阵（kode vs 常驻内存同类框架）
 
-> 对比对象改为**同形态常驻内存框架** webman（Workerman 系）、hyperf（Swoole 系）——它们与 kode 一样 boot 一次、请求复用容器。
-> Laravel/Symfony/Slim/CI 默认 FPM（每请求重建容器），运行模型与 kode 根本不同，**不纳入本矩阵**（其能力由生态补齐但需自行接线，
-> 且无法与常驻内存框架做同台吞吐对比，见第三节说明）。Swoole / Workerman 本身是下方第三节的**运行时天花板参照**。
+> 对比对象为**同形态常驻内存框架** webman（Workerman 系，kode 的多进程对标对象）、hyperf（Swoole 系，kode 的协程对标对象）——
+> 它们与 kode 一样 boot 一次、请求复用容器。Laravel/Symfony/Slim/CI 默认 FPM（每请求重建容器），运行模型根本不同，
+> **不纳入本矩阵**。Swoole / Workerman 本身是运行时天花板参照（kode/process 在包侧已对标，三运行时同档，
+> 见 kode/process 仓库（5.2.36 三运行时同档））。
 
 | 能力维度                        | **kode/framework**                          | webman                                  | hyperf                                    |
 | --------------------------- | ------------------------------------------- | --------------------------------------- | ----------------------------------------- |
@@ -43,16 +81,16 @@
 | 路由（属性 / 闭包 / 文件）            | ✅ 属性 + 闭包                                   | ✅ 注解 + 文件路由                             | ✅ 注解路由                                    |
 | 中间件（全局 / 路由级）               | ✅                                         | ✅                                       | ✅                                         |
 | DI / AOP                    | ✅ DI 内置 + kode/aop                          | ⚠️ DI 内置；AOP 需注解包                         | ✅ DI + AOP 核心（注解驱动）                        |
-| 数据库 / ORM / 迁移 / 种子          | ✅ kode/database（多连接）                        | ⚠️ think-orm 独立包                          | ✅ hyperf/db + 模型                             |
+| 数据库 / ORM / 迁移 / 种子          | ✅ kode/database（多连接 + 连接池）                   | ⚠️ think-orm 独立包                          | ✅ hyperf/db + 模型                             |
 | 参数校验                        | ✅ Symfony Validator                          | ⚠️ 独立校验包                                | ✅ hyperf/validation                         |
 | 缓存 / 队列                     | ✅ kode/cache · queue                         | ✅（redis/cache · queue 包）                   | ✅                                         |
-| 限流（含分布式 Redis）              | ✅ 内置 `#[RateLimit]`                          | ⚠️ 限流包                                   | ✅ hyperf/rate-limit                         |
+| 限流（含分布式 Redis）              | ✅ 内置 `#[RateLimit]`（默认关，opt-in）              | ⚠️ 限流包                                   | ✅ hyperf/rate-limit                         |
 | 边缘韧性：熔断 / 重试 / 超时 / 幂等      | ✅ **内置**（breaker·retry·timeout·idempotency） | ❌ 非内置（社区包）                              | ✅（熔断 / 重试 / 服务治理）                         |
-| 可观测性：OTLP 追踪 / `/metrics`  | ✅ 内置                                        | ⚠️ 插件（非默认 OTLP）                          | ✅ tracer / metric                          |
+| 可观测性：OTLP 追踪 / `/metrics`  | ✅ 内置（默认关，opt-in）                             | ⚠️ 插件（非默认 OTLP）                          | ✅ tracer / metric                          |
 | 配置中心 / 服务发现                 | ✅ 内置                                        | ❌                                       | ✅（consul / nacos）                         |
 | 国际化                         | ✅ Symfony Translation                        | ⚠️                                      | ✅ hyperf/translation                        |
 | 分布式 ID（Snowflake）           | ✅ 内置                                        | ❌                                       | ✅ hyperf/snowflake                         |
-| 安全与合规：安全头 / CSRF / 审计（脱敏·业务事件·取证） | ✅ 框架本地薄实现                                  | ❌ 非默认                                   | ⚠️ 部分                                      |
+| 安全与合规：安全头 / CSRF / 审计（脱敏·业务事件·取证） | ✅ 框架本地薄实现（CSRF 默认关，opt-in）                    | ❌ 非默认                                   | ⚠️ 部分                                      |
 | 事件总线 / 消息队列                 | ✅ kode/event · messaging                     | ⚠️ event 包                               | ✅ event / amqp                             |
 | 多进程服务（--watch 热重载）          | ✅ kode/process                               | ✅ Workerman                             | ✅ watcher                                  |
 | 零依赖薄壳 Provider 范式           | ✅ 设计约定                                      | ❌                                       | ❌（注解驱动）                                   |
@@ -64,134 +102,94 @@
 **结论**：在**常驻内存同类**里，kode 与 hyperf 同为「电池全包企业级」定位（韧性 / 可观测 / 配置中心 / 分布式原语内置），
 webman 更轻量（开箱能力较少、靠生态补齐）。kode 的差异化在**安全合规（审计脱敏 / CSRF）、边缘韧性、零依赖薄壳 Provider 范式**，
 且一套业务代码通吃 Swoole / Swow / Fiber / 多进程 / 分布式（webman 锁 Workerman、hyperf 锁 Swoole）。
+**性能上（v0.8.51 基线）**：同等能力下 kode 已 ≥ webman/hyperf（见文首基线），「企业级能力多所以慢」的旧对价叙事不再成立。
 
 ---
 
-## 三、同类框架基准（常驻内存 peer · 真实 wrk）
+## 三、kode 能力梯度基准（v0.8.51 · 真机 · native · 4 worker）
 
-下表为**同机器、同 11 worker（= `swoole_cpu_num()`）、同 wrk 参数**下的真实压测（完整方法见 PEER_BENCHMARK.md），代表**常驻内存框架同台竞技**。
+下表为**框架自身**能力梯度（L0 全关 → L5 全开）的真实边际成本（`wrk -t8 -c200 -d6s` ×3 中位，2026-08-25）。
 
-> **驱动说明**：kode/process 5.2.36 已修复 Swoole 驱动并发崩溃（§8）与 Native 驱动并发拒绝连接（§9）两大缺陷，
-> 故 **Swoole / Native / Workerman 三运行时现在全部可用且同档**。下表中 kode 行给出三运行时实测，其余 peer 不受影响。
-> 横向以**比值**（同轮内 webman 锚归一）为准（本机跨次 ±20~40% 热漂移）。
-
-### 统一对比矩阵（v0.8.41 + kode/process 5.2.36，11 worker，wrk -t8 -c200 -d8s，3 迭代中位）
-
-> **kode 默认 = opt-in（全关）**：框架默认不开启任何跨切面中间件（CORS / Security / Locale / Resilience / Logging / Observability / Session… 全部 config `false`），开发者按需开启。
-> 下表把同类框架按其**自然配置**落到 kode 能力梯度频谱（**不开 / 半开 / 全开**），并附 kode 从 L0（零开销基线）到 L5（全开）的逐项边际成本。
-> kode/process 5.2.36 已修复 Swoole 驱动并发崩溃与 Native 驱动并发拒绝连接两大缺陷，故 **Swoole / Native / Workerman 三运行时全部可用且同档**（梯度统一跑 native 以隔离能力成本）。
-
-**同类框架「不开 / 半开 / 全开」同条件对比**
-
-| 档位 | 框架 / 配置 | /ping (rps) | /bench/json (rps) | 落在 kode 梯度 | vs webman /ping |
-| --- | --- | ---: | ---: | --- | ---: |
-| **不开**（零/近零中间件） | swoole_raw（Swoole 天花板） | 183,681 | 176,969 | ≈ L0 上限 | 101% |
-| | workerman_raw（Workerman 天花板） | 180,314 | 182,187 | ≈ L0 上限 | 99% |
-| | **kode L0（off，框架基线）** | 166,971 | 132,693 | L0 | 92% |
-| **半开**（部分中间件） | **webman**（Workerman 系，≈零中间件框架） | 181,564 | 178,680 | ≈ L0/L1 | 100% |
-| | **hyperf**（Swoole 系，自带 DI + 可观测） | 150,909 | 153,285 | ≈ L2~L3 | 83% |
-| **全开**（完整企业栈） | **kode L5（full，全部跨切面中间件）** | 93,829 | 66,234 | L5 | 52% |
-
-**kode 能力梯度（L0 全关 → L5 全开，native 运行时，2-pass 中位；含逐项边际成本）**
-
-| 档位 | 本档新增能力 | /ping | /bench/json | /ping 环比 | /bench 环比 |
+| 档位 | 本档新增能力 | /ping (rps) | /bench/json (rps) | /ping 环比 | 累计 vs L0 (/ping) |
 | --- | --- | ---: | ---: | ---: | ---: |
-| L0 全关(off) | 框架基线（路由+异常+响应+DI） | 166,971 | 132,693 | — | — |
-| L1 边缘 | +CORS +Security +Locale | 134,884 | 113,094 | −19.2% | −14.8% |
-| L2 韧性 | +Resilience（仅标记路由） | 146,532 | 118,335 | +8.6%* | +4.6%* |
-| L3 日志 | +Access Log | 132,367 | 96,718 | −9.7% | −18.3% |
-| L4 可观测 | +Metrics +Tracing | 98,453 | 77,404 | −25.6% | −20.0% |
-| L5 全开 | +Session +Idempotency +Feature | 93,829 | 66,234 | −4.7% | −14.4% |
+| **L0 裸内核** | （框架基线：路由+响应+容器 DI） | **186,633** | **166,139** | — | 100% |
+| **L1 边缘** | +CORS +Security +Locale | 167,861 | 146,401 | −10.1% | 89.9% |
+| **L2 韧性** | +Resilience | 167,715 | 146,441 | −0.1%（免费） | 89.9% |
+| **L3 日志** | +Access Log | 157,594 | 133,921 | −6.0% | 84.4% |
+| **L4 可观测** | +Metrics +Tracing（sample_ratio=0.1） | 132,165 | 116,510 | −16.1% | 70.8% |
+| **L5 全开** | +Profile=full +Audit | 117,822 | 94,474 | −10.9% | 63.1% |
 
-> \* L2 环比回升为测量噪声（未标记路由 resilience O(1) 早退，理论≈0）；Apple Silicon 11 核跨跑 ±10~15% 噪声内，L1→L2 视为持平。  
-> \** L5 反向启动竞态未就绪，为单遍实测；与其余两遍中位档位同口径展示，误差在噪声带内。完整方法学与逐项解读见 `benchmarks/PEER_BENCHMARK.md` §2–§4。
+**逐档解读（开发者最直观的取舍数据）**：
 
-> 口径说明：
->
-> - 上表为**本机 wrk 实测**（macOS · PHP 8.3 · 11 worker），跨次运行有 ±8~15% 热漂移，**横比看比值**。
-> - **kode L0（off，零跨切面）`/ping` 达 webman 约 92%、约裸 Swoole 91%、裸 Workerman 93%**；`/bench/json` 约 webman 74%（kode 保留完整 PSR-7 管线 + DI 的架构基线对价）。
->   kode L0 `/bench/json` 低于 `/ping` 的残差经 PEER_BENCHMARK §6 微基准铁证**不在框架响应代码**（= 运行时差异 + 本机热噪声），框架层继续抠已无实收益。
-> - **kode L5（full，完整企业栈）** 稳定 93,829 / 66,234，约为 webman 的 **52%（/ping）/ 37%（/bench/json）**、L0 的 **56%/50%**——
->   其为完整企业级中间件栈，属「换取 cors/安全头/韧性/追踪/日志/会话/幂等等开箱能力」的功能对价，非缺陷。
-> - ⚠️ 此前「kode L5（全开）反超 hyperf（114k/122k）」系**旧 harness 未做 peer 间冷却**导致排第 6 的 hyperf
->   被热降频系统性压低（旧 114k）的失真结论；补冷却后 hyperf 回到 151k~163k 真实水平，该结论作废。
-> - **关于 FPM 框架**：Laravel/Symfony/Slim/CI 的默认运行时是 FPM（每请求重建容器），与常驻内存模型根本不同，  
->   其公开 plaintext 数字（如 Laravel ~26k、Slim ~90k、Yii ~146k、Flight ~190k）数量级看似接近，但  
->   **运行模型不可直比**——常驻框架把 boot 成本摊薄到海量请求，FPM 每张请求重建容器。故本文**不**列 FPM 数字做吞吐横比，  
->   仅保留功能矩阵（第二节）做能力对比。若需「FPM → 常驻」的提速数量级参考：Laravel + Adapterman 仅换常驻事件循环即得约 7×。
+1. **L0→L1（边缘三件套 CORS+Security+Locale）**：/ping −10.1%——「加响应头 + 安全处理 + 本地化解析」的固有成本，
+   作用在请求/响应切片，无法靠微优化消除；不开即免费。
+2. **L1→L2（Resilience）**：**边际 ≈ 0**——韧性组件按需注册，未标记路由 O(1) 早退，实测同档（167,715 vs 167,861，噪声内）。
+3. **L2→L3（Access Log）**：−6.0%——日志格式化 + 入队是每请求 I/O 类成本，关掉即回收。
+4. **L3→L4（可观测性）**：**最大单项税 −16.1%**——Trace 每请求固有成本（壳 ~1.1µs + attach ~0.8µs + `ensure()` 1.8µs +
+   span 摊薄 ~0.93µs ≈ 4.6µs/请求，微基准分解见 §3.2），对 /ping 与 /bench/json 无偏。
+5. **L4→L5（Profile=full + Audit）**：−10.9%——完整企业栈（含审计事件）落地。
 
-### 3.1 调优增强轨迹（kode 默认栈持续优化的实证）
+**总账**：从 L0（零开销基线）到 L5（全开），`/ping` 累计 **−36.9%**、`/bench/json` 累计 **−43.1%**。
+这是换取 cors/安全头/韧性/日志/可观测/审计等开箱企业能力的**功能对价，非缺陷**——开发者可按需在梯度上任意停靠
+（框架默认 opt-in 全关，即 L0 零开销）。且 **L5 全开（117,822）仍在 webman ON（127,564）同档（−3.4%）**，
+比 webman 的 4 中间件还多 observability+audit+profile 三档能力。
 
-kode 全栈（L5 全开）的真实吞吐是**连续的 in-framework 调优**达成的，并非「天生快」——下表记录每一轮优化对全栈的影响（历史行数字为该轮 harness 实测，最终权威数字见本节矩阵与 PEER_BENCHMARK §3）：
+### 3.1 历史差距归因（已全部关闭 · 索引）
 
-| 阶段 | 关键改动 | 对 kode 全栈（L5）的影响 |
+早期「kode 仅为 webman 31%」的差距不是框架定位问题，而是三处具体缺陷，均已修复：
+
+| # | 问题 | 根因 | 关闭方式 |
+| --- | --- | --- | --- |
+| 1 | 无 DB 端点吞吐仅为 webman 31% | kode/http 旧版每请求完整 PSR-7 对象图分配 + GC（微基准证与体大小无关） | 上游 v3.4.10（RouteRunner 无参路由、Lazy 对象、StringStream、raw 快路径、trace 守卫）+ 框架侧 P5 协议懒化；v0.8.51 实测 ping 持平（−2.7%）。残余 json 端点 −12% 的根治方向（热路径零分配 Request）见 kode/http 仓库 |
+| 2 | kode/database 池在 Native 运行时不可用 | `isCoroutineRuntime` 误判 → 池降级失败 | 上游 1.15.6（PoolManager 运行时感知降级）+ 1.15.7（语句缓存 −56%/去探活/断连重试）；`isCoroutineRuntime` 真实协程上下文检测（`getUid() >= 0`）于 **1.15.8** 彻底修复（1.15.7 仍 key off `class_exists`，Native 下误判为协程）；框架侧另保留自有 `ConnectionPool`（多进程同步 PDO 池） |
+| 3 | Native 并发拒绝连接 / Swoole keep-alive 崩溃 | kode/process accept 单次 drain / 跨请求 stale 响应对象 | 上游 5.2.36（循环 drain + `reset()`），修复后三运行时同档（kode/process 仓库，5.2.36 循环 drain + reset()） |
+| 4 | 观测档「断层」失真 | harness 配置重写丢弃 `sample_ratio=0.1` 生产默认，压测实为 100% 全采样（单段 span 9.3µs） | harness 强制重写 tmp 配置为内存默认值；此后断层收敛为真实固有成本（§3.2） |
+| 5 | 常驻进程 outbox 无界增长（内存泄漏） | 仅逻辑裁剪无物理裁剪 | 头指针 ≥ 2×cap 时 O(2×cap) 物理裁剪（摊薄 O(1)、内存封顶），回归测试覆盖 |
+
+### 3.2 obs 成本分解（微基准铁证）
+
+`TraceMiddleware` 每请求完整成本整链实测 ≈ **4.4µs**（四段分解合计 ≈4.6µs；`sample_ratio=0.1` 生效时）：
+
+| 段 | 说明 | 成本 |
 | --- | --- | --- |
-| 测量纠偏 | 弃用单线程 `ab`（本地回环封顶 ~3 万，伪造成 FPM），改用多线程 `wrk` | 裸 Swoole `/ping` 由 ab 的 ~2.6 万跃升至 wrk 的 16.5~19 万，暴露真实天花板 |
-| 链路追踪采样 | `tracing.sample_ratio` 默认 `1.0 → 0.1`，未采样跳过 span 创建 | `L5/L0` 比值 `0.62 → 0.68`(/ping)、`0.60 → 0.73`(/bench)；绝对 +14%/+12%（注：当时 hyperf 处旧无冷却口径被压至 114k，故显「反超」；补 COOLDOWN 后 hyperf 回升 151k，kode L5 实际低于 hyperf） |
-| P1 限流安全默认 | 全局兜底限流默认关闭，仅 `#[RateLimit]` 生效 | 消除「默认 10/s 误杀生产」风险（非 rps 收益，属正确性修复） |
-| P2 韧性路由级挂载（v0.8.39 深化） | 熔断/重试/幂等改为按 `#[…]` 标记的路由**直接挂内层管道**，彻底移出默认全局栈（未标记路由 O(1) 早退双保险） | 默认栈全局中间件帧少 3 帧，未标记路由 resilience 开销归零 |
-| RouteResolver 去重 | 6 个路由感知中间件由各自 `router->match()` 改为首匹配缓存复用（**6→1 次/请求**） | 消除高路由数下的路由表全扫描 |
-| DB 层补丁（v0.8.33） | `kode/database` PdoConnection 去 `SELECT 1` 探活 + 预编译语句缓存 | kode 原生 MySQL `21.6k → 38.1k`(+77%)、pgsql `17.5k → 34.5k`(+98%)，追平 raw PDO / Doctrine |
-| kode/http 吞吐路径补丁（v0.8.34） | `kode/http` 的 `Response::json` 去 `body/withBody` 中间层直构 + `SwooleServerAdapter` 对自研 Response 走 `getBodyString()` 避开 PSR-7 接口分发；harness `/bench/json` handler 与 webman 同构；run.sh 加 `COOLDOWN=15` 消除 peer 间累积热降频 | `kode L0（off）` `/bench/json` 微优化真实生效（micro-bench tiny +30% / 50 条 +4%）；**Kode::serve 真实生产路径**下全链路 `kode L0（off）` **174k / 137k**（早期 harness 口径；当前 §3 矩阵为 **166,971 / 132,693** = 裸 Swoole **91%/75%**、约 webman **92%/74%**）；/bench/json 低于 /ping 此前归因 `HttpBridge::toRaw` 序列化，现 §5.7 A/B 证伪（Swoole 单串 `end()` 已最优） |
-| **可观测性 100% 路径剖析（v0.8.35）** | 冷却 15s 边际成本扫描：逐项关中间件组定位；`HttpBridge::emit()` 把 Workerman 路由到 C 层对象式序列化（对齐 webman）、Swoole 保留单串 `end()`；Metrics 时延直方图按 `sample_ratio=0.1` 采样（计数 100%）；Trace `ensure()` 单次 `random_bytes(24)` 切片 | **可观测性是 kode L5（full）绝对主导成本**（/ping 关掉 +25k、/bench/json 关掉 +40k）；微基准证伪「不可变 withHeader 克隆是瓶颈」（3× 克隆仅 ~0.3µs），真实成本在 `TraceContext::ensure()` 的 Context 读写 + 头解析 + W3C 拼接（固有 ~0.77µs/请求）——属 webman 不自带的企业级可观测性**功能对价**；`ensure()` 固有部分框架内不可消除，但**回写响应头切片已可通过 `attach_headers=false` 移除（v0.8.36，见 PEER_BENCHMARK §6）** |
-| **`tracing.attach_headers` 开关（v0.8.36）** | `observability.tracing.attach_headers`（默认 `true`，env `OBS_TRACING_ATTACH_HEADERS`）解耦「回写 W3C 响应头」与「建立内部 trace 上下文」；置 false 时 `TraceMiddleware` 仅 `ensure()` 不回写头 | 本机微基准：移除 `responseHeaders()`+3×`withHeader` 切片约 **2.1µs/op（约占 trace 头处理 47%）**，`ensure()` 固有 ~2.3µs/op 保留；`TraceMiddleware` 每请求开销约减半（微基准口径），真实生产增益受其余固定管线限制（与 §4 ~0.77µs 可观测 delta 一致） |
-| harness 对齐生产 adapter（v0.8.34 续） | benchmark harness 改走 `Kode::serve` + `HttpBridge` **真实生产路径**（不再手写 Swoole 适配器绕过 `HttpBridge::toRaw`），使压测逐字节等价于生产 | 消除 harness 额外每请求开销对 kode 的低估（详见 PEER_BENCHMARK §7 / §9）；CLI 隔离测得纯框架 `handle` 上限 **241k ops/s**，证实 wrk 174k 系 Swoole/统一运行时 I/O 限制、非框架内核慢 |
-| **默认 opt-in（v0.8.41）** | 框架默认改为**全关**（CORS/Security/Locale/Resilience/Logging/Observability/Session/Idempotency/Feature 等 config 全部 `false`），开发者按需开启；能力梯度 **L0→L5** 可由 `KODE_PROFILE=off\|full` 与 `KODE_ENABLE=` 逐项复现 | 默认零跨切面开销，压测只用 L0（166,971/132,693）；企业级能力按梯度透明叠加，L5 全开为 93,829/66,234（详见 PEER_BENCHMARK §3、本文第三节矩阵） |
+| 壳 | 中间件包装层（获取 request/套 context/调度） | ~1.1µs |
+| attach | W3C 响应头回写（3×`withHeader`） | ~0.8µs（关 `attach_headers` 可省） |
+| `ensure()` | `Context` 读写 + 入向头解析 + trace/span id | **1.8µs**（热路径优化后，`3×set→1×merge` 等，−24%） |
+| span 摊薄 | span 对象创建 + end 入队（0.1 采样） | ~0.93µs |
 
-**调优后（最新 v0.8.41，opt-in 默认全关 · Kode::serve 真实生产路径 · wrk 同条件）**：
-`kode · L0（off，零跨切面）` **166,971 / 132,693**（≈ webman **92% / 74%**、裸 Swoole **91% / 75%**）；`kode · L5（full，全开）` **93,829 / 66,234**（≈ L0 的 **56% / 50%**、webman 的 **52% / 37%**）。  
-能力梯度每档边际成本见本文第三节矩阵与 `benchmarks/PEER_BENCHMARK.md` §3。
-
-> 立场：默认栈约 webman **54~59% / 43~44%** 折损是「换取 cors/安全头/限流/韧性/追踪/审计等开箱能力」的**功能对价，非缺陷**；
-> 需要极限吞吐时切 `KODE_PROFILE=lean`（已验证三运行时 `/ping` 约 webman **87~92%**、裸内核 **85~90%**；`/bench/json` 约 **72~75%**）。**框架层调优已触顶**：剩余差距主因是 kode/http PSR-7 管线 + 企业级可观测性固有成本，P3/P4 均为边际收益。
+- **100% 全采样时 span 段单段成本高达 9.3µs/请求**——任何压测/调优先确认 harness 未丢弃采样默认值。
+- **对 /ping 与 /bench/json 无偏**（实测两端点 4436 vs 4361 ns/op），obs 边际为每请求固定成本。
+- 已排除勿重走：SHA-256 DRBG（负优化）、strace -c 聚合（attach 单 worker 失真）、outbox 性能修复本身。
 
 ---
 
 ## 四、响应速度差距与根因的客观解读
 
-实测（见 PEER_BENCHMARK.md）中，kode **L0（off，零跨切面）** `/ping` 真实吞吐 **166,971 req/s**、`/bench/json` **132,693**；**L5（全开企业栈）** `/ping` **93,829**、`/bench/json` **66,234**（最新 v0.8.41，native 运行时，2-pass 中位），p99 在亚毫秒级。  
-框架默认 opt-in 全关，开发者按需开启能力（见第三节梯度）。
-早期曾报 ~17.8k / ~17.3k / 甚至 140 req/s，均为**测量伪影或每请求副作用**，而非框架内核慢。正确诊断如下：
+v0.8.51 真机实测（见文首基线）：kode **L0（零跨切面）** `/ping` **185,362 req/s**（webman 190,432，−2.7% 持平）；
+**L5（全开企业栈）** `/ping` **117,822**（webman ON 127,564，−3.4% 同档），p99 亚毫秒级。历史测量问题与修复范式（勿重走）：
 
-1. **早期 140 req/s 的真实根因：同步阻塞的每请求副作用（已修复）**
-   - (a) 默认 OTLP 导出器在请求结束时**同步阻塞 `curl` POST**，单请求追加约 800µs；
-   - (b) 会话中间件对**每条**请求无条件 `start()` + `save()` 全量文件 I/O。
-   - 修复范式：导出改为**异步离请求路径**（内存入队 + shutdown/周期 `drain`）；会话改为**惰性**（`LazySessionMiddleware`）。
-   - 效果：全栈由 ~140 提升至生产真实的量级（CLI 单进程口径下约 ~25k；wrk 常驻口径下 100k/175k）。
-   - 口径修正（v0.8.24）：CLI 单进程压测里 `Tracer::$outbox` 进程级静态队列无限累积，  
-     v0.8.24 改为每请求 `resetOutbox()`，测得诚实数字。**框架运行时代码并未因此变快，是测量口径被修正。**
-2. **与更轻 peer 的差距 = 定位差异，非同台竞技**  
-   Slim/裸 Swoole 近乎零中间件；kode 用单请求开销换取全部开箱能力。应结合功能矩阵综合评估「为每单位吞吐付出的能力密度」。
-3. **生产部署面向常驻运行时**  
-   kode 的设计目标运行时是 Swoole/Swow/Fiber 长生命周期进程：boot 一次、多请求复用容器与路由表，boot 成本被摊薄，并通过多 worker 横向扩展。
-4. **链路追踪全采样是默认栈最大税（已修复）**  
-   v0.8.33 前默认 `sample_ratio=1.0` 全采样，是默认栈里单项最大（~45%）的吞吐税；现已默认降至 **0.1**，  
-   未采样请求跳过 span 创建快路径。`kode_default / kode_lean` 比值由 0.62 → 0.68（/ping）、0.60 → 0.73（/bench）。
-   （注：当时 hyperf 处于旧无冷却口径、被热降频压至 114k，故当时测出「反超」；补 `COOLDOWN=15` 后 hyperf 回升至 151k/138k，
-   kode_default 实际低于 hyperf——属完整企业栈与自带 DI 框架的合理定位差异。）
-5. **用「相对比例」作稳定主指标——绝对数字不可直接横比**  
-   kode &#x662F;**「分配 / GC 绑定」**&#x7684;：本机裸 PHP 基线与各 peer 的绝对 rps 在两次运行间可差 2.4×，而 kode 稳定在同一量级——  
-   说明吞吐受**每请求对象分配与 GC** 主导。因此压测编排以**多轮 + 比值**为主指标，机器方差在比值中抵消：
-   - `kode L0（off）/ 裸 Swoole` ≈ **91%（/ping）· 75%（/bench/json）**（/ping 说明框架路由/`kode/http` 本身不是瓶颈；/bench/json 的 L0 亚差距见 PEER_BENCHMARK §6——Swoole 响应写出已最优，属「大 body/JSON 处理」待查项），瓶颈不在内核；
-   - `kode · L5（全开） / kode · L0（off）` ≈ **56%/50%**，瓶颈在「每请求分配 / 中间件栈（可观测性 100% 路径固有成本，PEER_BENCHMARK §6）」而非路由内核；
-   - **p99 / max 在 CLI 单进程紧循环里高度噪声化**（GC / autoload 抖动），以 **p50 / 中位数 + 相对比例** 判断趋势最可靠。
+1. **早期 140 req/s 的真实根因：同步阻塞的每请求副作用（已修复）**：默认 OTLP 导出器请求结束同步阻塞 `curl` POST；
+   会话中间件无条件文件 I/O。修复范式：导出改**异步离请求路径**（内存入队 + shutdown/周期 `drain`）；会话改**惰性**。
+2. **早前「仅为 webman 31%」的真实根因（已关闭）**：kode/http 旧版 PSR-7 热路径每请求对象分配（§3.1 #1），
+   经 v3.4.10 + 框架 P5 收敛至持平；残余 json −12% 为不可变响应物化的已知残余差，根治方向已交包侧。
+3. **观测档「断层」的真实根因（已修复）**：harness 配置重写丢弃采样默认值导致 100% 全采样（§3.1 #4）；
+   修复后残余 = obs 固有成本 ≈4.6µs/请求（§3.2）。
+4. **常驻进程内存有界（已修复）**：`Tracer::$outbox` 物理裁剪 + 每请求 `resetOutbox()`（§3.1 #5）。
+5. **用「相对比例」作稳定主指标——绝对数字不可直接横比**：kode 吞吐受每请求对象分配与 GC 主导，压测编排以
+   **多轮 + 比值**为主指标，机器方差在比值中抵消：
+   - `kode L0 / webman` ≈ **97%（/ping）· 88%（/bench/json）**（v0.8.51 真机）；
+   - `kode parity（同 4 中间件）/ webman ON` ≈ **124% / 111%**（v0.8.51 真机）；
+   - `kode@Swoole / hyperf` ≈ **106% / 111%（noDB）· 209%（MySQL）**（v0.8.51 真机）；
+   - `kode L5（全开）/ kode L0` ≈ **63% / 57%**（v0.8.51 真机）；
+   - **p99 / max 在紧循环里高度噪声化**，以 **p50 / 中位数 + 相对比例** 判断趋势最可靠。
 
 ---
 
-## 五、复现
+## 五、复现口径（归档）
 
-```bash
-# 套件一：框架吞吐 peer 对比（三运行时统一入口；kode 默认 Native，可切 Swoole/Workerman）
-no_proxy='*' NO_PROXY='*' bash benchmarks/peers/run.sh
-
-# 套件二：数据库全频谱对比（5 层 × MySQL/pgsql）
-cd benchmarks/orm-harness && composer install && cd ../..
-php benchmarks/setup_bench_dbs.php
-php benchmarks/peers/kode_swoole_server.php &
-bash benchmarks/run_spectrum.sh
-```
-
-实时报告：
-
-- 框架吞吐：[`benchmarks/PEER_BENCHMARK.md`](../benchmarks/PEER_BENCHMARK.md)
-- 数据库全频谱：[`benchmarks/DB_SPECTRUM.md`](../benchmarks/DB_SPECTRUM.md)
+- **DB 预备**：MySQL + pgsql 建库 `kode_bench`，`bench_users` 表灌 1000 行；MySQL 调 `SET GLOBAL max_connections=512`。
+- **压测编排**：所有 peer 起停一律按端口级强杀（`lsof + kill -9`），冷却式起停（peer 启动冷却 24s、peer 间 12s），
+  手动 `Ctrl-C` 会留下孤儿 worker 静默污染下一轮数字。
+- **档位开关**：`KODE_PROFILE`、`KODE_ENABLE`、`KODE_AUDIT`、`KODE_RUNTIME`（native|swoole|workerman）；
+  harness 启动强制重写 tmp 配置为内存默认值（csrf/limiting 恒关、sample_ratio=0.1）。
+- 原 `benchmarks/` 中的可执行脚本已随 v0.8.51 移除，按上述口径重建即可复现基线数字。

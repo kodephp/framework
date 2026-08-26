@@ -3,7 +3,7 @@
 中间件实现 PSR-15 的 `MiddlewareInterface`，包一层逻辑后调用 `$handler->handle($request)`：
 
 ```php
-namespace App\Http\Middleware;
+namespace app\Http\Middleware;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;

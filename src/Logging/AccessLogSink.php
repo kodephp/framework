@@ -55,27 +55,44 @@ final class AccessLogSink
      *
      * 由以下时机调用（均不阻塞客户端响应）：
      *  - Swoole / Workerman 的优雅停机钩子（GracefulShutdown）；
-     *  - FPM / CLI 的 register_shutdown_function（响应已发出之后）。
+     *  - FPM / CLI 的 register_shutdown_function（响应已发出之后）；
+     *  - 常驻进程的**周期定时器**（限量 {limit} 条，分摊写盘 I/O，避免单次全量
+     *    flush 在事件循环线程内长时间阻塞——高并发下队列随时可能积压到
+     *    {@see MAX}，一次性写完会让延迟出现秒级尖峰，见日志模块压测复盘）。
+     *
+     * @param int $limit 本次最多导出的条数（≤0 视为不限量=全量排空；周期定时器应
+     *                  传一批适中数量，如 1024，让余量留给下一次 tick，既不丢日志
+     *                  也不在单次 tick 内长阻塞）
      *
      * @return int 本次写入的日志条数（0 = 无数据）
      */
-    public function flush(LoggerInterface $logger): int
+    public function flush(LoggerInterface $logger, int $limit = PHP_INT_MAX): int
     {
-        if (self::$queue === []) {
+        if (self::$queue === [] || $limit === 0) {
             return 0;
         }
 
-        $count = count(self::$queue);
-        foreach (self::$queue as $entry) {
+        $batch = self::$queue;
+        if ($limit > 0 && $limit < count($batch)) {
+            // 限量分支：array_splice 同时完成「取前 N 条」与「队列前移」，剩余留给下一批。
+            $batch = array_splice(self::$queue, 0, $limit);
+        } else {
+            // 不限量 / 一次取尽：清空原队列，避免双份引用。
+            self::$queue = [];
+        }
+        if ($batch === []) {
+            return 0;
+        }
+
+        foreach ($batch as $entry) {
             match ($entry['level']) {
                 'error'   => $logger->error($entry['message'], $entry['context']),
                 'warning' => $logger->warning($entry['message'], $entry['context']),
                 default   => $logger->info($entry['message'], $entry['context']),
             };
         }
-        self::$queue = [];
 
-        return $count;
+        return count($batch);
     }
 
     /**

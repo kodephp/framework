@@ -67,6 +67,17 @@ final class ProcessManager
      */
     public function registerClass(string $class, array $config = []): self
     {
+        return $this->register($this->createFromClass($class, $config));
+    }
+
+    /**
+     * 实例化 worker 类（校验 + 按可选构造参数注入）。
+     *
+     * @param array<string, mixed> $config 传给 worker 构造函数的参数
+     * @throws \InvalidArgumentException 类不存在或不是 Worker 子类
+     */
+    private function createFromClass(string $class, array $config = []): Worker
+    {
         if (!class_exists($class)) {
             throw new \InvalidArgumentException("Worker 类不存在：{$class}");
         }
@@ -80,15 +91,24 @@ final class ProcessManager
             ? $ref->newInstance()
             : $ref->newInstance(...$config);
 
-        return $this->register($worker);
+        if (!$worker instanceof Worker) {
+            throw new \InvalidArgumentException("{$class} 必须继承 " . Worker::class);
+        }
+
+        return $worker;
     }
 
     /**
      * 从配置数组批量注册。
      *
-     * 支持两种写法：
-     *   'workers' => [ App\Process\FooWorker::class, ... ]                      // 无参
+     * 支持三种写法（相互兼容）：
+     *   'workers' => [ \app\process\FooWorker::class, ... ]                      // 无参
      *   'workers' => [ ['class' => ..., 'config' => [...]], ... ]              // 带构造参数
+     *   'workers' => [ ['class' => ..., 'config' => [...], 'count' => 3,
+     *                   'interval' => 5.0, 'once' => false, 'slots' => [0]], ] // 声明式增强
+     *
+     * 声明键（可选）：count=并行实例数、interval=轮询间隔秒、once=一次性执行、
+     * slots=仅执行这些实例（[0] = 仅主进程槽位）。见 {@see ConfiguredWorker}。
      *
      * @param array<string, mixed> $config
      */
@@ -99,7 +119,12 @@ final class ProcessManager
             if (is_string($entry)) {
                 $this->registerClass($entry);
             } elseif (is_array($entry) && isset($entry['class'])) {
-                $this->registerClass($entry['class'], $entry['config'] ?? []);
+                $worker = $this->createFromClass($entry['class'], $entry['config'] ?? []);
+                $declared = array_intersect_key($entry, array_flip(['count', 'interval', 'once', 'slots']));
+                if ($declared !== []) {
+                    $worker = new ConfiguredWorker($worker, $declared);
+                }
+                $this->register($worker);
             }
         }
 
@@ -133,8 +158,9 @@ final class ProcessManager
     }
 
     /**
-     * 无 fork 的逻辑验证：按注册顺序同步执行每个 worker 的
-     * onStart() → handle() → onStop() 各一次，返回已执行的 worker 名称列表。
+     * 无 fork 的逻辑验证：按注册顺序同步执行每个 worker 的每个生效槽位
+     * onStart() → handle(slot) → onStop() 各一次，返回已执行的 worker 名称列表
+     * （每个槽位各记一次）。一次性与常驻 worker 一视同仁。
      *
      * 用于在单元测试 / CI / 无 pcntl 环境中确认 worker 业务逻辑可跑通，
      * 不依赖 kode/process 的进程模型。
@@ -145,24 +171,72 @@ final class ProcessManager
     {
         $ran = [];
         foreach ($this->workers as $worker) {
-            $worker->onStart();
-            $worker->handle();
-            $worker->onStop();
-            $ran[] = $worker->name();
+            foreach ($this->effectiveSlots($worker) as $slot) {
+                $slotWorker = new SlotWorker($worker, $slot);
+                $slotWorker->onStart();
+                $slotWorker->handle();
+                $slotWorker->onStop();
+                $ran[] = $worker->name();
+            }
         }
 
         return $ran;
     }
 
     /**
+     * 计算 worker 的生效槽位列表。
+     *
+     * slots() 未声明（空数组）时 = 全部实例 0..instances-1；
+     * 声明了则按 instances() 上限过滤越界槽位，为空时兜底 [0]。
+     *
+     * @return list<int>
+     */
+    private function effectiveSlots(Worker $worker): array
+    {
+        $instances = max(1, $worker->instances());
+        $slots = $worker->slots();
+        if ($slots === []) {
+            return range(0, $instances - 1);
+        }
+
+        $filtered = array_values(array_unique(array_filter(
+            $slots,
+            static fn (int $s): bool => $s >= 0 && $s < $instances
+        )));
+
+        return $filtered === [] ? [0] : $filtered;
+    }
+
+    /**
+     * 启动时同步执行一次性 worker：每个生效槽位 onStart() → handle(slot) → onStop() 各一次。
+     */
+    private function runOnce(Worker $worker): void
+    {
+        foreach ($this->effectiveSlots($worker) as $slot) {
+            $slotWorker = new SlotWorker($worker, $slot);
+            $slotWorker->onStart();
+            try {
+                $slotWorker->handle();
+            } catch (\Throwable $e) {
+                error_log(sprintf('[worker:%s] once handle 异常: %s', $worker->name(), $e->getMessage()));
+            }
+            $slotWorker->onStop();
+        }
+
+        $this->logger->info('一次性 worker 已执行', ['worker' => $worker->name()]);
+    }
+
+    /**
      * 真正启动常驻进程（仅 CLI + 有 pcntl/posix 时可用）。
      *
-     * 为每个注册的 Worker 构建并运行一个 kode/process Daemon（Daemon 内部已 fork
-     * instances() 个 worker 子进程、按 interval() 周期调用 handle()、异常自动重生、捕获
-     * SIGTERM/SIGINT 优雅退出）。
+     * 处理顺序：
+     *  - once() 的一次性 worker：同步执行每个生效槽位一次即完成，不 fork；
+     *  - 常驻 worker：按生效槽位拆成独立 Daemon（每个槽位一个 Daemon、由 Daemon
+     *    fork 1 个 worker 子进程并按 interval() 周期调用 handle()，异常自动重生，
+     *    捕获 SIGTERM/SIGINT 优雅退出）。拆分后崩溃隔离更彻底：每个槽位独立重生预算。
      *
-     *  - 仅 1 个 Worker：直接在当前进程运行其 Daemon（当前进程即监督进程）。
-     *  - 多个 Worker：fork 一个监督子进程各自跑一个 Daemon，主进程监督这些监督子进程。
+     *  - 仅 1 个常驻槽位：直接在当前进程运行其 Daemon（当前进程即监督进程）。
+     *  - 多个常驻槽位：fork 一个监督子进程各自跑一个 Daemon，主进程监督这些监督子进程。
      *
      * @param array<string, mixed> $options 预留（已不再自行管理 pid_file，交由 Daemon）
      * @throws \RuntimeException 当前环境不支持 fork / 没有注册 worker
@@ -179,16 +253,32 @@ final class ProcessManager
             throw new \RuntimeException('没有注册任何 worker，无法启动。');
         }
 
-        $names = array_keys($this->workers);
+        // 一次性 worker 先同步执行（启动即完成），再展开常驻槽位。
+        $daemons = [];
+        foreach ($this->workers as $worker) {
+            if ($worker->once()) {
+                $this->runOnce($worker);
+                continue;
+            }
+            foreach ($this->effectiveSlots($worker) as $slot) {
+                $daemons[] = new SlotWorker($worker, $slot);
+            }
+        }
 
-        // 单 worker：直接运行 Daemon（无需额外 fork 一层监督）。
-        if (count($names) === 1) {
-            $this->runDaemon($this->workers[$names[0]]);
+        if ($daemons === []) {
+            $this->logger->info('全部 worker 为一次性任务，已执行完毕，无常驻进程。');
 
             return;
         }
 
-        // 多 worker：fork 监督子进程，每个跑一个 Daemon；主进程监督它们。
+        // 单常驻槽位：直接运行 Daemon（无需额外 fork 一层监督）。
+        if (count($daemons) === 1) {
+            $this->runDaemon($daemons[0]);
+
+            return;
+        }
+
+        // 多常驻槽位：fork 监督子进程，每个跑一个 Daemon；主进程监督它们。
         $this->forking = true;
         $this->children = [];
 
@@ -196,10 +286,10 @@ final class ProcessManager
         pcntl_signal(SIGTERM, fn() => $this->stop());
         pcntl_signal(SIGINT, fn() => $this->stop());
 
-        foreach ($this->workers as $worker) {
+        foreach ($daemons as $daemon) {
             $pid = KodeProcess::fork(
-                function () use ($worker): void {
-                    $this->runDaemon($worker);
+                function () use ($daemon): void {
+                    $this->runDaemon($daemon);
                 }
             );
             $this->children[] = $pid;
