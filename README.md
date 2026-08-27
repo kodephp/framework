@@ -18,7 +18,7 @@ php bin/kode serve
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"0.8.34","php":"8.3.x","env":"local","time":"..."}
+# {"status":"ok","service":"kode-app","version":"0.8.53","php":"8.3.x","env":"local","time":"..."}
 ```
 
 > 安装时 `composer create-project` 会自动生成 `.env` 与 `storage/` 目录。
@@ -111,7 +111,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 
 ## 版本
 
-- 当前版本：**[v0.8.51](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v0.8.53](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

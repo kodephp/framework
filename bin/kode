@@ -346,7 +346,19 @@ final class KodeInitCommand
         $env = $this->projectRoot . '/.env';
         if (is_file($example) && !is_file($env)) {
             copy($example, $env);
-            echo "✅ 已生成 .env（请按需修改 JWT_SECRET 等配置）\n";
+            @chmod($env, 0600);
+            // 将占位密钥替换为强随机值（H2）：避免 cp .env.example 即生产可用的裸奔。
+            $raw = @file_get_contents($env);
+            if (is_string($raw) && str_contains($raw, 'change-me')) {
+                $strong = bin2hex(random_bytes(32));
+                $raw = str_replace('change-me-to-a-long-random-string', $strong, $raw);
+                $raw = str_replace('change-me', $strong, $raw);
+                @file_put_contents($env, $raw);
+            }
+            echo "✅ 已生成 .env（已写入强随机 JWT_SECRET，权限 0600）\n";
+        } elseif (is_file($env)) {
+            // 已有 .env：确保权限收紧
+            @chmod($env, 0600);
         }
 
         // 2) 存储目录（运行时写入，随 .gitignore 忽略内容，仅保留 .gitkeep）
@@ -379,6 +391,7 @@ final class KodeServeCommand
         $host = null;
         $port = null;
         $workers = null;
+        $runtime = null;
         $watch = false;
         $serveArgs = [];
 
@@ -397,6 +410,10 @@ final class KodeServeCommand
                 $workers = max(1, (int) $args[++$i]);
                 $serveArgs[] = '--workers';
                 $serveArgs[] = (string) $workers;
+            } elseif ($args[$i] === '--runtime' && isset($args[$i + 1])) {
+                $runtime = $args[++$i];
+                $serveArgs[] = '--runtime';
+                $serveArgs[] = $runtime;
             }
         }
 
@@ -411,6 +428,9 @@ final class KodeServeCommand
         }
         if ($workers !== null) {
             $config['workers'] = $workers;
+        }
+        if ($runtime !== null) {
+            $config['runtime'] = $runtime;
         }
 
         if ($watch) {

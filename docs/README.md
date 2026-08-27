@@ -2,7 +2,7 @@
 
 欢迎使用 **Kode Framework** —— 一个以 [kode](https://github.com/kodephp) 生态为基座、组合 Monolog / Symfony Validator 等成熟包的现代化 PHP API 框架。最低 PHP 8.3+，开箱即多进程常驻服务，错误默认返回可追踪的结构化 JSON。
 
-> 当前版本：**v0.8.51** · 包名：`kode/framework` · 仓库：<https://github.com/kodephp/framework>
+> 当前版本：**v0.8.53** · 包名：`kode/framework` · 仓库：<https://github.com/kodephp/framework>
 
 ## 学习路径
 
@@ -14,6 +14,8 @@
 | **④ 高级** | 扩展框架、加固生产 | 见下方「扩展机制」「安全与韧性」「生产与运维」 |
 
 > 参考 webman / Hyperf 的设计哲学：**薄内核 + 复用 Composer 生态**。框架只做「启动、容器、路由、统一响应、异常、中间件、韧性层」等地基，其余能力来自 kode 生态包；业务代码不变即可切换运行时（Fiber 协程 / 多进程 / 多线程 / Swoole / 分布式）。
+
+> 📘 **实战教程（推荐从这篇开始）**：[从 0 到上线一个博客 API + 管理后台](tutorial.md) —— 博客式上手指南，对比 webman / Hyperf，覆盖 Composer 安装、注解路由、DI（含最新属性注解）、JWT、ORM、单/多应用与部署压测，配套可运行示例 `examples/api-admin-demo`。
 
 ## 一、入门
 

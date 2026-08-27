@@ -41,15 +41,15 @@ php bin/kode serve
 myapp/
 ├── app/                    ← 应用代码（目录小写约定，类文件首字母大写驼峰）
 │   ├── http/
-│   │   ├── Controllers/    ← 控制器（app\Http\Controllers）
-│   │   └── Middleware/     ← 中间件（app\Http\Middleware）
-│   ├── console/            ← 自定义控制台命令（app\Console）
-│   ├── services/           ← 业务服务（app\Services）
-│   ├── tasks/              ← 定时任务（app\Tasks，#[Cron]）
-│   ├── process/            ← 常驻进程（app\Process）
-│   ├── events/             ← 事件类（app\Events）
-│   ├── aop/                ← AOP 切面（app\Aop）
-│   ├── plugins/            ← 插件（app\Plugins）
+│   │   ├── controllers/    ← 控制器（app\http\controllers）
+│   │   └── middleware/     ← 中间件（app\http\middleware）
+│   ├── console/            ← 自定义控制台命令（app\console）
+│   ├── services/           ← 业务服务（app\services）
+│   ├── tasks/              ← 定时任务（app\tasks，#[Cron]）
+│   ├── process/            ← 常驻进程（app\process）
+│   ├── events/             ← 事件类（app\events）
+│   ├── aop/                ← AOP 切面（app\aop）
+│   ├── plugins/            ← 插件（app\plugins）
 │   ├── routes.php          ← 显式路由
 │   └── bootstrap.php       ← 全局引导（事件监听、第三方初始化）
 ├── config/                 ← 全部配置（每主题一个文件）
@@ -61,7 +61,7 @@ myapp/
 └── .env                    ← 本地环境变量（不入库）
 ```
 
-> **约定**：`app/` 下目录一律小写（`http`、`console`、`services` 等），类文件首字母大写驼峰（`UserController.php`）；对应命名空间首字母大写（`app\Http\Controllers\UserController`）。新增类文件后执行 `composer dump-autoload`（框架已开启 `optimize-autoloader`）。
+> **约定**：`app/` 下目录一律小写（`http`、`console`、`services` 等），类文件首字母大写驼峰（`UserController.php`）；命名空间全小写，与目录一一对应（`app\http\controllers\UserController`）。`composer.json` 已配 `"app\\": "app/"` 走 PSR-4，**新增类即时可加载，无需 `composer dump-autoload`**；属性路由在启动时递归扫描控制器目录自动注册，改完重启服务即生效。
 
 ---
 
@@ -76,7 +76,7 @@ myapp/
 
 declare(strict_types=1);
 
-namespace app\Http\Controllers;
+namespace app\http\controllers;
 
 use Kode\Framework\Http\Controller;
 
@@ -96,7 +96,7 @@ final class HelloController extends Controller
 
 ```php
 use Kode\Http\App;
-use app\Http\Controllers\HelloController;
+use app\http\controllers\HelloController;
 
 return function (App $app): void {
     $app->get('/hello', fn() => resolve(HelloController::class)->say());
@@ -205,7 +205,7 @@ HTTP 状态 **422**。规则用字符串管道写法：`required`、`email`、`m
 
 ## 9. 健康检查 & 探针
 
-- `GET /health` → `{"status":"ok","service":"kode-app","version":"0.8.51","php":"8.3.x","env":"local","time":"..."}`（K8s / 负载均衡探针用）
+- `GET /health` → `{"status":"ok","service":"kode-app","version":"0.8.53","php":"8.3.x","env":"local","time":"..."}`（K8s / 负载均衡探针用）
 - `GET /` → 框架元信息
 
 ---
@@ -233,9 +233,9 @@ php bin/kode make:migration create_users  # 生成迁移
 | 访问连不上 | 端口被旧进程占用。`lsof -i tcp:9527` 找到进程 `kill` 掉，重启 `serve`。 |
 | 改了路由没生效 | 路由在 `app/routes.php`；多进程下重启 `serve` 才加载。 |
 | 返回 500 | 看 `storage/logs/app.log`；异常默认返回结构化 JSON（开发期含 `location` 文件/行号与 `chain`），没有 HTML 调试页。 |
-| 报错 "Class not found" | 新加了类？跑 `composer dump-autoload`。 |
+| 报错 "Class not found" | 一般是改了 `composer.json` 的 `autoload` 映射却没刷新，跑 `composer dump-autoload` 即可；普通 `app/` 下新增类走 PSR-4 不会触发此问题（重启服务即可）。 |
 | 想看所有路由 | `php bin/kode console route:list`（按分组展示数量）。 |
-| 命令没被发现 | 命令类必须在 `app/console/` 下、命名空间为 `app\Console\`、类名以 `Command` 结尾。 |
+| 命令没被发现 | 命令类必须在 `app/console/` 下、命名空间为 `app\console\`、类名以 `Command` 结尾。 |
 
 ---
 

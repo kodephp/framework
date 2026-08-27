@@ -74,9 +74,11 @@ final class TraceContext
         $parentSpanId = null;
 
         $traceparent = self::inboundHeader($request, self::HEADER_TRACEPARENT);
+        $traceFlags = null;
         if ($traceparent !== '' && preg_match(self::TRACEPARENT_RE, $traceparent, $m) === 1) {
             $traceId = $m[2];
             $spanId = $m[3];
+            $traceFlags = (hexdec($m[4]) & 1) === 1 ? 1 : 0;
             $parentSpanId = null; // 入向 span 成为本服务的 parent
             Context::set(Context::PARENT_SPAN_ID, $m[3]);
         } else {
@@ -109,12 +111,11 @@ final class TraceContext
 
         // 单次 merge 批量写：3×Context::set 每次都要重解析执行单元（store()），
         // merge 只解析一次 + 循环写入，热路径省 2× scope/WeakMap 查找（~0.6µs）。
-        // TRACE_FLAGS 恒置 1（入向 traceparent 的 flags 位仅透传，不参与采样语义，
-        // responseHeaders 已按 ===1 兜底为 '01'），省去 get??1 的额外读取。
+        // 入向含 traceparent 时尊重上游采样位（$traceFlags），否则默认采样（1）。
         Context::merge([
             Context::TRACE_ID    => $traceId,
             Context::SPAN_ID     => $spanId,
-            Context::TRACE_FLAGS => 1,
+            Context::TRACE_FLAGS => $traceFlags ?? 1,
         ]);
 
         self::syncServer($traceId);

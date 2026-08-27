@@ -18,7 +18,10 @@ final class HttpClientServiceProvider extends ServiceProvider
             /** @var array<string, mixed> $config */
             $config = (array) $this->config('http-client', []);
 
-            return Factory::createSimple($config);
+            // H3：createSimple 仅建 Transport+Driver，不建 MiddlewareStack，导致
+            // config/http-client.php 的 retry/circuit_breaker/limiter 等静默失效。
+            // create 会按配置完整构建 MiddlewareStack，使重试/熔断/限流真正生效。
+            return Factory::create($config);
         });
 
         $this->container->alias('http', HttpClient::class);

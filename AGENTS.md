@@ -5,7 +5,7 @@
 
 ## 仓库是什么
 
-- **kode/framework**：常驻内存 PHP 框架（Swoole / Swow / Fiber / 多进程通吃），当前 **v0.8.51**。
+- **kode/framework**：常驻内存 PHP 框架（**默认 kode/process 原生多进程**，可切 Swoole / Swow / Fiber），当前 **v0.8.51**。
 - 依赖三组自研包（**vendor 内，只读**）：`kode/http`（HTTP 内核与路由）、`kode/process`（进程/运行时）、
   `kode/database`（数据库与连接池）、`kode/fibers`（协程调度）。
 - 性能基线存档：`docs/benchmarks.md`（v0.8.51 真机横比结论 + 压测口径，`benchmarks/` 目录已移除）；
@@ -26,12 +26,11 @@
    （如 redis）如实标注，不编造「通过」。
 6. **目录结构纪律（全层级小写）**：`app/` 下**所有目录一律小写**——不限于第一层，含 `http/controllers`、`http/middleware`、
    `providers`、`models` 等；方法/类文件首字母大写驼峰（如 `app/http/controllers/UserController.php`、`app/console/GreetCommand.php`）；
-   console 命令单层存放于 `app/console/`（namespace `App\Console\`），不搞嵌套子目录。
-   - **namespace 与目录的配套约定（勿打破）**：目录小写 ↔ namespace 驼峰（`App\Http\Controllers` ↔ `app/http/controllers/`）是**既定映射**，
-     由 composer `optimize-autoloader: true` 生成的 **authoritative classmap 兜底**（`app/Http`、`app/Http/Controllers` 在 Linux 上不存在，
-     PSR-4 严格匹配必然失败，只能靠 classmap）。因此：
-     - 新增/修改类文件后跑 `composer dump-autoload`（classmap 未刷前 `App\...` 引用会 Class not found——这是既有行为，勿当 bug 修）；
-     - 禁止「把目录改回驼峰」或「把 namespace 改成小写」来对齐——保持目录小写 + namespace 驼峰 + classmap 生成即可；
+   console 命令单层存放于 `app/console/`（namespace `app\console`），不搞嵌套子目录。
+   - **namespace 与目录的配套约定（勿打破）**：目录小写 ↔ namespace **全小写**一一对应（`app\http\controllers` ↔ `app/http/controllers/`）。
+     `composer.json` 已配 `"app\\": "app/"`，PSR-4 直接命中，无需 classmap 兜底。因此：
+     - `app/` 下新增/修改类走 PSR-4 即时可加载，**无需 `composer dump-autoload`**；仅当改了 `composer.json` 的 `autoload` 映射本身时才需刷新。属性路由在启动时递归扫描控制器目录自动注册，改完重启服务即生效。
+     - 保持「目录小写 + namespace 小写 + 类名/方法名驼峰」一致即可，不要去把目录或 namespace 改成驼峰；
      - 改 `config/routes.php` 的 `attributes.controllers` 与 `src/Console/Commands/Make*Command.php` 生成路径时，必须继续用小写目录
        （`app/http/controllers`、`app/http/middleware`、`app/models`、`app/console`），并同步 tests 断言与 docs。
 7. **字符卫生**：PHP/配置代码正文一律 ASCII 半角标点，禁止全角引号/逗号/分号混入源码；中文注释可用全角，代码符号必须半角。
@@ -41,7 +40,7 @@
 ```bash
 vendor/bin/phpunit                      # 全量测试（需 PHP ≥ 8.1 + 常用扩展）
 php bin/kode greet Kode                 # 命令自动发现冒烟（app/console/ 单层）
-composer dump-autoload                  # 新增 app/ 类后必刷（classmap 兜底，见红线 6）
+# 新增 app/ 类无需 dump-autoload（PSR-4 即时加载）；仅改 composer.json 的 autoload 时再跑（见红线 6）
 ```
 
 ## 文档索引（改文档前先读对应文件，勿另起炉灶）

@@ -18,7 +18,8 @@ use RuntimeException;
  *
  * 续期调度双驱动（配置 `lock.watchdog.driver`）：
  *  - tick（默认 / auto）：用 PHP `register_tick_function`，在 work 执行期间的语句边界周期触发续期，
- *    任何 SAPI 与环境均可用，零运行时依赖；精度为「语句边界」，对秒级 TTL 足够。
+ *    零运行时依赖；精度为「语句边界」，对秒级 TTL 足够。注意：ticks 仅在以 declare(ticks=1)
+ *    声明的业务文件内触发，未声明时该驱动不生效（运行期会检测并告警）。
  *  - fiber：用 kode/fibers 协程（`Fibers::go` + `Fibers::sleep`）与 work 并行续期，精度更高，
  *    但要求调用方处于 fiber 调度器上下文（HTTP 请求 / 调度任务 / queue:work 默认均满足）。
  *
@@ -137,14 +138,21 @@ final class LockWatchdog
 
     /**
      * tick 驱动：PHP register_tick_function，在 work 执行期间语句边界周期触发续期。
+     *
+     * 重要限制：ticks 只在以 declare(ticks=N) 编译的作用域内触发。若业务代码文件
+     * 未声明 ticks，续期回调一次都不会执行——本实现会在 work 结束后检测「长任务
+     * 期间 0 次续期」并告警（v0.8.52），避免该静默失效伪装成可用防线。
      */
     private function tickTicker(callable $work, callable $tick, int $interval): mixed
     {
         $last = microtime(true);
-        $cb = static function () use (&$last, $interval, $tick): void {
+        $started = $last;
+        $renewals = 0;
+        $cb = static function () use (&$last, &$renewals, $tick, $interval): void {
             $now = microtime(true);
             if ($now - $last >= $interval) {
                 $tick();
+                ++$renewals;
                 $last = $now;
             }
         };
@@ -154,6 +162,14 @@ final class LockWatchdog
             return $work();
         } finally {
             unregister_tick_function($cb);
+            // work 耗时已超过一个续期周期却一次续期都没发生 ⇒ tick 驱动未生效
+            // （业务作用域无 declare(ticks=1)），锁将在 TTL 后被他人抢占。
+            if ($renewals === 0 && microtime(true) - $started > $interval) {
+                error_log(
+                    '[LockWatchdog] tick 驱动未产生任何续期：业务代码所在文件需声明 declare(ticks=1)，'
+                    . '或改用协程环境下的 fiber 驱动，否则长任务超时后锁会被抢占。'
+                );
+            }
         }
     }
 

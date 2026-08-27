@@ -30,8 +30,9 @@ use Psr\Http\Server\RequestHandlerInterface;
  *  - 非安全方法（POST/PUT/PATCH/DELETE）校验请求头 X-CSRF-Token（或 X-XSRF-Token /
  *    表单字段 _token）与会话令牌一致，否则 419。
  *
- * 前置依赖：会话（LazySessionMiddleware）。无会话（如纯 JWT 无 cookie 应用）的路由
- * 即便被标记也会安全跳过——CSRF 仅对「cookie-session」形态的会话劫持有效。
+ * 前置依赖：会话（LazySessionMiddleware）。无会话承载时：安全方法照常放行；
+ * 非安全方法 fail-closed 拒绝（419）——静默跳过等于「标了 #[Csrf] 却零防护」，
+ * 纯 JWT 无 cookie 应用不应给路由标 #[Csrf]。
  *
  * 安全可观测性：校验失败时经离路径异步审计管线记录 csrf.failed 事件（与 auth.failed 同源，
  * SOC 可统一监测），仅在失败时触发、不污染正常热路径，且审计未启用则静默跳过。
@@ -74,14 +75,29 @@ final class CsrfMiddleware implements MiddlewareInterface
             && !in_array($path, (array) ($this->config['exclude_paths'] ?? []), true);
         $applicable = $tagged || ($autoApply && !in_array($method, self::SAFE_METHODS, true));
 
+        // 显式豁免路径（config csrf.skip_paths）：即便被 #[Csrf] 标记也放行，
+        // 用于需跨站调用的 Webhook 等（修复配置项声明与实现脱节的「虚假安全感」）。
+        if ($applicable && in_array($path, (array) ($this->config['skip_paths'] ?? []), true)) {
+            return $handler->handle($request);
+        }
+
         // 未命中任何 CSRF 标记：O(1) 早退，零副作用。
         if (!$applicable) {
             return $handler->handle($request);
         }
 
-        // 无会话承载：CSRF 对本形态无意义（如纯 JWT 接口），安全跳过。
+        // 无会话承载（session 未启用 / SessionManager 未绑定）：
+        // 安全方法照常放行；非安全方法 fail-closed 拒绝——旧实现静默跳过等于
+        // 「标了 #[Csrf] 却零防护」，攻击者视角与未开启 CSRF 无异且无任何告警。
         $session = $this->session();
         if ($session === null) {
+            if (!in_array($method, self::SAFE_METHODS, true)) {
+                return Resp::error(
+                    'CSRF 会话未启用：请开启 session（SESSION_ENABLED=true）或从该路由移除 #[Csrf]',
+                    (int) ($this->config['error_status'] ?? 419),
+                );
+            }
+
             return $handler->handle($request);
         }
 
@@ -131,8 +147,10 @@ final class CsrfMiddleware implements MiddlewareInterface
     }
 
     /**
-     * 按优先级解析客户端提交的令牌：请求头 X-CSRF-Token → X-XSRF-Token →
-     * 表单/JSON 字段 _token → 查询参数 _token。
+     * 按优先级解析客户端提交的令牌：请求头 X-CSRF-Token → X-XSRF-Token → 表单/JSON 字段 _token。
+     *
+     * 安全说明（v0.8.52）：不再接受查询参数载体——URL 中的令牌会进入访问日志、
+     * 浏览器历史与 Referer 头，削弱会话绑定令牌的保密性。
      */
     private function submittedToken(ServerRequestInterface $request): ?string
     {
@@ -153,11 +171,6 @@ final class CsrfMiddleware implements MiddlewareInterface
         $body = $request->getParsedBody();
         if (is_array($body) && isset($body[$param]) && is_string($body[$param])) {
             return $body[$param];
-        }
-
-        $query = $request->getQueryParams();
-        if (isset($query[$param]) && is_string($query[$param])) {
-            return $query[$param];
         }
 
         return null;

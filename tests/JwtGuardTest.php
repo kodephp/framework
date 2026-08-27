@@ -128,4 +128,34 @@ final class JwtGuardTest extends TestCase
         self::assertTrue($guard->isTokenValid($token));
         self::assertFalse($guard->isTokenValid('not-a-real-token'));
     }
+
+    public function testEmptySecretFailsFast(): void
+    {
+        // v0.8.52 安全回归：HS* 守卫 secret 为空必须构造期即抛（启动 fail-fast），
+        // 防止以公开可知的空/默认密钥签发可被任意伪造的令牌。
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('JWT secret 未配置');
+
+        new JwtGuard([
+            'guards' => [
+                'api' => [
+                    'algo' => 'HS256',
+                    'secret' => '',
+                    'ttl' => 3600,
+                ],
+            ],
+        ]);
+    }
+
+    public function testUnknownGuardThrowsInsteadOfSilentFallback(): void
+    {
+        // v0.8.52 回归：未声明的 guard 不再静默回落 guards.api 计算 TTL——
+        // 那会签出「exp 正确但验签永不能通过」的废令牌。
+        $guard = $this->guard();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('未知 JWT 守卫');
+
+        $guard->issue(['uid' => 1], 'admin');
+    }
 }

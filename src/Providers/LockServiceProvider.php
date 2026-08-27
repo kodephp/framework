@@ -34,6 +34,17 @@ final class LockServiceProvider extends ServiceProvider
             $driver = (string) ($config['driver'] ?? 'memory');
             $dispatcher = static fn (object $event): object => event($event);
 
+            // H4：memory 驱动在多 worker 下每进程独立内存，分布式互斥/去重语义被破坏（仅 production 告警）。
+            if ($driver === 'memory' && $this->config('app.env') === 'production') {
+                $workers = (int) ($this->config('server.workers', 0) ?: 0);
+                if ($workers === 0 && function_exists('Kode\Process\cpu_count')) {
+                    $workers = max(1, (int) \Kode\Process\cpu_count());
+                }
+                if ($workers > 1) {
+                    error_log('[kode] 警告：lock.driver=memory 但 server.workers=' . $workers . '，多进程下锁不互斥。生产多副本请替换为 Redis 实现 LockManager。');
+                }
+            }
+
             $dir = $driver === 'file' ? $this->lockDir() : null;
 
             return new StaticLockManager($config, $dir, $dispatcher);

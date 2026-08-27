@@ -29,7 +29,7 @@ final class DemoPlugin implements PluginInterface
 开启（`config/plugins.php`）：
 
 ```php
-return ['plugins' => [\app\Plugins\DemoPlugin::class]];
+return ['plugins' => [\app\plugins\DemoPlugin::class]];
 ```
 
 `PluginManager` 提供的注册接口：

@@ -8,8 +8,7 @@ use Kode\Exception\ExceptionManager;
 use Kode\Framework\Application;
 use Kode\Framework\Http\Resp;
 use Kode\Http\App as HttpApp;
-use Kode\Http\Psr7\Message\ServerRequest as KodeServerRequest;
-use Kode\Http\Psr7\Uri;
+use Kode\Http\Psr7\Stream;
 use Kode\Http\Response;
 use Kode\Http\Routing\RouteResult;
 use Kode\Http\Routing\RouteRunner;
@@ -75,7 +74,20 @@ final class HttpServer
         $reusePort  = (bool) ($this->config['reuse_port'] ?? false);
         $name    = (string) ($this->config['name'] ?? 'kode-http');
         $gracefulTimeout = max(0, (int) ($this->config['graceful_shutdown_timeout'] ?? 30));
+        $k8sGrace = max(0, (int) ($_SERVER['K8S_TERMINATION_GRACE_PERIOD'] ?? getenv('K8S_TERMINATION_GRACE_PERIOD') ?: 30));
+        if ($gracefulTimeout >= $k8sGrace - 5 && $k8sGrace > 0) {
+            fwrite(STDERR, "[kode] 警告：graceful_shutdown_timeout({$gracefulTimeout}s) >= K8s terminationGracePeriodSeconds({$k8sGrace}s)-5s，留给 LB 摘流与进程退出的余量不足，滚动更新可能丢在途请求（建议 graceful < termination-5，且配置 preStop sleep 5s）。\n");
+        }
         $debug   = (bool) ($this->config['debug'] ?? false);
+
+        // 运行时选择：CLI --runtime > config/server.php[runtime] > 环境变量 KODE_RUNTIME > 自动择优。
+        // 允许值：native（自研多进程，零扩展）/ swoole（单进程协程，kode/fibers）/ workerman。
+        $runtimeType = $this->config['runtime']
+            ?? ($_SERVER['KODE_RUNTIME'] ?? getenv('KODE_RUNTIME') ?: null);
+        if ($runtimeType !== null && !in_array($runtimeType, ['native', 'swoole', 'workerman'], true)) {
+            fwrite(STDERR, "未知运行时：{$runtimeType}（可选 native|swoole|workerman）\n");
+            exit(1);
+        }
 
         // Lean opt-out（默认关）：跳过 toPsr7 + App::handle(全局中间件管道) + emit 整段，
         // 对「无路由级中间件的热路径」直发 raw，追平 webman 同构 handler 的吞吐天花板。
@@ -109,7 +121,7 @@ final class HttpServer
             // 优雅停机宽限：kode/process 收到 SIGTERM 后停收新连接，并等待在途连接
             // 在此时间内自然关闭，超时则强制退出（应小于 k8s terminationGracePeriodSeconds）。
             'gracefulShutdownTimeout' => $gracefulTimeout,
-        ])
+        ], $runtimeType)
         ->on('workerStart', static function (int $workerId) use ($bootWorker): void {
             $bootWorker();
             // worker 级启动钩子：应用已就绪，可建立独立连接池 / 启动周期任务。
@@ -127,7 +139,9 @@ final class HttpServer
                 // 忽略。
             }
         })
-        ->on('message', static function (ConnectionInterface $conn, $message) use (&$http, &$graceful, $bootWorker, $lean, $debug): void {
+        // 注意：不可声明为 static closure——兜底 errorResponse 依赖 $this，
+        // static 闭包不绑定对象，异常路径会二次抛「Using $this when not in object context」。
+        ->on('message', function (ConnectionInterface $conn, $message) use (&$http, &$graceful, $bootWorker, $lean, $debug): void {
             if (!$message instanceof ProcessRequest) {
                 return;
             }
@@ -139,18 +153,25 @@ final class HttpServer
             }
 
             // ── Lean opt-out ──────────────────────────────────────────────
-            // 对「无路由级中间件的命中路由」跳过 toPsr7 + App::handle(全局中间件管道) + emit，
-            // 直接 RouteRunner::invoke + Response::resolve + 原生 raw 直发，追平 webman 同构
-            // handler 的吞吐天花板（KODE_LEAN 已证 ≈ webman 99.8%）。含中间件 / 404 / 405
-            // 的请求自动退回下方完整 PSR-7 路径，默认行为零影响。
+            // 对「无路由级中间件的命中路由」跳过 App::handle(全局中间件管道)，
+            // 直接 RouteRunner::invoke + Response::resolve + 原生 raw 直发。
+            // 含中间件 / 404 / 405 / 非 HTTP/1.x 的请求自动退回下方完整 PSR-7 路径。
             if ($lean) {
                 /** @var HttpApp $http */
                 $router = $http->getRouter();
                 $result = $router->match($message->method(), $message->path());
-                if ($result->status === RouteResult::FOUND) {
+                // 快路径守卫：HTTP/2 连接必须走 emit/sendResponse——对 h2 流 send(raw=true)
+                // 会把整份 1.1 报文当作单个 DATA 帧体写出（响应损坏），故 h2 一律落入完整路径。
+                $protocol = $message->protocol();
+                $isHttp1 = $protocol === 'HTTP/1.1' || $protocol === 'HTTP/1.0';
+                if ($result->status === RouteResult::FOUND && $isHttp1) {
                     $route = $result->route;
                     if ($route->getMiddlewares() === []) {
-                        $leanReq = new KodeServerRequest($message->method(), $message->path());
+                        // 复用 LazyServerRequest（懒解析、零急切成本）：修复旧快路径自拼
+                        // 「method+path 空壳」导致 query/header/body/cookie 全部丢失的缺陷；
+                        // 并写入 kode/context 请求上下文，使 Request 门面在快路径下与完整
+                        // 路径语义一致（App::handle / RouteRunner::handle 均如此约定）。
+                        $leanReq = HttpBridge::toPsr7($message);
                         // 有参数路由才写入 attribute（_route 无消费方；_route_params 对空参
                         // 恒等于 Request::param()/att('_route_params', []) 的默认值 []，语义一致）
                         if ($result->params !== []) {
@@ -161,23 +182,30 @@ final class HttpServer
                                 $leanReq = $leanReq->withAttribute($k, $v);
                             }
                         }
+                        $invoke = static fn(): ResponseInterface => Response::resolve(
+                            RouteRunner::invoke($route->getHandler(), $leanReq, $result->params)
+                        );
                         try {
-                            $data = RouteRunner::invoke($route->getHandler(), $leanReq, $result->params);
-                            $response = Response::resolve($data);
+                            \Kode\Http\Request::setRequest($leanReq);
+                            try {
+                                // 在途计数：排空期清理回调（flush 日志/队列/追踪）必须等快路径请求完成。
+                                $response = $graceful instanceof GracefulShutdown ? $graceful->track($invoke) : $invoke();
+                            } finally {
+                                \Kode\Http\Request::clear();
+                            }
                         } catch (\Throwable $e) {
                             $response = $this->errorResponse($e, $debug);
                         }
-                        // 热路径协议版本：HTTP/1.1 为压测/生产绝对多数，先做字符串相等判断
-                        // 免去每请求正则分配；仅非常见版本才回退 preg_match。
-                        $protocol = $message->protocol();
-                        $protocol = $protocol === 'HTTP/1.1'
-                            ? '1.1'
-                            : (preg_match('#HTTP/(\d+\.\d+)#i', $protocol, $m) ? $m[1] : '1.1');
-                        $conn->send(HttpBridge::toRaw($response, $protocol), true);
+                        // HEAD 响应不带实体（与完整路径 App::handle 行为一致）：
+                        // 否则 keep-alive 下客户端会把下一响应前 N 字节当 HEAD 的 body 解析，连接级错位。
+                        if (strtoupper($message->method()) === 'HEAD') {
+                            $response = $response->withBody(Stream::create(''));
+                        }
+                        $conn->send(HttpBridge::toRaw($response, $protocol === 'HTTP/1.0' ? '1.0' : '1.1'), true);
                         return;
                     }
                 }
-                // 命中带中间件路由 / 未命中：落入完整 PSR-7 路径
+                // 命中带中间件路由 / 未命中 / HTTP/2：落入完整 PSR-7 路径
             }
 
             try {

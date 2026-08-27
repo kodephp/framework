@@ -46,6 +46,14 @@ final class MakeCommandCommand extends Command
         // 命令名：去 Command 后缀后转 snake，下划线即控制台子命令分隔（send_newsletter）。
         $cmdName = $this->snake(preg_replace('/Command$/', '', $class));
 
+        // 退化输入守卫（如 make:command command）：生成的命令 name 为空串，
+        // 注册后永远无法匹配调用，属坏产物，直接拒绝。
+        if ($cmdName === '') {
+            $this->error("无法从 '{$raw}' 推导出有效命令名（结果为空），请换个名字：make:command SendNewsletter");
+
+            return 1;
+        }
+
         $content = <<<PHP
 <?php
 

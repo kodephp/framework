@@ -58,7 +58,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '0.8.51';
+    public const VERSION = '0.8.53';
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。
@@ -139,6 +139,12 @@ final class Application
                 ],
             ]);
         } catch (\Throwable $e) {
+            // 回滚外壳单例：boot 失败后 getInstance() 不得返回半初始化实例，
+            // 否则后续依赖它的代码会拿到「看似可用实则未 booted」的外壳。
+            if (self::$instance === $this) {
+                self::$instance = null;
+            }
+
             throw new \RuntimeException(
                 '应用启动失败（' . $this->basePath . '）：' . $e->getMessage(),
                 0,
@@ -251,7 +257,9 @@ final class Application
         $user = $this->preloadAppConfig()['providers'] ?? [];
         $user = is_array($user) ? $user : [];
 
-        return array_values(array_unique([...$defaults, ...$user]));
+        // SORT_REGULAR：providers 允许对象实例（见上方 docblock），默认的字符串比较
+        // 会对无 __toString 的对象抛「could not be converted to string」。
+        return array_values(array_unique([...$defaults, ...$user], SORT_REGULAR));
     }
 
     /**

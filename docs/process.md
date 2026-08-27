@@ -1,6 +1,22 @@
 # 自定义进程（常驻 Worker）
 
-框架内置多进程常驻能力（`kode/process`）：把「周期性的后台工作」写成 Worker 类，启动后常驻运行，与 HTTP 服务解耦。典型场景：心跳上报、消息队列消费者、定时清理器、拉取外部数据。
+框架内置多进程常驻能力（`kode/process`）：把「周期性的后台工作」写成 Worker 类，常驻运行，与 HTTP 服务**解耦**。典型场景：心跳上报、消息队列消费者、定时清理器、拉取外部数据。
+
+> **先厘清两件事（最容易搞混）**：
+> 1. **注册 ≠ 运行**。`config/process.php` 里声明 worker，只是把它们**注册**进 `ProcessManager`（框架启动时实例化、可被 `Process` 门面引用）；它们**不会自动 fork 运行**。真正把它们变成常驻进程，是另一条命令 `php bin/kode console process:start`。
+> 2. **`bin/kode serve`（HTTP 服务）不会启动这些业务 worker**。`serve` 只负责 HTTP 请求处理进程池（`--workers` 个请求 worker）；业务常驻进程由 `process:start` 单独拉起。两者是**两条独立的进程树**，互不包含。
+>
+> 所以「框架启动命令已经按 config 启动进程了」——准确说：`serve` 启动的是 HTTP 进程池，业务 worker 仍要你显式 `process:start`。它们分工明确、也不冲突（见第 6 节）。
+
+## 0. 与 HTTP 服务（serve）的关系
+
+| 命令 | 拉起什么 | 进程池 | 典型用途 |
+| --- | --- | --- | --- |
+| `bin/kode serve` | HTTP 运行时（kode/process Daemon） | N 个**请求 worker**（由 `--workers` 决定） | 接收 / 响应 HTTP 请求 |
+| `bin/kode console process:start` | 你注册的**业务 worker**（heartbeat / 消费者 / 清理器…） | 每个 worker 按 `count` / `slots` fork | 后台周期任务、长连接、队列消费 |
+
+- 两者各自独立运行、各自有监督与重生；一条挂了不影响另一条。
+- 生产里通常把 `serve` 和 `process:start` 都交给进程管理器（Supervisor / systemd）作为**两个独立 program** 拉起，而不是互相嵌套。
 
 ## 1. 写一个 Worker
 
@@ -64,7 +80,7 @@ return [
 ];
 ```
 
-> 框架启动时会自动实例化并把 worker 注册进 `ProcessManager`（门面 `Process` / 助手 `process()`）。
+> 框架启动时会自动**注册**这些 worker 进 `ProcessManager`（门面 `Process` / 助手 `process()` 可引用），但**不会自动运行**——需 `process:start` 才 fork 常驻进程。
 
 ## 3. 运行
 
@@ -139,3 +155,16 @@ final class WarmupWorker extends Worker
 > 生产由进程管理器（Supervisor / systemd）拉起 `process:start` 即可；`process:check` 不 fork，联调 / CI 里用它做启动前验证。
 
 > 示例见 `app/process/HeartbeatWorker.php`（已注册在 `config/process.php`）。
+
+## 6. 会不会和现有进程冲突？
+
+不会，原因如下：
+
+- **独立进程树 + 独立 pid 文件**：每个 worker 有唯一 `name()`，`process:start` 为它生成独立 pid 文件（`sys_get_temp_dir()/kode-worker-<name>.pid`）。同名 worker 不会起两份（pid 文件做互斥占位）；不同 worker 各有各的文件，互不踩。
+- **默认不占用 HTTP 端口**：worker 只跑 `handle()` 周期任务，不监听任何端口；只有你**主动**在 worker 里 `new Server` / 绑端口时才可能冲突——那种场景请单独规划端口，或干脆放进 `serve` 的 HTTP 进程。
+- **与 `serve` 的 HTTP 进程池天然隔离**：`serve` 的请求 worker 和 `process:start` 的业务 worker 是两套 Daemon，一方崩溃 / 重启不影响另一方（这正是「解耦」的设计目的）。
+
+注意事项：
+
+- **不要同机重复跑 `process:start`**：一份 worker 配置对应一个 `process:start` 实例（交给 Supervisor 管一个 program 即可），重复拉起会因 pid 文件互斥而报错，而不是静默起双份。
+- 多个**不同** worker（`name` 不同）并行完全没问题；同一 worker 想多实例请用 `count` / `slots`，不要手动起多个 `process:start`。

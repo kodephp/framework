@@ -3,9 +3,10 @@
 # 覆盖：依赖 / 密钥 / 运行时产物 / 各类 IDE·编辑器 / OS 文件 / 工具缓存
 # ───────────────────────────────────────────────────────────
 
-# ── 依赖（Composer 安装产物，本地生成，勿提交） ──
+# ── 依赖（Composer 安装产物） ──
 /vendor/
-composer.lock
+# composer.lock 已提交以保证可重复构建（12-factor V）；框架作为库被依赖时由消费者决定是否忽略
+# composer.lock
 
 # ── 压测对等框架（benchmarks/peers/* 隔离安装的 vendor，非框架依赖） ──
 /benchmarks/peers/*/vendor/

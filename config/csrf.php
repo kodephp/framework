@@ -7,8 +7,8 @@
  * auto_apply_unsafe 命中的非安全路由）才触发令牌校验；其余路由（含 /ping、
  * 纯 JWT 接口）在全局中间件里 O(1) 早退，零开销，故「加上企业中间件也不影响响应」。
  *
- * 前置依赖：会话（LazySessionMiddleware）。令牌存于会话，无会话（纯 JWT 无 cookie
- * 应用）的路由即便被标记也会安全跳过——CSRF 仅对 cookie-session 形态的会话劫持有效。
+ * 前置依赖：会话（LazySessionMiddleware）。令牌存于会话；无会话承载时非安全方法
+ * fail-closed 拒绝（419），不再静默放行（静默放行等于标了 #[Csrf] 却零防护）。
  */
 
 return [
@@ -26,7 +26,7 @@ return [
     // Angular 等框架的 XSRF 双提交 cookie 头（亦被接受为提交令牌来源）。
     'xsrf_header' => env('CSRF_XSRF_HEADER', 'X-XSRF-Token'),
 
-    // 表单 / JSON 体中提交令牌的字段名（亦可经查询参数携带）。
+    // 表单 / JSON 体中提交令牌的字段名（v0.8.52 起不再接受查询参数载体，防令牌入 URL/日志/Referer）。
     'token_param' => env('CSRF_TOKEN_PARAM', '_token'),
 
     // 校验失败响应（419 为 Laravel 惯例，贴合前端拦截器预期）。

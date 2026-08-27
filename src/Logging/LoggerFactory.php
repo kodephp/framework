@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Logging;
 
+use Monolog\Formatter\JsonFormatter;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\RotatingFileHandler;
 use Monolog\Logger;
@@ -38,7 +39,32 @@ final class LoggerFactory
             ? new RotatingFileHandler($path, 7, $level)
             : new StreamHandler($path, $level);
 
+        // 结构化 JSON（H1）：LOG_FORMAT=json 时便于 ELK/Loki 检索，默认 LineFormatter 仅本地调试。
+        $format = strtolower((string) ($config['formatter'] ?? env('LOG_FORMAT', 'line')));
+        if ($format === 'json') {
+            $handler->setFormatter(new JsonFormatter(JsonFormatter::BATCH_MODE_JSON, true));
+        }
+
         $logger->pushHandler($handler);
+
+        // 链路关联（H2）：每条日志自动注入 trace_id/span_id，实现 日志↔链路↔异常 三端一致。
+        $logger->pushProcessor(static function (\Monolog\LogRecord $record): \Monolog\LogRecord {
+            try {
+                $traceId = \Kode\Context\Context::getString(\Kode\Context\Context::TRACE_ID);
+                if ($traceId !== null && $traceId !== '') {
+                    $extra = $record->extra;
+                    $extra['trace_id'] = $traceId;
+                    $spanId = \Kode\Context\Context::getString(\Kode\Context\Context::SPAN_ID);
+                    if ($spanId !== null && $spanId !== '') {
+                        $extra['span_id'] = $spanId;
+                    }
+                    return $record->with(extra: $extra);
+                }
+            } catch (\Throwable) {
+            }
+
+            return $record;
+        });
 
         return $logger;
     }

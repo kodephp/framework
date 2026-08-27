@@ -32,6 +32,9 @@ final class HotReloadWatcher
     /** 关停子进程后的宽限等待（微秒），让 worker 处理完在途请求。 */
     private const GRACE_USLEEP = 800_000;
 
+    /** stopChild 的 SIGTERM 宽限上限（秒）：超时升级 SIGKILL，防 proc_close 长阻塞。 */
+    private const STOP_GRACE_SECONDS = 5.0;
+
     /** 当前 serve 子进程资源（供信号处理器关停）。 */
     private $currentProc = null;
 
@@ -147,7 +150,10 @@ final class HotReloadWatcher
     }
 
     /**
-     * 优雅关停子进程（SIGTERM → 宽限 → 关闭）。
+     * 优雅关停子进程（SIGTERM → 宽限轮询 → SIGKILL 升级 → 关闭）。
+     *
+     * v0.8.52：不再「固定睡 0.8s 后直接 proc_close」——proc_close 会阻塞到子进程真正退出，
+     * 而 serve 的优雅停机宽限默认可达 30s，开发期每次保存文件都可能让看门狗卡住数十秒。
      *
      * @param resource|null $proc
      */
@@ -158,7 +164,16 @@ final class HotReloadWatcher
         }
 
         @proc_terminate($proc, SIGTERM);
-        usleep(self::GRACE_USLEEP);
+        $deadline = microtime(true) + self::STOP_GRACE_SECONDS;
+        while ($this->isRunning($proc) && microtime(true) < $deadline) {
+            usleep(100_000);
+        }
+
+        if ($this->isRunning($proc)) {
+            // 宽限超时：升级 SIGKILL 强杀，避免 proc_close 长阻塞卡住 watch 循环。
+            @proc_terminate($proc, SIGKILL);
+        }
+
         @proc_close($proc);
     }
 

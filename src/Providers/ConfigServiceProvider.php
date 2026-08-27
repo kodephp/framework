@@ -68,5 +68,14 @@ final class ConfigServiceProvider extends ServiceProvider
             $logger = $this->container->get(LoggerInterface::class);
             $logger->warning('app.debug 在生产环境为 true，存在信息泄露风险，请关闭');
         }
+        // 生产级安全头告警（H6）：secure headers 默认关闭易裸奔。
+        if ($this->config('app.env') === 'production' && empty($this->config('security.enabled', false))) {
+            try {
+                /** @var LoggerInterface $lg2 */
+                $lg2 = $this->container->get(LoggerInterface::class);
+                $lg2->warning('security.enabled 在生产环境为 false，安全响应头未下发（HSTS/XFO 等），建议置 SECURITY_HEADERS_ENABLED=true。');
+            } catch (\Throwable) {
+            }
+        }
     }
 }

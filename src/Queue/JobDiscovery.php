@@ -52,6 +52,9 @@ final class JobDiscovery
                 }
 
                 $relative = substr($file->getPathname(), strlen($root) + 1);
+                // 先统一分隔符为 '/' 再转命名空间：Windows 下 getPathname() 返回 '\'，
+                // 直接 str_replace('/', '\\', ...) 不生效，FQCN 推导失败导致任务静默漏发现。
+                $relative = str_replace('\\', '/', $relative);
                 $class = $ns . str_replace('/', '\\', substr($relative, 0, -4));
 
                 if (!class_exists($class)) {

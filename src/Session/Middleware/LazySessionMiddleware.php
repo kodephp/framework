@@ -42,43 +42,66 @@ final class LazySessionMiddleware extends BaseSessionMiddleware implements Middl
         $this->manager->setSession($session);
         $request = $request->withAttribute('session', $session);
 
-        $response = $handler->handle($request);
+        $saved = false;
+        try {
+            $response = $handler->handle($request);
 
-        // ② 仅当本次请求真正启动过会话，才落盘并下发 Set-Cookie。
-        //    /ping 这类不碰会话的请求：isStarted() 恒为 false → 全程零会话 I/O。
-        if ($session->isStarted()) {
-            $this->maybeGarbageCollect();
+            // ② 仅当本次请求真正启动过会话，才落盘并下发 Set-Cookie。
+            //    /ping 这类不碰会话的请求：isStarted() 恒为 false → 全程零会话 I/O。
+            if ($session->isStarted()) {
+                $this->maybeGarbageCollect();
 
-            // saveSession() 内部已处理脏数据 / 闪存 / 释放锁（调用 $session->save()）。
-            $response = $this->saveSession($session, $response);
+                // saveSession() 内部已处理脏数据 / 闪存 / 释放锁（调用 $session->save()）。
+                $response = $this->saveSession($session, $response);
+                $saved = true;
+            }
+
+            return $response;
+        } finally {
+            // 异常路径兜底释放文件锁：FileDriver 在 open() 时把 flock 句柄存入进程级表
+            // （常驻进程不析构），异常穿过本中间件时若不 close，该会话 ID 的锁会被持有至
+            // 进程结束——后续同 ID 请求每次空转 lock_timeout 后失败、写入静默丢失。
+            // 成功路径 save() 已释放锁，此处跳过；未启动的会话 close 为幂等 no-op。
+            if (!$saved && $session->isStarted()) {
+                $session->close();
+            }
         }
-
-        return $response;
     }
 
     /**
-     * 从请求解析 Session ID（cookie / query / body / 头），非法或缺失则交由
-     * {@see SessionId::sanitize()} 生成新 ID（防会话固定 / 路径穿越）。
+     * 从请求解析 Session ID。默认仅接受 cookie 载体——query / body / 头载体允许客户端
+     * 自选 ID 并经 URL 泄露（会话固定攻击面），需在 config/session.php 显式开启：
      *
+     *   'id_sources' => ['cookie', 'query', 'body', 'header'],
+     *
+     * 非法或缺失则交由 {@see SessionId::sanitize()} 生成新 ID（防会话固定 / 路径穿越）。
      * 优先走 PSR-7 请求对象（而非 $_COOKIE 等超全局），以适配非 CGI 运行环境。
+     *
+     * @return ?string
      */
     private function idFromRequest(ServerRequestInterface $request): ?string
     {
         $name = $this->config['name'] ?? 'KODE_SESSION';
         $idParam = $this->config['id_param'] ?? 'session_id';
 
-        $candidate = $request->getCookieParams()[$name] ?? null;
+        /** @var array<int, string> $sources */
+        $sources = (array) ($this->config['id_sources'] ?? ['cookie']);
 
-        if ($candidate === null) {
+        $candidate = null;
+        if (in_array('cookie', $sources, true)) {
+            $candidate = $request->getCookieParams()[$name] ?? null;
+        }
+
+        if ($candidate === null && in_array('query', $sources, true)) {
             $candidate = $request->getQueryParams()[$idParam] ?? null;
         }
 
-        if ($candidate === null) {
+        if ($candidate === null && in_array('body', $sources, true)) {
             $body = $request->getParsedBody();
             $candidate = is_array($body) ? ($body[$idParam] ?? null) : null;
         }
 
-        if ($candidate === null) {
+        if ($candidate === null && in_array('header', $sources, true)) {
             $header = $request->getHeaderLine('X-Session-Id');
             $candidate = $header !== '' ? $header : null;
         }

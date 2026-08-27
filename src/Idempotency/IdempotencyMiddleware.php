@@ -55,12 +55,15 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        // 路由属性门控：未标记 #[Idempotency] 的路由直接放行（O(1) 早退），
-        // 仅保护显式声明路由，避免对无关请求做幂等键查询与存储占位。
+        // 路由属性门控（白名单式）：注入 registry 时仅显式 #[Idempotency] 标记的路由参与
+        // 去重，其余（含 404 / registry 缺失标记）一律放行——修复旧条件反转导致「未命中路由
+        // 反而执行全套幂等逻辑」的问题（未认证客户端可借键头对任意路径刷存储占位）。
+        // 未注入 registry（直接构造 / 单测 / 手动接线）时保持全局去重的传统行为。
         // 匹配由 RouteResolver 在单次请求内缓存（首个中间件 match 一次，后续命中）。
         [$request, $matched] = $this->resolveRoute($request);
-        if ($matched !== null && $matched->isFound() && $matched->route !== null
-            && $this->registry !== null && !$this->registry->idempotencyOf($matched->route)) {
+        if ($this->registry !== null
+            && ($matched === null || !$matched->isFound() || $matched->route === null
+                || !$this->registry->idempotencyOf($matched->route))) {
             return $handler->handle($request);
         }
 
@@ -88,7 +91,15 @@ final class IdempotencyMiddleware implements MiddlewareInterface
             return Resp::error('请求正在处理中或已去重', 409);
         }
 
-        $response = $handler->handle($request);
+        try {
+            $response = $handler->handle($request);
+        } catch (\Throwable $e) {
+            // 业务失败回滚占位（Stripe 语义）：失败后同键重试应可重新执行，
+            // 而非在 TTL 内恒吃 409；也防攻击者用「已知键 + 诱发失败」锁死合法客户端的键。
+            $this->manager->forget($finalKey);
+
+            throw $e;
+        }
         $this->manager->attach($finalKey, $this->envelope($response));
 
         return $response->withHeader((string) ($this->options['recorded_header'] ?? 'Idempotency-Recorded'), 'true');

@@ -12,10 +12,11 @@
 - 非安全方法（`POST/PUT/PATCH/DELETE`）校验以下任一来源提交的令牌：
   - 请求头 `X-CSRF-Token`（默认）/`X-XSRF-Token`
   - 表单 / JSON 体字段 `_token`
-  - 查询参数 `_token`
   与会话令牌 `hash_equals` 一致才放行，否则 `419`。
-- **无会话**的应用（纯 JWT 无 cookie 接口）即便被标记也安全跳过——CSRF 仅对
-  cookie-session 形态的会话劫持有效。
+  v0.8.52 起不再接受查询参数载体：URL 中的令牌会进入访问日志、浏览器历史与
+  `Referer` 头，削弱令牌保密性。
+- **无会话**承载时（v0.8.52 起）：安全方法照常放行；非安全方法 fail-closed 拒绝（`419`）。
+  旧实现静默跳过等于「标了 #[Csrf] 却零防护」。纯 JWT 无 cookie 应用不应给路由标 `#[Csrf]`。
 
 ## 二、声明式标记
 

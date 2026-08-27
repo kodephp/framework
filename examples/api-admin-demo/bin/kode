@@ -1,0 +1,665 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Kode Framework 命令行工具
+ *
+ * 用法：
+ *   bin/kode init                    初始化当前项目（生成 .env + storage/，composer create-project 后自动执行）
+ *   bin/kode new <path> [--install]   脚手架：从框架骨架生成独立项目到 <path>
+ *   bin/kode serve [--host H] [--port P] [--workers N]
+ *                                    启动多进程 HTTP 服务（kode/process master-worker）
+ *   bin/kode console <args...>        透传执行控制台命令
+ *   bin/kode help                     帮助
+ *
+ * 作为 composer 包发布后，用户安装 kode/framework 即可通过 vendor/bin/kode 调用。
+ * 推荐安装方式：composer create-project kode/framework <项目名>（自动下载 + composer install + 初始化）。
+ */
+
+// ---- 定位自动加载器（兼容「仓库内」与「composer 安装后」两种上下文）----
+$packageRoot = dirname(__DIR__);
+$autoloadCandidates = [
+    $packageRoot . '/vendor/autoload.php',
+    realpath($packageRoot . '/../../../autoload.php'),
+];
+$autoload = null;
+foreach ($autoloadCandidates as $candidate) {
+    if ($candidate !== false && is_file($candidate)) {
+        $autoload = $candidate;
+        break;
+    }
+}
+if ($autoload === null) {
+    fwrite(STDERR, "无法定位 vendor/autoload.php，请在项目根目录运行。\n");
+    exit(1);
+}
+require $autoload;
+
+use Kode\Attributes\Reader;
+use Kode\Framework\Application;
+use Kode\Framework\Scheduling\ScheduleDispatcher;
+use Kode\Framework\Scheduling\TaskScanner;
+use Kode\Framework\Server\HttpServer;
+use Kode\Framework\Server\HotReloadWatcher;
+
+$command = $argv[1] ?? 'help';
+$args = array_slice($argv, 2);
+
+match ($command) {
+    'help'         => KodeCli::help(),
+    'new'          => (new KodeNewCommand($packageRoot))->run($args),
+    'init'         => (new KodeInitCommand($packageRoot))->run($args),
+    'serve'        => (new KodeServeCommand())->run($args),
+    'cron'         => (new KodeCronCommand())->run($args),
+    'schedule:list' => (new KodeScheduleListCommand())->run($args),
+    'route:list'   => (new KodeConsoleCommand())->run(array_merge(['route:list'], $args)),
+    'process:list' => (new KodeConsoleCommand())->run(array_merge(['process:list'], $args)),
+    'process:check' => (new KodeConsoleCommand())->run(array_merge(['process:check'], $args)),
+    'migrate'        => (new KodeConsoleCommand())->run(array_merge(['migrate'], $args)),
+    'migrate:rollback' => (new KodeConsoleCommand())->run(array_merge(['migrate:rollback'], $args)),
+    'migrate:reset' => (new KodeConsoleCommand())->run(array_merge(['migrate:reset'], $args)),
+    'make:controller' => (new KodeConsoleCommand())->run(array_merge(['make:controller'], $args)),
+    'make:model'     => (new KodeConsoleCommand())->run(array_merge(['make:model'], $args)),
+    'make:migration' => (new KodeConsoleCommand())->run(array_merge(['make:migration'], $args)),
+    'make:middleware' => (new KodeConsoleCommand())->run(array_merge(['make:middleware'], $args)),
+    'make:command'   => (new KodeConsoleCommand())->run(array_merge(['make:command'], $args)),
+    'db:seed'      => (new KodeConsoleCommand())->run(array_merge(['db:seed'], $args)),
+    'console'      => (new KodeConsoleCommand())->run($args),
+    default        => (new KodeConsoleCommand())->run(array_merge([$command], $args)),
+};
+
+exit(0);
+
+// ============================================================
+// 脚手架：从框架自带骨架生成新项目（企业级一键安装）
+// ============================================================
+final class KodeNewCommand
+{
+    /** 需要复制的骨架目录 */
+    private const SKELETON_DIRS = ['app', 'config', 'public', 'bin', 'lang', 'database'];
+
+    /** 需要复制的骨架文件 */
+    private const SKELETON_FILES = ['.env.example', '.gitignore', 'README.md'];
+
+    public function __construct(private string $packageRoot)
+    {
+    }
+
+    public function run(array $args): void
+    {
+        $install = false;
+        $target = null;
+        foreach ($args as $arg) {
+            if ($arg === '--install') {
+                $install = true;
+            } elseif ($target === null) {
+                $target = $arg;
+            }
+        }
+
+        if ($target === null) {
+            fwrite(STDERR, "用法：bin/kode new <目标目录> [--install]\n");
+            exit(1);
+        }
+
+        $target = rtrim($target, '/\\');
+        if (is_dir($target) && count(scandir($target)) > 2) {
+            fwrite(STDERR, "目标目录 {$target} 已存在且非空。\n");
+            exit(1);
+        }
+
+        @mkdir($target, 0o755, true);
+
+        // 1) 复制骨架目录
+        foreach (self::SKELETON_DIRS as $dir) {
+            $src = $this->packageRoot . '/' . $dir;
+            if (is_dir($src)) {
+                $this->copyDir($src, $target . '/' . $dir);
+            }
+        }
+
+        // 2) 复制骨架文件
+        foreach (self::SKELETON_FILES as $file) {
+            $src = $this->packageRoot . '/' . $file;
+            if (is_file($src)) {
+                copy($src, $target . '/' . $file);
+            }
+        }
+
+        // 3) 初始化 .env 与存储目录（与 composer create-project 后的 kode init 共用逻辑）
+        (new KodeInitCommand($target))->run([]);
+
+        // 4) 测试目录 + phpunit 配置 + 示例冒烟测试
+        $this->ensureDir($target . '/tests');
+        $this->writePhpunitXml($target);
+        $this->writeSmokeTest($target);
+
+        // 5) 项目级 .gitignore（忽略 vendor / .env / 运行时产物）
+        $this->writeProjectGitignore($target);
+
+        // 6) 消费者 composer.json（只依赖框架包，不自带框架源码）
+        $this->writeComposerJson($target);
+
+        echo "✅ 已生成项目骨架：{$target}\n";
+
+        if ($install) {
+            $this->runComposerInstall($target);
+        }
+
+        echo "\n下一步：\n";
+        echo "  cd {$target}\n";
+        if (!$install) {
+            echo "  composer install\n";
+        }
+        echo "  php bin/kode serve          # 启动多进程 HTTP 服务（默认 127.0.0.1:9527）\n";
+        echo "  php bin/kode console        # 查看控制台命令\n";
+    }
+
+    private function ensureDir(string $path): void
+    {
+        if (!is_dir($path)) {
+            @mkdir($path, 0o755, true);
+        }
+        $keep = $path . '/.gitkeep';
+        if (!is_file($keep)) {
+            file_put_contents($keep, '');
+        }
+    }
+
+    private function writePhpunitXml(string $root): void
+    {
+        $xml = <<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         failOnWarning="true"
+         failOnNotice="true">
+    <testsuites>
+        <testsuite name="App Test Suite">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+</phpunit>
+
+XML;
+        file_put_contents($root . '/phpunit.xml', $xml);
+    }
+
+    private function writeSmokeTest(string $root): void
+    {
+        $code = <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace app\tests;
+
+use PHPUnit\Framework\TestCase;
+
+/**
+ * 框架安装可用性冒烟测试。
+ */
+final class SmokeTest extends TestCase
+{
+    public function testFrameworkLoadable(): void
+    {
+        $this->assertTrue(class_exists(\Kode\Framework\Application::class), 'kode/framework 未正确安装');
+    }
+
+    public function testRoutesFileExists(): void
+    {
+        $this->assertFileExists($this->basePath() . '/app/routes.php');
+    }
+
+    private function basePath(): string
+    {
+        return dirname(__DIR__, 2);
+    }
+}
+
+PHP;
+        file_put_contents($root . '/tests/SmokeTest.php', $code);
+    }
+
+    private function writeProjectGitignore(string $root): void
+    {
+        $content = <<<'TXT'
+# 依赖
+/vendor/
+
+# 环境变量（含密钥，禁止提交）
+/.env
+/.env.*
+!/.env.example
+
+# 运行时产物
+/storage/logs/*
+/storage/cache/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+!*.gitkeep
+
+# 测试缓存
+/.phpunit.cache/
+/phpunit.xml.bak
+
+# IDE / OS
+/.idea/
+/.vscode/
+.DS_Store
+
+TXT;
+        file_put_contents($root . '/.gitignore', $content);
+    }
+
+    private function writeComposerJson(string $root): void
+    {
+        $compose = [
+            'name' => 'app/' . basename($root),
+            'type' => 'project',
+            'require' => [
+                'php' => '>=8.3',
+                'kode/framework' => '*',
+            ],
+            'require-dev' => [
+                'phpunit/phpunit' => '^11.0',
+            ],
+            'autoload' => [
+                'psr-4' => [
+                    'app\\' => 'app/',
+                ],
+            ],
+            'autoload-dev' => [
+                'psr-4' => [
+                    'app\\tests\\' => 'tests/',
+                ],
+            ],
+            'scripts' => [
+                'serve' => 'php bin/kode serve',
+                'console' => 'php bin/console',
+                'test' => 'php vendor/bin/phpunit',
+            ],
+            'config' => [
+                'allow-plugins' => ['*' => true],
+            ],
+        ];
+        file_put_contents($root . '/composer.json', json_encode($compose, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+    }
+
+    private function runComposerInstall(string $root): void
+    {
+        echo "\n⏳ 正在运行 composer install ...\n";
+        $cwd = getcwd();
+        chdir($root);
+        passthru('composer install --no-interaction 2>&1', $code);
+        chdir($cwd);
+        if ($code !== 0) {
+            fwrite(STDERR, "composer install 失败（请手动在 {$root} 中执行）。\n");
+        }
+    }
+
+    private function copyDir(string $src, string $dst): void
+    {
+        @mkdir($dst, 0o755, true);
+        foreach (scandir($src) as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $s = $src . '/' . $item;
+            $d = $dst . '/' . $item;
+            if (is_dir($s)) {
+                $this->copyDir($s, $d);
+            } else {
+                copy($s, $d);
+            }
+        }
+    }
+}
+
+// ============================================================
+// 初始化：生成 .env 与存储目录（composer create-project 后自动执行）
+// ============================================================
+final class KodeInitCommand
+{
+    /** 运行时存储子目录（仅保留 .gitkeep，内容随 .gitignore 忽略） */
+    private const STORAGE_DIRS = ['logs', 'cache', 'framework/cache', 'framework/sessions', 'framework/views'];
+
+    public function __construct(private string $projectRoot)
+    {
+    }
+
+    public function run(array $args): void
+    {
+        // 1) .env（由 .env.example 生成，避免直接提交密钥）
+        $example = $this->projectRoot . '/.env.example';
+        $env = $this->projectRoot . '/.env';
+        if (is_file($example) && !is_file($env)) {
+            copy($example, $env);
+            echo "✅ 已生成 .env（请按需修改 JWT_SECRET 等配置）\n";
+        }
+
+        // 2) 存储目录（运行时写入，随 .gitignore 忽略内容，仅保留 .gitkeep）
+        foreach (self::STORAGE_DIRS as $sub) {
+            $this->ensureDir($this->projectRoot . '/storage/' . $sub);
+        }
+
+        echo "✅ 基础架构初始化完成（.env + storage/）\n";
+    }
+
+    private function ensureDir(string $path): void
+    {
+        if (!is_dir($path)) {
+            @mkdir($path, 0o755, true);
+        }
+        $keep = $path . '/.gitkeep';
+        if (!is_file($keep)) {
+            file_put_contents($keep, '');
+        }
+    }
+}
+
+// ============================================================
+// 多进程 HTTP 服务（基于 kode/process）
+// ============================================================
+final class KodeServeCommand
+{
+    public function run(array $args): void
+    {
+        $host = null;
+        $port = null;
+        $workers = null;
+        $watch = false;
+        $serveArgs = [];
+
+        for ($i = 0; $i < count($args); $i++) {
+            if ($args[$i] === '--watch') {
+                $watch = true;
+            } elseif ($args[$i] === '--host' && isset($args[$i + 1])) {
+                $host = $args[++$i];
+                $serveArgs[] = '--host';
+                $serveArgs[] = $host;
+            } elseif ($args[$i] === '--port' && isset($args[$i + 1])) {
+                $port = (int) $args[++$i];
+                $serveArgs[] = '--port';
+                $serveArgs[] = (string) $port;
+            } elseif ($args[$i] === '--workers' && isset($args[$i + 1])) {
+                $workers = max(1, (int) $args[++$i]);
+                $serveArgs[] = '--workers';
+                $serveArgs[] = (string) $workers;
+            }
+        }
+
+        $root = getcwd();
+
+        $config = $this->loadServerConfig($root);
+        if ($host !== null) {
+            $config['host'] = $host;
+        }
+        if ($port !== null) {
+            $config['port'] = $port;
+        }
+        if ($workers !== null) {
+            $config['workers'] = $workers;
+        }
+
+        if ($watch) {
+            // 开发期热重载：把真实 serve 作为子进程，父进程监听文件变化后自动重启。
+            (new HotReloadWatcher($root, $serveArgs))->run();
+            exit(0);
+        }
+
+        try {
+            HttpServer::make($config)->run($root);
+        } catch (\Throwable $e) {
+            KodeCli::fail($e);
+        }
+    }
+
+    /**
+     * 读取 config/server.php，缺省时回退到内置默认。
+     *
+     * @return array<string, mixed>
+     */
+    private function loadServerConfig(string $root): array
+    {
+        $file = $root . '/config/server.php';
+        if (!is_file($file)) {
+            return [];
+        }
+
+        $config = (require $file) ?: [];
+        return is_array($config) ? $config : [];
+    }
+}
+
+// ============================================================
+// 控制台透传
+// ============================================================
+final class KodeConsoleCommand
+{
+    public function run(array $args): void
+    {
+        try {
+            $root = getcwd();
+            $app = Application::make($root);
+            $code = $app->console()->run(array_merge([$GLOBALS['argv'][0] ?? 'kode'], $args));
+            exit(is_int($code) ? $code : 0);
+        } catch (\Throwable $e) {
+            KodeCli::fail($e);
+        }
+    }
+}
+
+// ============================================================
+// 定时任务调度（基于 kode/process 定时器，约定优于配置）
+// ============================================================
+class KodeScheduleCommand
+{
+    /**
+     * 根据 config/schedule.php 计算任务目录（key=来源标签）。
+     *
+     * @return array<string, string>
+     */
+    protected function taskDirs(Application $app): array
+    {
+        $cfg = $app->config()->get('schedule', []);
+        $cfg = is_array($cfg) ? $cfg : [];
+
+        $dirs = [];
+        foreach ($cfg['paths'] ?? [] as $label => $dir) {
+            // config 里是「相对项目根」的子路径；用 Application 的真实 basePath 拼成绝对路径，
+            // 保证从不同工作目录启动时任务发现一致（不依赖当前 CWD）。
+            $dirs[$label] = is_absolute_path($dir) ? $dir : $app->basePath($dir);
+        }
+
+        if (!empty($cfg['discover_plugins'])) {
+            foreach (glob(base_path('plugins/*'), GLOB_ONLYDIR) ?: [] as $plugin) {
+                $name = basename($plugin);
+                $dirs['plugin:' . $name] = $plugin . '/src/Tasks';
+            }
+        }
+
+        return $dirs;
+    }
+
+    protected function scanner(): TaskScanner
+    {
+        return new TaskScanner(new Reader());
+    }
+}
+
+final class KodeCronCommand extends KodeScheduleCommand
+{
+    public function run(array $args): void
+    {
+        try {
+            $root = getcwd();
+            $app = Application::make($root);
+        } catch (\Throwable $e) {
+            KodeCli::fail($e);
+        }
+
+        $runOnce = null;
+        foreach ($args as $a) {
+            if (str_starts_with($a, '--run=')) {
+                $runOnce = substr($a, strlen('--run='));
+            }
+        }
+
+        $tasks = $this->scanner()->scan($this->taskDirs($app));
+        $dispatcher = new ScheduleDispatcher();
+        $dispatcher->register($tasks);
+
+        if ($runOnce !== null) {
+            if ($dispatcher->runOnce($runOnce)) {
+                echo sprintf("已手动触发任务 %s\n", $runOnce);
+                exit(0);
+            }
+            fwrite(STDERR, sprintf("未找到任务 %s（用 schedule:list 查看可用任务）\n", $runOnce));
+            exit(1);
+        }
+
+        $runSingle = in_array('--run-once', $args, true);
+
+        $n = count(array_filter($dispatcher->registered(), static fn ($t) => $t->enabled));
+        if ($n === 0) {
+            echo "未发现任何启用的 #[Cron] 任务。请在 app/tasks 下用 #[Cron] 声明任务。\n";
+            exit(0);
+        }
+
+        if ($runSingle) {
+            // 单轮执行（适合由系统 crontab 每分钟触发一次；不进入常驻循环）。
+            echo sprintf("已注册 %d 条定时任务，执行单轮调度...\n", $n);
+            $report = $dispatcher->run();
+            printf(
+                "调度完成：成功 %d / 失败 %d / 跳过 %d\n",
+                $report->succeededCount(),
+                $report->failedCount(),
+                $report->skippedCount()
+            );
+            exit(0);
+        }
+
+        // 默认常驻：keepAlive 守护循环，Ctrl+C 优雅退出。
+        echo sprintf("已注册 %d 条定时任务，启动调度器（常驻）...\n", $n);
+        $dispatcher->daemon();
+        exit(0);
+    }
+}
+
+final class KodeScheduleListCommand extends KodeScheduleCommand
+{
+    public function run(array $args): void
+    {
+        try {
+            $root = getcwd();
+            $app = Application::make($root);
+        } catch (\Throwable $e) {
+            KodeCli::fail($e);
+        }
+
+        $tasks = $this->scanner()->scan($this->taskDirs($app));
+
+        if ($tasks === []) {
+            echo "未发现任何 #[Cron] 任务。\n";
+            exit(0);
+        }
+
+        $enabled = count(array_filter($tasks, static fn ($t) => $t->enabled));
+        printf("共 %d 条任务（启用 %d）：\n\n", count($tasks), $enabled);
+        printf("  %-22s %-16s %-10s %-12s %s\n", 'NAME', 'EXPRESSION', 'SOURCE', 'MODE', 'TARGET');
+        printf("  %s\n", str_repeat('-', 78));
+
+        foreach ($tasks as $t) {
+            printf(
+                "  %-22s %-16s %-10s %-12s %s\n",
+                $t->name,
+                $t->expression,
+                $t->source,
+                $t->cluster ? 'cluster' : 'local',
+                ($t->enabled ? '' : '(disabled) ') . $t->target(),
+            );
+        }
+
+        exit(0);
+    }
+}
+
+// ============================================================
+final class KodeCli
+{
+    /**
+     * 命令行「最后一道防线」：把启动期 / 未捕获的异常转成清晰的报错，
+     * 而非裸堆栈，并以非 0 退出码结束（便于 CI / 编排系统感知失败）。
+     *
+     * APP_DEBUG=true（或环境变量 APP_DEBUG=true）时附上堆栈，便于本地排查。
+     */
+    public static function fail(\Throwable $e): never
+    {
+        fwrite(STDERR, "\n❌ " . get_class($e) . ': ' . $e->getMessage() . "\n");
+
+        $debug = ($_SERVER['APP_DEBUG'] ?? null) === 'true'
+            || ($_ENV['APP_DEBUG'] ?? null) === 'true'
+            || (getenv('APP_DEBUG') ?: 'false') === 'true';
+
+        if ($debug) {
+            fwrite(STDERR, $e->getTraceAsString() . "\n");
+        }
+
+        exit(1);
+    }
+
+    public static function help(): void
+    {
+        echo "Kode Framework 命令行工具\n\n";
+        echo "  composer create-project kode/framework <项目名>   一句话安装（下载 + composer install + 初始化）\n";
+        echo "  bin/kode init                    初始化当前项目（生成 .env + storage/）\n";
+        echo "  bin/kode new <path> [--install]   脚手架：生成独立项目到 <path>（--install 自动 composer install）\n";
+        echo "  bin/kode serve [--host H] [--port P] [--workers N] [--watch]   启动多进程 HTTP 服务（--watch 开热重载）\n";
+        echo "  bin/kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
+        echo "  bin/kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
+        echo "  bin/kode console <args...>         透传执行控制台命令\n";
+        echo "  bin/kode migrate                   执行待运行的数据库迁移\n";
+        echo "  bin/kode migrate:rollback          回滚最近一批迁移\n";
+        echo "  bin/kode migrate:reset             回滚全部迁移\n";
+        echo "  bin/kode db:seed [--class=Name]    运行数据库填充\n";
+        echo "  bin/kode make:controller <Name>    生成 HTTP 控制器\n";
+        echo "  bin/kode make:model <Name>         生成数据模型\n";
+        echo "  bin/kode make:migration <name>     生成数据库迁移\n";
+        echo "  bin/kode make:middleware <Name>    生成 HTTP 中间件\n";
+        echo "  bin/kode make:command <Name>       生成控制台命令\n";
+        echo "  bin/kode apidoc:generate [--output=] [--check]   生成/校验 OpenAPI 文档\n";
+        echo "  bin/kode help                      显示本帮助\n\n";
+        echo "serve 选项：--host 127.0.0.1  --port 9527  --workers 4\n";
+        echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/tasks 示例\n";
+        echo "迁移文件放在 database/migrations/，文件名形如 2024_01_01_000000_create_users_table.php\n";
+        exit(0);
+    }
+}
+
+/**
+ * 判断路径是否为绝对路径（跨平台）。
+ */
+function is_absolute_path(string $path): bool
+{
+    if ($path === '' || $path === '/') {
+        return true;
+    }
+
+    if (DIRECTORY_SEPARATOR === '\\') {
+        return (bool) preg_match('#^[A-Za-z]:[\\\\/]#', $path) || str_starts_with($path, '\\\\');
+    }
+
+    return str_starts_with($path, '/');
+}

@@ -46,7 +46,7 @@ final class HttpBridge
         // serverParams 构建（time()/microtime()/host()×2/ip()/isSecure()）也只下沉到
         // KODE_EAGER 分支内，绝非懒路径的固定成本。
         // KODE_EAGER=1 时回退到急切旧路径（每请求解析全部字段），仅用于压测 A/B 对照。
-        if (($GLOBALS['KODE_EAGER'] ?? ($_SERVER['KODE_EAGER'] ?? '0')) === '1') {
+        if (($GLOBALS['KODE_EAGER'] ?? ($_SERVER['KODE_EAGER'] ?? (getenv('KODE_EAGER') ?: '0'))) === '1') {
             // 协议版本由驱动自身持有（SwooleConnection / Http2Stream / WorkermanConnection /
             // NativeConnection 各自已知其协议），此处仅从请求头形态（"HTTP/1.1"）提取 "1.1"。
             $protocol = $request->protocol();
@@ -92,6 +92,10 @@ final class HttpBridge
      * 避免 Swoole/旧客户端协商出 1.0 时状态行不准确。
      * 不追加 Connection 头——keep-alive 由 kode/process 运行时依据请求头裁决；
      * 固定补 Content-Length，保证 keep-alive 下能正确切分报文。
+     *
+     * 安全：每个响应头都剥离 CR/LF/NUL（与 kode/process HttpProtocol::headerLine 同口径），
+     * 防应用层把用户可控数据写入响应头时造成响应拆分（header injection）。
+     * 规格：204/304 与 1xx 不携带 Content-Length 且强制空体（RFC 9110 §8.6 / §9.3.3、RFC 9112 §6.3）。
      */
     public static function toRaw(ResponseInterface $response, string $protocol = '1.1'): string
     {
@@ -102,23 +106,43 @@ final class HttpBridge
             ? $response->getBodyString()
             : (string) $response->getBody();
 
+        // 无实体类响应：不得携带 Content-Length / 实体（严格代理与客户端按 RFC 校验）。
+        $bodyless = $status === 204 || $status === 304 || $status < 200;
+        if ($bodyless) {
+            $body = '';
+        }
+
         $lines = ["HTTP/{$protocol} {$status} {$reason}"];
 
         $hasContentLength = false;
         foreach ($response->getHeaders() as $name => $values) {
             if (strtolower($name) === 'content-length') {
+                if ($bodyless) {
+                    continue; // 204/304/1xx 剥离 Content-Length
+                }
                 $hasContentLength = true;
             }
             foreach ($values as $value) {
-                $lines[] = "{$name}: {$value}";
+                $lines[] = self::headerLine($name, $value);
             }
         }
 
-        if (!$hasContentLength) {
+        if (!$hasContentLength && !$bodyless) {
             $lines[] = 'Content-Length: ' . strlen($body);
         }
 
         return implode("\r\n", $lines) . "\r\n\r\n" . $body;
+    }
+
+    /**
+     * 拼接单个响应头行，剥离头名/头值中的 CR/LF/NUL，防响应拆分。
+     */
+    private static function headerLine(string $name, string $value): string
+    {
+        $name = strtr($name, ["\r" => '', "\n" => '', "\0" => '']);
+        $value = strtr($value, ["\r" => '', "\n" => '', "\0" => '']);
+
+        return "{$name}: {$value}";
     }
 
     /**
@@ -139,6 +163,15 @@ final class HttpBridge
         ConnectionInterface $conn,
         ResponseInterface $response,
     ): void {
+        // HTTP/2 流连接守卫（鸭子类型探测，不点名引擎类）：h2 流的 send(raw=true) 会把
+        // 整份 HTTP/1.1 报文当作单个 DATA 帧体写出（客户端收到「body 里套着完整响应报文」
+        // 的损坏响应），故 h2 一律委托 sendResponse——驱动内部按 h2 语义正确序列化（含 gzip）。
+        if (method_exists($conn, 'streamId')) {
+            $conn->sendResponse($response);
+
+            return;
+        }
+
         // 优先走框架 rawBody 感知的快速路径：kode/http 响应体以原生字符串持有
         // （Resp::json → Response::make 直接缓存在 $rawBody），toRaw 经 getBodyString() 零拷贝取出，
         // 避免 kode/process Psr7Response::toHttp11 经 PSR-7 getBody() 对响应体做
@@ -166,13 +199,15 @@ final class HttpBridge
     {
         return [
             200 => 'OK', 201 => 'Created', 202 => 'Accepted', 204 => 'No Content',
-            301 => 'Moved Permanently', 302 => 'Found', 303 => 'See Other', 304 => 'Not Modified',
+            206 => 'Partial Content', 301 => 'Moved Permanently', 302 => 'Found',
+            303 => 'See Other', 304 => 'Not Modified', 307 => 'Temporary Redirect', 308 => 'Permanent Redirect',
             400 => 'Bad Request', 401 => 'Unauthorized', 403 => 'Forbidden', 404 => 'Not Found',
-            405 => 'Method Not Allowed', 409 => 'Conflict', 415 => 'Unsupported Media Type',
+            405 => 'Method Not Allowed', 409 => 'Conflict', 410 => 'Gone', 412 => 'Precondition Failed',
+            415 => 'Unsupported Media Type', 418 => "I'm a teapot",
             422 => 'Unprocessable Entity', 429 => 'Too Many Requests',
-            500 => 'Internal Server Error', 502 => 'Bad Gateway', 503 => 'Service Unavailable',
-            504 => 'Gateway Timeout',
-        ][$code] ?? 'OK';
+            500 => 'Internal Server Error', 501 => 'Not Implemented', 502 => 'Bad Gateway',
+            503 => 'Service Unavailable', 504 => 'Gateway Timeout',
+        ][$code] ?? 'Unknown';
     }
 
     /**

@@ -88,6 +88,16 @@ final class RobustnessTest extends TestCase
         self::assertSame(['REDIS', 'redis://127.0.0.1:6379#db0'], EnvLoader::parseLine('REDIS=redis://127.0.0.1:6379#db0'));
     }
 
+    public function testEnvParseHashInsideQuotesIsNotComment(): void
+    {
+        // v0.8.52 回归：引号内的 # 不得视为注释——旧正则先剥注释再剥引号，
+        // `KEY="abc # def"` 被截成 `KEY="abc`，最终值带脏引号。
+        self::assertSame(['PROMPT', 'abc # def'], EnvLoader::parseLine('PROMPT="abc # def"'));
+        self::assertSame(['PROMPT', "ab # cd"], EnvLoader::parseLine("PROMPT='ab # cd'"));
+        // 引号外的「空格+#」仍是注释起点
+        self::assertSame(['K', 'a#b'], EnvLoader::parseLine('K=a#b # tail'));
+    }
+
     public function testEnvParseSkipsInvalid(): void
     {
         self::assertNull(EnvLoader::parseLine('# 纯注释'));

@@ -5,8 +5,9 @@ declare(strict_types=1);
 /*
  * 常驻进程配置
  *
- * 在此声明要常驻运行的 worker 列表；框架启动时会自动实例化并注册到
- * Kode\Framework\Process\ProcessManager（单例，门面 Process / 助手 process()）。
+ * 在此声明要常驻运行的 worker 列表；框架启动时只**注册**到
+ * Kode\Framework\Process\ProcessManager（单例，门面 Process / 助手 process()），**不会自动运行**——
+ * 真正 fork 常驻进程由 `php bin/kode console process:start` 完成（见 docs/process.md）。
  *
  * workers 支持三种写法（相互兼容）：
  *   1) 无参 worker：直接写类名

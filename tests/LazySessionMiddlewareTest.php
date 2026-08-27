@@ -41,6 +41,16 @@ final class LazySessionMiddlewareTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // 会话目录隔离到临时路径：storage/sessions 为持久目录，跨套件运行会累积
+        // 过期文件，而 GC（gc_probability=1/100）可能在断言窗口内清理它们，
+        // 造成「写会话应产生会话文件」的计数断言偶发失败。
+        $this->configOverrides['session'] = [
+            ...($this->configOverrides['session'] ?? []),
+            'enabled' => true,
+            'drivers' => [
+                'file' => ['path' => sys_get_temp_dir() . '/kode-session-test-' . getmypid()],
+            ],
+        ];
         $this->bootApp();
 
         if (!self::$routesRegistered) {
@@ -94,9 +104,10 @@ final class LazySessionMiddlewareTest extends TestCase
         $id = $this->parseSessionId($cookie);
         self::assertNotEmpty($id);
 
-        // 携带该会话 ID 的后续请求可读回数据（测试桩以 session_id 查询参数回传，
-        // 兼容 idFromRequest 的 query 回退；真实运行时由 Cookie 头经 getCookieParams 解析）。
-        $read = $this->get('/__session_read?session_id=' . urlencode($id));
+        // 携带该会话 ID 的后续请求可读回数据（经 Cookie 头载体，与真实运行时
+        // getCookieParams 解析一致；v0.8.52 起 ID 来源默认仅 cookie，
+        // query/body/header 载体需 config session.id_sources 显式开启）。
+        $read = $this->get('/__session_read', ['Cookie' => 'KODE_SESSION=' . urlencode($id)]);
         self::assertSame('bar', $read->body());
     }
 

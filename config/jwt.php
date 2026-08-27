@@ -17,7 +17,9 @@ return [
             'driver' => 'sso',
             'storage' => 'memory',
             'algo' => env('JWT_ALGO', 'HS256'),
-            'secret' => env('JWT_SECRET', 'kode-framework-secret-change-me'),
+            // 安全（v0.8.52）：不再内置明文兜底密钥——公开可知的默认密钥等于任何人可自签
+            // 令牌通过认证。secret 缺失时 JwtGuard 构造即抛异常（启动期 fail-fast）。
+            'secret' => env('JWT_SECRET', ''),
             'ttl' => (int) env('JWT_TTL', 3600),
             'refresh_ttl' => 604800,
             'blacklist_enabled' => true,

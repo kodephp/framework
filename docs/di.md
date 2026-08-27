@@ -129,4 +129,97 @@ logger()->info('...')    // 日志
 - 测试基类 `Kode\Framework\Testing\TestCase` 通过 `configOverrides` 透传启动期配置覆盖（`Application::make($root, $overrides)`），最高优先级合并进 `config/`；
 - 测试中先 `app()->container->instance($id, $mock)` 即可替换组件，`bindIf` / `instanceIf` 保证不误覆框架默认。
 
+## 8. 属性注解式 DI（kode/di 最新版）
+
+最新版 `kode/di` 支持用 PHP 8 属性（Attribute）声明生命周期与注入，多数场景无需再手写 `bind`：
+
+| 属性 | 位置 | 作用 |
+| --- | --- | --- |
+| `#[Singleton]` | 类 | 首次 `resolve(X::class)` 时自动注册为**单例**（进程内共享一份） |
+| `#[Prototype]` | 类 | 每次 `resolve(X::class)` 都返回**全新实例** |
+| `#[Contextual]` | 类 | 注册为**上下文隔离**服务（按消费方不同给不同实现） |
+| `#[Autowire]` | 类 | 标记该类参与属性驱动的自动装配 |
+| `#[Inject(id: X::class)]` | 构造参数 / 属性 | 注入指定容器 id，绕过按类型解析 |
+
+> 属性类位于 `Kode\DI\Attributes\*`（Singleton / Prototype / Contextual / Autowire / Inject）。
+
+容器在 `resolve()` 时自动读取这些属性并据此绑定，因此下面这样即可直接用，不必提前注册：
+
+```php
+use Kode\DI\Attributes\Singleton;
+use Kode\DI\Attributes\Prototype;
+
+#[Singleton]
+final class CacheManager
+{
+    public function get(string $k): mixed { /* ... */ }
+}
+
+#[Prototype]
+final class RequestId
+{
+    public string $id = '';   // 每次解析都是新值
+}
+
+// 使用时
+$cm1 = resolve(CacheManager::class);
+$cm2 = resolve(CacheManager::class);
+$cm1 === $cm2;                // true：单例
+
+$rid1 = resolve(RequestId::class);
+$rid2 = resolve(RequestId::class);
+$rid1 !== $rid2;              // true：原型，每次新建
+```
+
+### 8.1 构造函数按 id 注入（#[Inject]）
+
+当同一个类型有多个实现、或想显式指定容器 id 时，在参数上加 `#[Inject]`：
+
+```php
+use Kode\DI\Attributes\Inject;
+
+final class OrderService
+{
+    public function __construct(
+        #[Inject(id: PaymentGateway::class)]
+        private Gateway $gateway,
+    ) {}
+}
+```
+
+属性注入同理（注意：属性注入在对象 `new` 之后发生，依赖该属性被标注 `#[Inject]`）：
+
+```php
+final class ReportService
+{
+    #[Inject(id: 'cache.redis')]
+    private RedisClient $redis;
+}
+```
+
+### 8.2 上下文绑定的属性版（#[Contextual]）
+
+`#[Contextual]` 等价于代码版的 `when()->needs()->give()`：被标注的类会按"消费方"解析出不同实现。配合 `when()` 配置消费方映射即可：
+
+```php
+use Kode\DI\Attributes\Contextual;
+
+#[Contextual]
+final class TenantRedis extends RedisClient { /* 按租户隔离的连接 */ }
+```
+
+```php
+app()->container->when(AdminController::class)
+    ->needs(RedisClient::class)
+    ->give(TenantRedis::class);
+```
+
+### 8.3 与"自动装配"的关系
+
+框架默认就"类存在即可解析"（`class_exists` 即自动装配），属性注解是在此之上做**精细化**：
+
+- 默认 `bind()` 是单例；想改成每次新建，给类加 `#[Prototype]` 即可，无需改绑定代码；
+- 想让某个参数注入特定 id 而非按类型，用 `#[Inject(id: ...)]`；
+- 想让某服务随消费方变化，用 `#[Contextual]`。
+
 ---

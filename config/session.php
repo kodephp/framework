@@ -30,6 +30,11 @@ return [
     'http_only' => true,
     'samesite' => env('SESSION_SAMESITE', 'Lax'),
 
+    // 会话 ID 来源（v0.8.52 安全默认：仅 cookie）。query / body / header 载体允许
+    // 客户端自选 ID 且易经 URL 泄露，属会话固定攻击面；确需（如无 cookie 客户端）
+    // 再显式开启：['cookie', 'query', 'body', 'header']。
+    'id_sources' => ['cookie'],
+
     // 垃圾回收概率（与 divisor 比值，命中才 GC，避免每次请求都扫）。
     'gc_probability' => 1,
     'gc_divisor' => 100,

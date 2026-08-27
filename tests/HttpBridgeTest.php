@@ -64,6 +64,42 @@ final class HttpBridgeTest extends TestCase
         self::assertStringStartsWith('HTTP/1.0 200', HttpBridge::toRaw($psr, '1.0'));
     }
 
+    public function testToRawSanitizesHeaderInjection(): void
+    {
+        // 安全（v0.8.52）：响应头值中的 CR/LF/NUL 必须剥离，防应用层把用户可控数据
+        // （如 Resp::redirect($userInput)）写入响应头时造成响应拆分。
+        $psr = Response::make('', 302)
+            ->withHeader('Location', "http://evil.example/\r\nX-Injected: 1\r\n\r\nstolen-body");
+
+        $raw = HttpBridge::toRaw($psr);
+
+        // 安全属性：CR/LF 被剥离后，注入内容不会形成新的头行或伪造第二个响应报文——
+        // 整个恶意值被压平进单个 Location 头行内。
+        self::assertSame(1, substr_count($raw, "Location:"), '必须只允许一个 Location 头行');
+        self::assertSame(1, substr_count($raw, "HTTP/"), '不得出现被注入的第二个状态行');
+        self::assertStringNotContainsString("X-Injected\r\n", $raw);
+        self::assertStringNotContainsString("\r\n\r\nstolen-body\r\nHTTP/1.1", $raw);
+        self::assertStringContainsString("Location: http://evil.example/", $raw);
+    }
+
+    public function testToRawOmitsContentLengthAndBodyFor204(): void
+    {
+        // RFC 9110 §8.6 / RFC 9112 §6.3：204 不得携带 Content-Length 与实体。
+        $raw = HttpBridge::toRaw(Response::make('ignored', 204));
+
+        self::assertStringStartsWith('HTTP/1.1 204 No Content', $raw);
+        self::assertStringNotContainsString('Content-Length', $raw);
+        self::assertStringEndsWith("\r\n\r\n", $raw);
+    }
+
+    public function testToRawUnknownStatusFallsBackToUnknownReason(): void
+    {
+        // 旧实现对未知状态码回退 'OK'（599 OK），语义误导；与 vendor HttpProtocol 对齐为 'Unknown'。
+        $raw = HttpBridge::toRaw(Response::make('x', 599));
+
+        self::assertStringStartsWith('HTTP/1.1 599 Unknown', $raw);
+    }
+
     public function testEmitFastPathWritesRawForSmallBody(): void
     {
         // 架构红线（v0.8.42）：小响应走 rawBody 感知的快路径，由 toRaw 序列化后经 send($raw, true)

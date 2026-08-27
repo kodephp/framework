@@ -26,13 +26,26 @@ final class SessionServiceProvider extends ServiceProvider
             /** @var array<string, mixed> $config */
             $config = (array) $this->config('session', []);
 
-            // 配置加载期 app() 尚未就绪，storage_path() 会退化成相对路径，
-            // 导致 FileDriver 锁目录解析失败（500）。此处用已就绪的 base_path 解析为绝对路径并确保目录存在。
+            // 配置加载期全局 app() 尚未就绪，storage_path() 会退化成 CWD 相对路径
+            // （从非项目根目录启动时会话文件会落错位置）。此处经 ServiceProvider::basePath()
+            // （config('path.base')，启动期已预置）解析为绝对路径并确保目录存在。
             // 路径统一落在 storage/sessions（复数，匹配 .gitignore 既有约定）。
             if (($config['drivers']['file']['path'] ?? null) === null) {
-                $config['drivers']['file']['path'] = storage_path('sessions');
+                $config['drivers']['file']['path'] = $this->basePath('storage/sessions');
             }
             $this->ensureDirectory($config['drivers']['file']['path']);
+
+            // 安全加固（H1/H7）：production 下 Cookie 未设 Secure 或 SameSite=None 却无 Secure 时告警/抛错。
+            $env = (string) ($this->config('app.env', 'local'));
+            $isProd = $env === 'production';
+            $secure = (bool) ($config['secure'] ?? false);
+            $sameSite = strtolower((string) ($config['samesite'] ?? 'lax'));
+            if ($sameSite === 'none' && !$secure) {
+                throw new \RuntimeException('会话配置错误：SameSite=None 必须配合 secure=true，否则浏览器将拒绝下发 Cookie。');
+            }
+            if ($isProd && !$secure) {
+                error_log('[security] WARNING: SESSION_SECURE=false 但 APP_ENV=production，会话 Cookie 将经 HTTP 明文传输，建议置 SESSION_SECURE=true。');
+            }
 
             return SessionManager::create($config);
         });

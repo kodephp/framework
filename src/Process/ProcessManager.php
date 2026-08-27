@@ -173,9 +173,19 @@ final class ProcessManager
         foreach ($this->workers as $worker) {
             foreach ($this->effectiveSlots($worker) as $slot) {
                 $slotWorker = new SlotWorker($worker, $slot);
-                $slotWorker->onStart();
+                // onStart/onStop 隔离（与 runOnce 同口径）；handle 异常照常向上抛——
+                // dryRun 的职责就是暴露业务逻辑问题，吞掉反而掩盖故障。
+                try {
+                    $slotWorker->onStart();
+                } catch (\Throwable $e) {
+                    error_log(sprintf('[worker:%s] dryRun onStart 异常: %s', $worker->name(), $e->getMessage()));
+                }
                 $slotWorker->handle();
-                $slotWorker->onStop();
+                try {
+                    $slotWorker->onStop();
+                } catch (\Throwable $e) {
+                    error_log(sprintf('[worker:%s] dryRun onStop 异常: %s', $worker->name(), $e->getMessage()));
+                }
                 $ran[] = $worker->name();
             }
         }
@@ -214,13 +224,23 @@ final class ProcessManager
     {
         foreach ($this->effectiveSlots($worker) as $slot) {
             $slotWorker = new SlotWorker($worker, $slot);
-            $slotWorker->onStart();
+            // onStart/onStop 与 handle 同等隔离（v0.8.52）：单个槽位的钩子异常不应
+            // 中断 start()，导致后续 worker / 槽位全部不启动。
+            try {
+                $slotWorker->onStart();
+            } catch (\Throwable $e) {
+                error_log(sprintf('[worker:%s] once onStart 异常: %s', $worker->name(), $e->getMessage()));
+            }
             try {
                 $slotWorker->handle();
             } catch (\Throwable $e) {
                 error_log(sprintf('[worker:%s] once handle 异常: %s', $worker->name(), $e->getMessage()));
             }
-            $slotWorker->onStop();
+            try {
+                $slotWorker->onStop();
+            } catch (\Throwable $e) {
+                error_log(sprintf('[worker:%s] once onStop 异常: %s', $worker->name(), $e->getMessage()));
+            }
         }
 
         $this->logger->info('一次性 worker 已执行', ['worker' => $worker->name()]);
@@ -289,6 +309,14 @@ final class ProcessManager
         foreach ($daemons as $daemon) {
             $pid = KodeProcess::fork(
                 function () use ($daemon): void {
+                    // 子进程不继承父监督者的停机 handler：fork 完成到 Daemon::run() 自装信号
+                    // 之间的窗口内收到 TERM 时，继承的父版 stop() 会向「兄弟监督进程」群发
+                    // TERM 并忙等，造成级联误杀。重置为默认处置（仅杀当前子进程），
+                    // 正式停机语义交由 Daemon 自行安装。
+                    if (function_exists('pcntl_signal')) {
+                        pcntl_signal(SIGTERM, SIG_DFL);
+                        pcntl_signal(SIGINT, SIG_DFL);
+                    }
                     $this->runDaemon($daemon);
                 }
             );

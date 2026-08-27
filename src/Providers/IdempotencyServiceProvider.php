@@ -34,6 +34,16 @@ final class IdempotencyServiceProvider extends ServiceProvider
             $driver = (string) ($config['driver'] ?? 'memory');
             $dispatcher = static fn (object $event): object => event($event);
 
+            if ($driver === 'memory' && $this->config('app.env') === 'production') {
+                $workers = (int) ($this->config('server.workers', 0) ?: 0);
+                if ($workers === 0 && function_exists('Kode\Process\cpu_count')) {
+                    $workers = max(1, (int) \Kode\Process\cpu_count());
+                }
+                if ($workers > 1) {
+                    error_log('[kode] 警告：idempotency.driver=memory 但 server.workers=' . $workers . '，多进程下去重不互斥（同键在不同 worker 可重复执行）。生产请用 Redis 存储。');
+                }
+            }
+
             $dir = $driver === 'file' ? $this->storeDir() : null;
             $store = new StaticIdempotencyStore($config, $dir);
 

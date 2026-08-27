@@ -62,8 +62,10 @@ final class LimitingServiceProvider extends ServiceProvider
                 $type,
                 $capacity,
                 $rate,
-                (string) ($config['redis']['host'] ?? '127.0.0.1'),
-                (int) ($config['redis']['port'] ?? 11211)
+                // 修复（v0.8.52）：旧实现误读 redis.host/port——memcached 客户端会连到
+                // Redis 主机的 11211 端口，专属配置段被完全忽略。
+                (string) ($config['memcached']['host'] ?? '127.0.0.1'),
+                (int) ($config['memcached']['port'] ?? 11211)
             ),
             'pdo' => Limiter::pdo(
                 $type,

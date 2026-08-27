@@ -165,4 +165,47 @@ final class LockTest extends TestCase
         self::assertDirectoryExists($dir);
         self::assertSame([], $m->keys());
     }
+
+    public function testFileBackendMutualExclusionAcrossInstances(): void
+    {
+        // v0.8.52 回归：file 后端以 fopen 'x'（O_CREAT|O_EXCL）为获取原语，
+        // 两个独立 manager（模拟两个进程，各自 owner）对同一把未过期锁必须互斥——
+        // 旧实现 isLocked()→rename 两步竞态可双双「获得」。
+        $dir = sys_get_temp_dir() . '/kode-lock-test-' . uniqid();
+        $a = $this->manager(true, $dir);
+        $b = new StaticLockManager([], $dir);
+
+        self::assertTrue($a->acquire('mutex', 30));
+        self::assertFalse($b->acquire('mutex', 30), '他人持锁时第二个进程必须获取失败');
+        self::assertFalse($b->release('mutex'), 'owner 不匹配的释放必须被拒绝');
+
+        // 释放后可立即被另一进程获得
+        self::assertTrue($a->release('mutex'));
+        self::assertTrue($b->acquire('mutex', 30));
+
+        // 同 owner 重入刷新 TTL
+        self::assertTrue($b->acquire('mutex', 30));
+
+        // 过期锁可被抢占
+        $c = new StaticLockManager([], $dir);
+        $file = glob($dir . '/*mutex*.lock')[0] ?? null;
+        self::assertNotNull($file);
+        file_put_contents($file, (string) json_encode(['owner' => 'ghost', 'expires' => microtime(true) - 1]));
+        self::assertFalse($c->isLocked('mutex'), '过期锁应视为未锁定');
+        self::assertTrue($c->acquire('mutex', 30), '过期锁应可被新进程抢占');
+    }
+
+    public function testFileBackendKeyEncodingIsLossless(): void
+    {
+        // v0.8.52 回归：键编码改为 rawurlencode 双射——'user:1' 与 'user_1'
+        // 不得再映射到同一物理锁（旧 preg_replace 多对一，互斥范围被错误扩大）。
+        $dir = sys_get_temp_dir() . '/kode-lock-test-' . uniqid();
+        $m = $this->manager(true, $dir);
+
+        self::assertTrue($m->acquire('user:1', 30));
+        self::assertTrue($m->isLocked('user:1'));
+        self::assertFalse($m->isLocked('user_1'), '不同逻辑键互不干扰：user_1 应未被锁定');
+        self::assertTrue($m->release('user_1')); // 未持有的键：release 返回 true（本就不持有）
+        self::assertSame(['user:1'], $m->keys(), 'keys() 应还原原始逻辑键');
+    }
 }

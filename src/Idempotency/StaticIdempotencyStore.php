@@ -105,7 +105,9 @@ final class StaticIdempotencyStore implements IdempotencyStore
         } else {
             $keys = [];
             foreach (glob($this->dir . '/*.idm') ?: [] as $file) {
-                $keys[] = basename($file, '.idm');
+                // path() 对键做了 rawurlencode（见 encodeKey），此处逆向还原逻辑键；
+                // 超长哈希后缀键无法还原为原始键，返回其可读前缀段。
+                $keys[] = rawurldecode(basename($file, '.idm'));
             }
         }
 
@@ -146,6 +148,10 @@ final class StaticIdempotencyStore implements IdempotencyStore
             }
             $data = json_decode($raw, true);
             if (!is_array($data)) {
+                // 孤儿占位清理：createExclusive 成功但 write() 落盘前进程崩溃 / 写失败，
+                // 会留下解析失败的空文件——不清理则该键永远走 409 分支且 TTL 机制失效。
+                @unlink($file);
+
                 return null;
             }
         }
@@ -220,6 +226,22 @@ final class StaticIdempotencyStore implements IdempotencyStore
 
     private function path(string $key): string
     {
-        return $this->dir . '/' . preg_replace('/[^A-Za-z0-9._-]/', '_', $key) . '.idm';
+        // 无损编码：rawurlencode 保证不同逻辑键（如 'a b' 与 'a_b'）不会映射到同一物理文件
+        // （旧 preg_replace 多对一映射，file 驱动下可被用于重放他人响应或抢占占位致 409）。
+        // 超长键截断并拼内容哈希后缀，保证唯一性且不超文件名长度限制。
+        return $this->dir . '/' . self::encodeKey($key) . '.idm';
+    }
+
+    /**
+     * 键 → 安全文件名（双射：不同逻辑键必得不同文件名）。
+     */
+    private static function encodeKey(string $key): string
+    {
+        $encoded = rawurlencode($key);
+        if (strlen($encoded) <= 200) {
+            return $encoded;
+        }
+
+        return substr($encoded, 0, 160) . '-' . substr(hash('sha256', $key), 0, 32);
     }
 }

@@ -138,6 +138,29 @@ abstract class TestCase extends BaseTestCase
     {
         $this->app();
         $request = new ServerRequest($method, $uri, $headers, $body);
+        // Cookie 头 → cookieParams：PSR-7 不会从头自动解析 Cookie，而会话等组件
+        // 消费的是 getCookieParams()；此处显式桥接以贴合真实 HTTP 语义。
+        $cookieHeader = '';
+        foreach ($headers as $name => $value) {
+            if (strcasecmp((string) $name, 'Cookie') === 0) {
+                $cookieHeader = is_array($value) ? (string) reset($value) : (string) $value;
+                break;
+            }
+        }
+        if ($cookieHeader !== '') {
+            $cookies = [];
+            foreach (explode(';', $cookieHeader) as $pair) {
+                $eq = strpos($pair, '=');
+                if ($eq === false) {
+                    continue;
+                }
+                $k = trim(substr($pair, 0, $eq));
+                if ($k !== '') {
+                    $cookies[$k] = trim(substr($pair, $eq + 1));
+                }
+            }
+            $request = $request->withCookieParams($cookies);
+        }
         $response = $this->httpApp()->handle($request);
 
         return new TestResponse($response, $this);

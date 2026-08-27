@@ -30,10 +30,9 @@ final class EnvLoader
     {
         // 去除行内注释：仅当 # 前面是空白（空格/Tab）时才视为注释起点，
         // 以保留 URI 等值中的 #（如 redis://127.0.0.1:6379#db）。
-        $line = preg_replace('/(?<=\s)#.*$/u', '', $line);
-        if ($line === null) {
-            return null;
-        }
+        // 引号感知（v0.8.52 修复）：引号内的 # 不视为注释——旧正则先剥注释再剥引号，
+        // `KEY="abc # def"` 会被截成 `KEY="abc`，最终值带脏引号。
+        $line = self::stripComment($line);
 
         $line = trim($line);
 
@@ -94,6 +93,37 @@ final class EnvLoader
             $_SERVER[$key] = $value;
             putenv("{$key}={$value}");
         }
+    }
+
+    /**
+     * 引号感知地剥离行内注释：跟踪单/双引号开合状态，仅剥离引号外、
+     * 且 # 前为空白（或位于行首）的注释段。不支持转义引号（.env 惯例中罕见）。
+     */
+    private static function stripComment(string $line): string
+    {
+        $inSingle = false;
+        $inDouble = false;
+        $len = strlen($line);
+
+        for ($i = 0; $i < $len; ++$i) {
+            $ch = $line[$i];
+            if ($ch === "'" && !$inDouble) {
+                $inSingle = !$inSingle;
+
+                continue;
+            }
+            if ($ch === '"' && !$inSingle) {
+                $inDouble = !$inDouble;
+
+                continue;
+            }
+            if ($ch === '#' && !$inSingle && !$inDouble
+                && ($i === 0 || $line[$i - 1] === ' ' || $line[$i - 1] === "\t")) {
+                return substr($line, 0, $i);
+            }
+        }
+
+        return $line;
     }
 
     private static function stripQuotes(string $value): string

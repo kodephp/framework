@@ -58,6 +58,9 @@ final class QueryMasker
     /**
      * 递归脱敏：键命中 mask 集合的值替换为 '***'（兼容嵌套数组，如 filter[password]=x）。
      *
+     * v0.8.52：匹配口径与 {@see maskQuery()} 统一为「子串包含」——旧实现用精确相等，
+     * `api-key`、`user_password`、`client_secret_v2` 等命名因不等于清单精确项而明文落日志。
+     *
      * @param array<string, mixed> $data
      * @param array<int, string>   $mask 已统一小写的字段名集合
      * @return array<string, mixed>
@@ -73,11 +76,28 @@ final class QueryMasker
             if (is_array($value)) {
                 $out[$key] = self::maskSensitive($value, $mask);
             } else {
-                $out[$key] = in_array(strtolower((string) $key), $mask, true) ? '***' : $value;
+                $out[$key] = self::matchesMask((string) $key, $mask) ? '***' : $value;
             }
         }
 
         return $out;
+    }
+
+    /**
+     * 字段名是否命中脱敏清单（子串包含，大小写不敏感；与 maskQuery 同口径）。
+     *
+     * @param array<int, string> $mask 已统一小写的字段名集合
+     */
+    private static function matchesMask(string $key, array $mask): bool
+    {
+        $lower = strtolower($key);
+        foreach ($mask as $sensitive) {
+            if (str_contains($lower, $sensitive)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

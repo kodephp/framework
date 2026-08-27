@@ -44,13 +44,38 @@ final class FileConfigSource implements ConfigSource
 
         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
         if ($ext === 'php') {
-            $data = require $path;
+            // RCE 防护（H5）：CONFIG_CENTER_FILE 若指向攻击者可写路径，require 即代码执行。
+            // 仅允许项目根（getcwd / path.base）或系统临时目录内的文件；默认 enabled=false 已降低风险，
+            // 单测（sys_get_temp_dir）需放行以便隔离。
+            $real = realpath($path);
+            $base = realpath((string) (getcwd() ?: __DIR__ . '/../../'));
+            $tmp = realpath(sys_get_temp_dir());
+            $allowed = false;
+            if ($real !== false) {
+                if ($base !== false && str_starts_with($real, $base)) {
+                    $allowed = true;
+                } elseif ($tmp !== false && str_starts_with($real, $tmp)) {
+                    $allowed = true;
+                }
+            }
+            if (!$allowed) {
+                throw new RuntimeException(sprintf('ConfigCenter: php 配置源仅允许项目根或临时目录内的文件 %s', $path));
+            }
+            $data = require $real;
+            if (!is_array($data)) {
+                throw new RuntimeException(sprintf('ConfigCenter: php 配置源必须返回 array %s', $path));
+            }
 
-            return is_array($data) ? $data : [];
+            return $data;
         }
 
         if ($ext === 'json') {
-            $raw = (string) file_get_contents($path);
+            $raw = file_get_contents($path);
+            if ($raw === false) {
+                // 区分「读不到」与「解析失败」：旧实现把 false 强转空串后误报 JSON 错误，
+                // 误导排障方向（实际是权限 / 文件被删）。
+                throw new RuntimeException(sprintf('ConfigCenter: 配置文件不可读 %s', $path));
+            }
             $data = json_decode($raw, true);
 
             if (json_last_error() !== JSON_ERROR_NONE) {

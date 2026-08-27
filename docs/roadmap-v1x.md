@@ -7,7 +7,7 @@
 
 | 维度 | 状态 |
 | --- | --- |
-| 版本 | v0.8.51（`src/Application.php` VERSION，VCS tag 管理，composer.json 无 version 字段） |
+| 版本 | v0.8.53（`src/Application.php` VERSION，VCS tag 管理，composer.json 无 version 字段；§1 横比数据的真机基准仍为 v0.8.51 存档，生产加固见 0.8.53） |
 | 测试 | 426 tests / 26,430 assertions：425 通过 + 1 Error（`QueueFacadeTest`，仅因沙箱缺 redis 扩展，真机有依赖即过）+ 1 Skipped |
 | vs webman（同 4 进程 native，真机 v0.8.51） | 裸内核 /ping **185,362 vs 190,432（−2.7% 持平）**；能力对等档 **157,632 vs 127,564（+23.6%）**；L5 全开 123,175 与 webman ON 同档 |
 | vs hyperf（单进程协程，真机 v0.8.51） | kode@Swoole 裸内核 /ping **186,630 vs 176,392（+5.8%）**、/bench/json **162,843 vs 147,051（+10.7%）**、MySQL 58,866 vs 28,189（+108.8%） |

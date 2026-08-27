@@ -353,13 +353,21 @@ final class HttpServiceProvider extends ServiceProvider
     {
         $cors = (array) $this->config('cors', []);
 
+        $origins = $cors['allowed_origins'] ?? '*';
+        $credentials = !empty($cors['allow_credentials']);
+        // 互斥校验（M1）：origin '*' + credentials true 属规范禁止，回显 * 并带凭证会泛化凭证域。
+        $isWildcard = $origins === '*' || (is_array($origins) && in_array('*', $origins, true));
+        if ($isWildcard && $credentials) {
+            throw new \RuntimeException('CORS 配置错误：allowed_origins 为 "*" 时不可开启 allow_credentials（规范禁止），请收敛为具体域名或关闭凭证。');
+        }
+
         return [
-            'origin' => $cors['allowed_origins'] ?? '*',
+            'origin' => $origins,
             'methods' => $cors['allowed_methods'] ?? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
             'headers' => $cors['allowed_headers'] ?? ['Content-Type', 'Authorization'],
             'expose_headers' => $cors['exposed_headers'] ?? [],
             'max_age' => (int) ($cors['max_age'] ?? 86400),
-            'credentials' => !empty($cors['allow_credentials']),
+            'credentials' => $credentials,
         ];
     }
 
@@ -874,6 +882,15 @@ final class HttpServiceProvider extends ServiceProvider
         ]));
 
         $app->get('/health/ready', function () {
+            // 排空期感知（H3）：收到 SIGTERM 后 readiness 必须 503 使 k8s Service 摘流，
+            // 否则 10-30s 窗口内仍被调度流量导致 502。
+            try {
+                $graceful = $this->container->get(\Kode\Framework\Server\GracefulShutdown::class);
+                if ($graceful instanceof \Kode\Framework\Server\GracefulShutdown && $graceful->isShuttingDown()) {
+                    return Resp::json(['status' => 'degraded', 'reason' => 'shutting_down', 'checks' => []], 503);
+                }
+            } catch (\Throwable) {
+            }
             $result = $this->healthChecker()->check();
             $status = $result['healthy'] ? 200 : 503;
 
@@ -883,8 +900,10 @@ final class HttpServiceProvider extends ServiceProvider
             ], $status);
         });
 
-        $app->get('/health', static function () {
-            $result = (new HealthChecker((array) Application::getInstance()?->config()->get('health', []), app()->container))->check();
+        $app->get('/health', function () {
+            // 走容器单例（与 /health/ready 同源）：每请求 new 会丢失单例上注册的自定义探针，
+            // 且有重复构建开销。
+            $result = $this->healthChecker()->check();
 
             return Resp::json([
                 'status'      => 'ok',

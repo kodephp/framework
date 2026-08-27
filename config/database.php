@@ -22,6 +22,15 @@ return [
             'charset' => 'utf8mb4',
             'collation' => 'utf8mb4_unicode_ci',
             'prefix' => '',
+            // 连接池（生产级，H1）：kode/database 的 PoolManager 仅当存在 pool 段时建池。
+            // Native 下退化为 ProcessPool（per-worker 复用），Swoole/Fiber 下为对应协程池。
+            // 默认关闭（兼容单连接）；生产建议开启并按压测调优 max/min。
+            'pool' => env('DB_POOL_ENABLED', false) ? [
+                'max' => (int) env('DB_POOL_MAX', 10),
+                'min' => (int) env('DB_POOL_MIN', 2),
+                'max_wait_time' => (int) env('DB_POOL_MAX_WAIT', 30),
+                'max_idle_time' => (int) env('DB_POOL_MAX_IDLE', 60),
+            ] : null,
         ],
 
         'sqlite' => [

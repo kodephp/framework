@@ -165,4 +165,73 @@ final class IdempotencyMiddlewareTest extends TestCase
         self::assertSame('', $get->getHeaderLine('Idempotency-Replay'));
         self::assertSame('', $post->getHeaderLine('Idempotency-Replay'));
     }
+
+    public function testHandlerFailureRollsBackPlaceholder(): void
+    {
+        // v0.8.52 回归（Stripe 语义）：业务失败必须回滚占位——同键重试可重新执行，
+        // 而非在 TTL 内恒吃 409；也防攻击者用「已知键 + 诱发失败」锁死合法客户端的键。
+        $mw = $this->mw();
+        $failing = new class implements \Psr\Http\Server\RequestHandlerInterface {
+            public function handle(\Psr\Http\Message\ServerRequestInterface $request): ResponseInterface
+            {
+                throw new \RuntimeException('payment failed');
+            }
+        };
+
+        try {
+            $mw->process($this->request('k9'), $failing);
+            self::fail('业务异常应向上传播');
+        } catch (\RuntimeException) {
+            // 预期
+        }
+
+        // 同键重试：占位已回滚，应重新执行业务（而非 409）。
+        $retry = $mw->process($this->request('k9'), $this->handler('R'));
+        self::assertSame(200, $retry->getStatusCode());
+        self::assertSame(['R'], $this->runs);
+        self::assertSame('true', $retry->getHeaderLine('Idempotency-Recorded'));
+    }
+
+    public function testRegistryGateBlocksUntaggedAndUnmatchedRoutes(): void
+    {
+        // v0.8.52 回归：注入 registry 后采用白名单门控——未标记路由与未命中路由
+        // （404）即使携带幂等键也直接放行，不做存储占位（旧条件反转会处理 404）。
+        $router = new \Kode\Http\Routing\Router();
+        $registry = new \Kode\Framework\Http\RouteRegistry();
+        $resolver = new \Kode\Framework\Http\RouteResolver($router);
+        $mw = new IdempotencyMiddleware($this->manager, [], $router, $registry, $resolver);
+
+        // 未命中路由（404）+ 携带键 → 放行且不产生任何存储记录
+        $resp = $mw->process($this->request('k404'), $this->handler('A'));
+        self::assertSame(200, $resp->getStatusCode());
+        self::assertSame(['A'], $this->runs);
+        self::assertSame('', $resp->getHeaderLine('Idempotency-Recorded'));
+
+        // 未标记路由 + 携带键 → 同样放行
+        $router->add('POST', '/untagged', fn (): ResponseInterface => Resp::json(['ok' => true]));
+        $resp2 = $mw->process((new ServerRequest('POST', '/untagged'))->withHeader('Idempotency-Key', 'k5'), $this->handler('B'));
+        self::assertSame(['A', 'B'], $this->runs);
+        self::assertSame('', $resp2->getHeaderLine('Idempotency-Recorded'));
+    }
+
+    public function testRegistryGateProcessesTaggedRoutes(): void
+    {
+        // v0.8.52 回归：白名单门控下，显式 #[Idempotency] 标记（tagIdempotency）的路由
+        // 必须正常参与去重——首次执行并记录，重放返回缓存响应。
+        $router = new \Kode\Http\Routing\Router();
+        $registry = new \Kode\Framework\Http\RouteRegistry();
+        $resolver = new \Kode\Framework\Http\RouteResolver($router);
+        $route = $router->add('POST', '/charge', fn (): ResponseInterface => Resp::json(['ok' => true]));
+        $registry->tagIdempotency($route, true);
+
+        $mw = new IdempotencyMiddleware($this->manager, [], $router, $registry, $resolver);
+        $req = (new ServerRequest('POST', '/charge'))->withHeader('Idempotency-Key', 'order-1');
+
+        $first = $mw->process($req, $this->handler('C'));
+        self::assertSame('true', $first->getHeaderLine('Idempotency-Recorded'));
+
+        $second = $mw->process($req, $this->handler('C'));
+        self::assertSame('true', $second->getHeaderLine('Idempotency-Replay'));
+        self::assertSame(['C'], $this->runs, '标记路由的重放不得重复执行业务');
+    }
 }

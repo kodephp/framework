@@ -96,7 +96,7 @@ final class ObservabilityServiceProvider extends ServiceProvider
         }
 
         if ($protect === 'local') {
-            $ip = $this->clientIp($request);
+            $ip = $this->remoteAddr($request);
 
             return $ip === '127.0.0.1' || $ip === '::1' || str_starts_with($ip, '127.');
         }
@@ -116,18 +116,13 @@ final class ObservabilityServiceProvider extends ServiceProvider
         return false;
     }
 
-    private function clientIp(\Psr\Http\Message\ServerRequestInterface $request): string
+    private function remoteAddr(\Psr\Http\Message\ServerRequestInterface $request): string
     {
-        $fwd = $request->getHeaderLine('X-Forwarded-For');
-        if ($fwd !== '') {
-            return strtok($fwd, ',');
-        }
-        $real = $request->getHeaderLine('X-Real-IP');
-        if ($real !== '') {
-            return $real;
-        }
+        // protect=local 只信对端地址（v0.8.52 安全修复）：X-Forwarded-For / X-Real-IP 可被
+        // 任意客户端伪造，旧实现远程攻击者带 'X-Forwarded-For: 127.0.0.1' 即可绕过本机限制。
+        // 经反向代理部署时请改用 token 模式或在网络层隔离 /metrics、/docs。
         $server = $request->getServerParams();
 
-        return $server['REMOTE_ADDR'] ?? 'unknown';
+        return $server['REMOTE_ADDR'] ?? '';
     }
 }

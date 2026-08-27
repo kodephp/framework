@@ -2,12 +2,12 @@
 
 ```php
 // 监听（config/event.php 的 listeners 也可声明）
-Event::listen(\app\Events\UserRegistered::class, function (\app\Events\UserRegistered $e) {
+Event::listen(\app\events\UserRegistered::class, function (\app\events\UserRegistered $e) {
     // 发欢迎邮件、打点……
 });
 
 // 触发
-event(new \app\Events\UserRegistered($uid));
+event(new \app\events\UserRegistered($uid));
 ```
 
 **订阅者**（一个类批量注册多个监听器，对齐 webman/hyperf 的 subscribe 风格）：

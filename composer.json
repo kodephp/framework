@@ -79,7 +79,8 @@
     },
     "autoload": {
         "psr-4": {
-            "Kode\\Framework\\": "src/"
+            "Kode\\Framework\\": "src/",
+            "app\\": "app/"
         },
         "files": [
             "src/Support/helpers.php"
@@ -87,8 +88,7 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Kode\\Framework\\Tests\\": "tests/",
-            "app\\": "app/"
+            "Kode\\Framework\\Tests\\": "tests/"
         }
     },
     "bin": [

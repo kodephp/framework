@@ -26,11 +26,67 @@ final class JwtGuard implements AuthGuard
 
     /**
      * @param array<string, mixed> $config 与 kode/jwt 配置结构对齐（guards.api.secret 必填）
+     *
+     * @throws \RuntimeException HS* 算法守卫的 secret 为空时（启动期 fail-fast，
+     *                           防止以公开可知的空/默认密钥签发可被任意伪造的令牌）
      */
     public function __construct(array $config = [])
     {
         $this->config = $config;
+        $this->assertSecretConfigured($config);
         KodeJwt::init($config);
+    }
+
+    /**
+     * 校验 HMAC 类算法守卫必须配置非空 secret（kode/jwt 的 Parser 会拒绝空密钥验签，
+     * 但签发侧若无此防线，漏配 JWT_SECRET 的应用会在运行期才暴露、且报错误导排障方向）。
+     *
+     * @param array<string, mixed> $config
+     */
+    private function assertSecretConfigured(array $config): void
+    {
+        $guards = $config['guards'] ?? [];
+        if (!is_array($guards)) {
+            return;
+        }
+
+        foreach ($guards as $name => $guard) {
+            if (!is_array($guard)) {
+                continue;
+            }
+            $algo = strtoupper((string) ($guard['algo'] ?? 'HS256'));
+            if (!str_starts_with($algo, 'HS')) {
+                continue; // 非 HMAC 算法（RS*/ES* 等）不依赖共享 secret
+            }
+            $secret = $guard['secret'] ?? '';
+            if (!is_string($secret) || trim($secret) === '') {
+                throw new \RuntimeException(
+                    "JWT secret 未配置：guards.{$name}.secret 不能为空（HS{$algo} 需要非空共享密钥）。"
+                    . '请在 .env 设置 JWT_SECRET 或调整 config/jwt.php。'
+                );
+            }
+            $trimmed = trim($secret);
+            $isProd = (($_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? getenv('APP_ENV') ?: 'local') === 'production')
+                || (getenv('APP_ENV') === 'production');
+            // 拒绝公开占位符：仅在 production 强制（本地/测试允许短密钥如 test-secret 以便回归），
+            // 但空串在所有环境均拒绝（上一分支已处理）。
+            if ($isProd) {
+                $lower = strtolower($trimmed);
+                $weakPatterns = ['change-me', 'placeholder', 'your-secret', 'kode-framework-secret', '__generated_on_init__'];
+                foreach ($weakPatterns as $pat) {
+                    if (str_contains($lower, $pat)) {
+                        throw new \RuntimeException(
+                            "JWT secret 过于简单：guards.{$name}.secret 命中弱密钥模式 '{$pat}'，请生成强随机密钥（bin2hex(random_bytes(32))）。"
+                        );
+                    }
+                }
+                if (strlen($trimmed) < 32) {
+                    throw new \RuntimeException(
+                        "JWT secret 过短：guards.{$name}.secret 长度 " . strlen($trimmed) . " < 32，请使用至少 32 字符的强随机密钥。"
+                    );
+                }
+            }
+        }
     }
 
     /**
@@ -150,9 +206,20 @@ final class JwtGuard implements AuthGuard
 
     /**
      * @return array<string, mixed>
+     *
+     * @throws \InvalidArgumentException 守卫未在 config 中声明时（旧实现静默回落 guards.api
+     *                                   计算 TTL，而 KodeJwt::guard 却以空配置构建真实签发器，
+     *                                   会签出「exp 正确但验签永不能通过」的废令牌）
      */
     private function guardConfig(string $guard): array
     {
-        return $this->config['guards'][$guard] ?? $this->config['guards']['api'] ?? [];
+        $guards = is_array($this->config['guards'] ?? null) ? $this->config['guards'] : [];
+        if (!isset($guards[$guard]) || !is_array($guards[$guard])) {
+            throw new \InvalidArgumentException(
+                "未知 JWT 守卫：{$guard}（请在 config/jwt.php 的 guards 中声明）"
+            );
+        }
+
+        return $guards[$guard];
     }
 }

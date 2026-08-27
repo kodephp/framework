@@ -24,8 +24,9 @@ use ReflectionMethod;
  *       ],
  *   ]
  *
- * 优先级约定：类内对 interval()/instances() 等方法的重写优先于声明键；
- * 声明键只在 worker 未重写对应方法（使用基类默认值）时生效。
+ * 优先级约定：声明键（interval/count/once/slots）**优先于**类内方法重写——
+ * 条目里写了对应键即以配置为准，未写的键回落类内实现。请勿按「类内重写优先生效」
+ * 的理解在类里定制后又于配置声明同名键（v0.8.52 修正 docblock 与实现对齐）。
  */
 final class ConfiguredWorker extends Worker
 {

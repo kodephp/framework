@@ -1,6 +1,6 @@
 # 控制台命令
 
-**存放约定**：自定义命令放到 `app/console/` 下（单层目录，无需再建 `Commands` 子目录），命名空间为 `app\Console\`，类名以 `Command` 结尾——框架启动时自动扫描注册（`ConsoleServiceProvider` 扫描 `app/console/*Command.php`）。
+**存放约定**：自定义命令放到 `app/console/` 下（单层目录，无需再建 `Commands` 子目录），命名空间为 `app\console\`，类名以 `Command` 结尾——框架启动时自动扫描注册（`ConsoleServiceProvider` 扫描 `app/console/*Command.php`）。
 
 继承 `Kode\Framework\Console\Command`，用 `#[AsCommand]` 声明；一个命令一个类（kode/console 限制）：
 

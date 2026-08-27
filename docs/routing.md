@@ -53,7 +53,7 @@ $app->group('/api/v1', function (App $app): void {
     $app->group('/users', function (App $app): void {
         $app->get('/{id}', fn() => /* ... */);
     });
-}, [new \app\Http\Middleware\ApiGuard()]);
+}, [new \app\http\middleware\ApiGuard()]);
 ```
 
 ### 1.4 路由级中间件（单条）
