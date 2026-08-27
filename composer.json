@@ -1,6 +1,6 @@
 {
     "name": "kode/framework",
-    "description": "Kode Framework —— 以 kode/core 为启动器、kode/runtime 为统一运行时（Swoole/Swow/Fiber/多进程/多线程）的现代 PHP 全栈框架，组合 kode 生态（di/router/http/console/aop/cache/event/jwt/facade...）与 Monolog、Symfony Validator 等成熟包。",
+    "description": "Kode Framework —— 以 kode/core 为启动器、kode/runtime 为统一运行时（Swoole/Swow/Fiber/多进程/多线程）的现代 PHP 全栈框架，组合 kode 生态与 Monolog、Symfony Validator 等成熟包。",
     "type": "library",
     "keywords": [
         "framework",
@@ -79,8 +79,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Kode\\Framework\\": "src/",
-            "app\\": "app/"
+            "Kode\\Framework\\": "src/"
         },
         "files": [
             "src/Support/helpers.php"
@@ -108,7 +107,6 @@
         "console": "php bin/console",
         "new": "php bin/kode new",
         "init": "php bin/kode init",
-        "post-create-project-cmd": "php bin/kode init",
         "test": "php vendor/bin/phpunit"
     }
 }
