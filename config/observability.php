@@ -48,6 +48,11 @@ return [
         // HDR 分位维护开销）。计数（吞吐/错误率）始终 100% 采集不受影响；采样后
         // P50/P95/P99 仍统计有效（标准 Prometheus 实践）。默认 0.1。
         'sample_ratio' => (float) env('OBS_METRICS_SAMPLE_RATIO', 0.1),
+
+        // 时延直方图 buckets（秒）：覆盖 5ms~5s，P95 更准；已按 0.8.53 压测的 P95 失真调优
+        'buckets' => env('OBS_METRICS_BUCKETS')
+            ? array_map('floatval', explode(',', (string) env('OBS_METRICS_BUCKETS')))
+            : [0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1, 2, 5],
     ],
 
     // ------------------------------------------------------------------
