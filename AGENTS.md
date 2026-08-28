@@ -5,7 +5,7 @@
 
 ## 仓库是什么
 
-- **kode/framework**：常驻内存 PHP 框架（**默认 kode/process 原生多进程**，可切 Swoole / Swow / Fiber），当前 **v0.8.53**。
+- **kode/framework**：常驻内存 PHP 框架（**默认 kode/process 原生多进程**，可切 Swoole / Swow / Fiber），当前 **v0.9.0**。
 - 依赖三组自研包（**vendor 内，只读**）：`kode/http`（HTTP 内核与路由）、`kode/process`（进程/运行时）、
   `kode/database`（数据库与连接池）、`kode/fibers`（协程调度）。
 - 性能基线存档：`../kode框架文档/docs/benchmarks.md`（v0.8.51 真机横比结论 + 压测口径，`benchmarks/` 目录已移除）；
