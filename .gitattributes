@@ -1,11 +1,19 @@
 # Composer 分发归档（create-project / require 下载的 zip）导出规则。
 # 仅影响分发包，不改 git 仓库内容；框架自身的 src/ 必须保留（消费者依赖它）。
 
-# 开发/文档产物不进入分发包
+# 开发/文档产物不进入分发包（仅影响 composer require 的 vendor 压缩包，不影响 git clone / create-project）
 /tests/                export-ignore
 /docs/                 export-ignore
+/examples/             export-ignore
 /.workbuddy/           export-ignore
 /.github/              export-ignore
+
+# 骨架模板（app/config 等）仅用于 composer create-project 的项目根，不进 vendor/kode/framework
+/app/                  export-ignore
+/config/               export-ignore
+/public/               export-ignore
+/database/             export-ignore
+/lang/                 export-ignore
 
 # 运行时产物（仅保留目录占位 .gitkeep，由 bin/kode init 重建）
 /storage/cache/*       export-ignore

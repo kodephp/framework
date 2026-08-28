@@ -1,0 +1,42 @@
+{
+    "name": "kode/api-admin-demo",
+    "description": "Kode Framework 实战示例：公开博客 API + JWT 鉴权管理后台（单/多应用一体演示）",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "kode/framework": "0.8.51"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "app\\": "app/"
+        }
+    },
+    "scripts": {
+        "serve": "php bin/kode serve",
+        "migrate": "php bin/kode migrate",
+        "test": "php vendor/bin/phpunit"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../../",
+            "options": {
+                "symlink": true,
+                "versions": {
+                    "kode/framework": "0.8.51"
+                }
+            }
+        }
+    ],
+    "config": {
+        "allow-plugins": {
+            "*": true
+        },
+        "sort-packages": true,
+        "optimize-autoloader": true
+    }
+}

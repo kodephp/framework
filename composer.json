@@ -79,7 +79,8 @@
     },
     "autoload": {
         "psr-4": {
-            "Kode\\Framework\\": "src/"
+            "Kode\\Framework\\": "src/",
+            "app\\": "app/"
         },
         "files": [
             "src/Support/helpers.php"
