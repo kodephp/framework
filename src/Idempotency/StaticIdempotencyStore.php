@@ -50,7 +50,7 @@ final class StaticIdempotencyStore implements IdempotencyStore
             return true;
         }
 
-        // file 模式（v1.0.42 修复）：先用「独占创建」原子占位（fopen 'x' = O_CREAT|O_EXCL，
+        // file 模式（v1.0.0 修复）：先用「独占创建」原子占位（fopen 'x' = O_CREAT|O_EXCL，
         // 同一时刻仅一个进程能成功），彻底消除旧 check-then-act 竞态——
         // 旧实现 has() 与 write() 之间多进程并发会双双返回 true、互相覆盖，幂等去重失效。
         if (!$this->createExclusive($key)) {

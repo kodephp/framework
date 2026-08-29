@@ -208,7 +208,7 @@ if (!function_exists('session')) {
      * 需在会话中间件之后调用（即 HTTP 请求处理过程中）。CLI / 未启用会话时返回 null。
      * 写入：session()->set('key', $v)；读取：session()->get('key')。
      *
-     * 惰性启动：框架默认采用 LazySessionMiddleware（v1.0.23 起），会话对象在请求入口仅被创建、
+     * 惰性启动：框架默认采用 LazySessionMiddleware（v1.0.0 起），会话对象在请求入口仅被创建、
      * 并不立即读盘；此处首次访问时按需 start()（读负载 + 加锁），保证随后的 set 能被正确落盘。
      * 对完全不碰会话的请求（如 /ping）零 I/O、零锁。
      */

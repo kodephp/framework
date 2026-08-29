@@ -7,7 +7,6 @@ namespace Kode\Framework\Tests;
 use Kode\Context\Context;
 use Kode\Framework\Observability\Metrics\MetricRegistry;
 use Kode\Framework\Observability\Trace\TraceContext;
-use Kode\Framework\Testing\TestCase;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -26,7 +25,7 @@ final class ObservabilityTest extends TestCase
         putenv('OBS_METRICS_TOKEN=test-token');
         // 测试内强制全采样，避免 sample_ratio 让直方图时延序列出现概率性缺失。
         putenv('OBS_METRICS_SAMPLE_RATIO=1.0');
-        $this->bootApp(getcwd());
+        $this->bootApp(self::SKELETON_ROOT);
     }
 
     // ------------------------------------------------------------------

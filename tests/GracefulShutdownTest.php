@@ -115,7 +115,7 @@ final class GracefulShutdownTest extends TestCase
     public function testProviderBindsSingletonAndAlias(): void
     {
         if (app() === null) {
-            Application::make(dirname(__DIR__));
+            Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
         }
 
         $a = graceful();

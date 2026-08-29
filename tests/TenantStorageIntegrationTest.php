@@ -7,7 +7,6 @@ namespace Kode\Framework\Tests;
 use Kode\Database\Db\Db;
 use Kode\Http\App;
 use Kode\Framework\Tenant\Storage\TenantStorageManager;
-use Kode\Framework\Testing\TestCase;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use Psr\Http\Message\ResponseInterface;

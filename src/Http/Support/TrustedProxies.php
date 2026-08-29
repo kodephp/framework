@@ -7,7 +7,7 @@ namespace Kode\Framework\Http\Support;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
- * 受信代理判定与真实客户端 IP 解析工具（v1.0.42 新增）。
+ * 受信代理判定与真实客户端 IP 解析工具（v1.0.0 新增）。
  *
  * 背景：框架多处在直接信任 `X-Forwarded-For` / `X-Real-IP` / `X-User-Id` 等客户端可伪造的
  * 请求头，导致限流可绕过（伪造 XFF 刷额度）、审计溯源失真、灰度分桶可被操纵（H4）。

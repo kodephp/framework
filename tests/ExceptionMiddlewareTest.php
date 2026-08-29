@@ -117,7 +117,7 @@ final class ExceptionMiddlewareTest extends TestCase
      */
     public function testExceptionMiddlewareInPipelineAndTraceOutermost(): void
     {
-        Application::make(dirname(__DIR__));
+        Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
 
         /** @var \Kode\Http\App $app */
         $app = resolve(\Kode\Http\App::class);

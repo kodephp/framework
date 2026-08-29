@@ -8,14 +8,14 @@ declare(strict_types=1);
  *
  * 用法：
  *   bin/kode init                    初始化当前项目（生成 .env + storage/，composer create-project 后自动执行）
- *   bin/kode new <path> [--install]   脚手架：从框架骨架生成独立项目到 <path>
  *   bin/kode serve [--host H] [--port P] [--workers N]
  *                                    启动多进程 HTTP 服务（kode/process master-worker）
  *   bin/kode console <args...>        透传执行控制台命令
  *   bin/kode help                     帮助
  *
  * 作为 composer 包发布后，用户安装 kode/framework 即可通过 vendor/bin/kode 调用。
- * 推荐安装方式：composer create-project kode/framework <项目名>（自动下载 + composer install + 初始化）。
+ * 新项目请用骨架仓库：composer create-project kode/skeleton <项目名>
+ * （自动下载 + composer install + 初始化；本仓库自 v1.0.0 起为纯内核，不再自带骨架模板）。
  */
 
 // ---- 定位自动加载器（兼容「仓库内」与「composer 安装后」两种上下文）----
@@ -49,7 +49,6 @@ $args = array_slice($argv, 2);
 
 match ($command) {
     'help'         => KodeCli::help(),
-    'new'          => (new KodeNewCommand($packageRoot))->run($args),
     'init'         => (new KodeInitCommand($packageRoot))->run($args),
     'serve'        => (new KodeServeCommand())->run($args),
     'cron'         => (new KodeCronCommand())->run($args),
@@ -71,261 +70,6 @@ match ($command) {
 };
 
 exit(0);
-
-// ============================================================
-// 脚手架：从框架自带骨架生成新项目（企业级一键安装）
-// ============================================================
-final class KodeNewCommand
-{
-    /** 需要复制的骨架目录 */
-    private const SKELETON_DIRS = ['app', 'config', 'public', 'bin', 'lang', 'database'];
-
-    /** 需要复制的骨架文件 */
-    private const SKELETON_FILES = ['.env.example', '.gitignore', 'README.md'];
-
-    public function __construct(private string $packageRoot)
-    {
-    }
-
-    public function run(array $args): void
-    {
-        $install = false;
-        $target = null;
-        foreach ($args as $arg) {
-            if ($arg === '--install') {
-                $install = true;
-            } elseif ($target === null) {
-                $target = $arg;
-            }
-        }
-
-        if ($target === null) {
-            fwrite(STDERR, "用法：bin/kode new <目标目录> [--install]\n");
-            exit(1);
-        }
-
-        $target = rtrim($target, '/\\');
-        if (is_dir($target) && count(scandir($target)) > 2) {
-            fwrite(STDERR, "目标目录 {$target} 已存在且非空。\n");
-            exit(1);
-        }
-
-        @mkdir($target, 0o755, true);
-
-        // 1) 复制骨架目录
-        foreach (self::SKELETON_DIRS as $dir) {
-            $src = $this->packageRoot . '/' . $dir;
-            if (is_dir($src)) {
-                $this->copyDir($src, $target . '/' . $dir);
-            }
-        }
-
-        // 2) 复制骨架文件
-        foreach (self::SKELETON_FILES as $file) {
-            $src = $this->packageRoot . '/' . $file;
-            if (is_file($src)) {
-                copy($src, $target . '/' . $file);
-            }
-        }
-
-        // 3) 初始化 .env 与存储目录（与 composer create-project 后的 kode init 共用逻辑）
-        (new KodeInitCommand($target))->run([]);
-
-        // 4) 测试目录 + phpunit 配置 + 示例冒烟测试
-        $this->ensureDir($target . '/tests');
-        $this->writePhpunitXml($target);
-        $this->writeSmokeTest($target);
-
-        // 5) 项目级 .gitignore（忽略 vendor / .env / 运行时产物）
-        $this->writeProjectGitignore($target);
-
-        // 6) 消费者 composer.json（只依赖框架包，不自带框架源码）
-        $this->writeComposerJson($target);
-
-        echo "✅ 已生成项目骨架：{$target}\n";
-
-        if ($install) {
-            $this->runComposerInstall($target);
-        }
-
-        echo "\n下一步：\n";
-        echo "  cd {$target}\n";
-        if (!$install) {
-            echo "  composer install\n";
-        }
-        echo "  php bin/kode serve          # 启动多进程 HTTP 服务（默认 127.0.0.1:9527）\n";
-        echo "  php bin/kode console        # 查看控制台命令\n";
-    }
-
-    private function ensureDir(string $path): void
-    {
-        if (!is_dir($path)) {
-            @mkdir($path, 0o755, true);
-        }
-        $keep = $path . '/.gitkeep';
-        if (!is_file($keep)) {
-            file_put_contents($keep, '');
-        }
-    }
-
-    private function writePhpunitXml(string $root): void
-    {
-        $xml = <<<'XML'
-<?xml version="1.0" encoding="UTF-8"?>
-<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-         bootstrap="vendor/autoload.php"
-         colors="true"
-         cacheDirectory=".phpunit.cache"
-         failOnWarning="true"
-         failOnNotice="true">
-    <testsuites>
-        <testsuite name="App Test Suite">
-            <directory>tests</directory>
-        </testsuite>
-    </testsuites>
-    <source>
-        <include>
-            <directory>app</directory>
-        </include>
-    </source>
-</phpunit>
-
-XML;
-        file_put_contents($root . '/phpunit.xml', $xml);
-    }
-
-    private function writeSmokeTest(string $root): void
-    {
-        $code = <<<'PHP'
-<?php
-
-declare(strict_types=1);
-
-namespace app\tests;
-
-use PHPUnit\Framework\TestCase;
-
-/**
- * 框架安装可用性冒烟测试。
- */
-final class SmokeTest extends TestCase
-{
-    public function testFrameworkLoadable(): void
-    {
-        $this->assertTrue(class_exists(\Kode\Framework\Application::class), 'kode/framework 未正确安装');
-    }
-
-    public function testRoutesFileExists(): void
-    {
-        $this->assertFileExists($this->basePath() . '/app/routes.php');
-    }
-
-    private function basePath(): string
-    {
-        return dirname(__DIR__, 2);
-    }
-}
-
-PHP;
-        file_put_contents($root . '/tests/SmokeTest.php', $code);
-    }
-
-    private function writeProjectGitignore(string $root): void
-    {
-        $content = <<<'TXT'
-# 依赖
-/vendor/
-
-# 环境变量（含密钥，禁止提交）
-/.env
-/.env.*
-!/.env.example
-
-# 运行时产物
-/storage/logs/*
-/storage/cache/*
-/storage/framework/cache/*
-/storage/framework/sessions/*
-/storage/framework/views/*
-!*.gitkeep
-
-# 测试缓存
-/.phpunit.cache/
-/phpunit.xml.bak
-
-# IDE / OS
-/.idea/
-/.vscode/
-.DS_Store
-
-TXT;
-        file_put_contents($root . '/.gitignore', $content);
-    }
-
-    private function writeComposerJson(string $root): void
-    {
-        $compose = [
-            'name' => 'app/' . basename($root),
-            'type' => 'project',
-            'require' => [
-                'php' => '>=8.3',
-                'kode/framework' => '*',
-            ],
-            'require-dev' => [
-                'phpunit/phpunit' => '^11.0',
-            ],
-            'autoload' => [
-                'psr-4' => [
-                    'app\\' => 'app/',
-                ],
-            ],
-            'autoload-dev' => [
-                'psr-4' => [
-                    'app\\tests\\' => 'tests/',
-                ],
-            ],
-            'scripts' => [
-                'serve' => 'php bin/kode serve',
-                'console' => 'php bin/console',
-                'test' => 'php vendor/bin/phpunit',
-            ],
-            'config' => [
-                'allow-plugins' => ['*' => true],
-            ],
-        ];
-        file_put_contents($root . '/composer.json', json_encode($compose, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
-    }
-
-    private function runComposerInstall(string $root): void
-    {
-        echo "\n⏳ 正在运行 composer install ...\n";
-        $cwd = getcwd();
-        chdir($root);
-        passthru('composer install --no-interaction 2>&1', $code);
-        chdir($cwd);
-        if ($code !== 0) {
-            fwrite(STDERR, "composer install 失败（请手动在 {$root} 中执行）。\n");
-        }
-    }
-
-    private function copyDir(string $src, string $dst): void
-    {
-        @mkdir($dst, 0o755, true);
-        foreach (scandir($src) as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $s = $src . '/' . $item;
-            $d = $dst . '/' . $item;
-            if (is_dir($s)) {
-                $this->copyDir($s, $d);
-            } else {
-                copy($s, $d);
-            }
-        }
-    }
-}
 
 // ============================================================
 // 初始化：生成 .env 与存储目录（composer create-project 后自动执行）
@@ -643,9 +387,8 @@ final class KodeCli
     public static function help(): void
     {
         echo "Kode Framework 命令行工具\n\n";
-        echo "  composer create-project kode/framework <项目名>   一句话安装（下载 + composer install + 初始化）\n";
+        echo "  composer create-project kode/skeleton <项目名>   一句话安装（下载 + composer install + 初始化）\n";
         echo "  bin/kode init                    初始化当前项目（生成 .env + storage/）\n";
-        echo "  bin/kode new <path> [--install]   脚手架：生成独立项目到 <path>（--install 自动 composer install）\n";
         echo "  bin/kode serve [--host H] [--port P] [--workers N] [--watch]   启动多进程 HTTP 服务（--watch 开热重载）\n";
         echo "  bin/kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  bin/kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";

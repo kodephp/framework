@@ -135,7 +135,7 @@ final class CircuitBreakerMiddleware implements MiddlewareInterface
         }
 
         // path（默认）：按路由隔离，不同路由独立熔断，互不影响。
-        // v1.0.42（H8）：路径经 RouteKey 归一化（/users/42 → /users/{id}、UUID → /{uuid}），
+        // v1.0.0（H8）：路径经 RouteKey 归一化（/users/42 → /users/{id}、UUID → /{uuid}），
         // 同一路由的动态参数实例共享同一熔断状态，防止遍历动态路径绕过熔断。
         return RouteKey::normalize($request->getUri()->getPath()) ?: '/';
     }

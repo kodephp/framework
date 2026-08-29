@@ -112,7 +112,7 @@ final class LockWatchdog
     /**
      * 内置默认续期调度：auto 优先尝试 fiber（仅在真正处于调度器上下文中），否则回退 tick。
      *
-     * 修复说明（v1.0.42）：
+     * 修复说明（v1.0.0）：
      *  - 旧实现用 `Fibers::scheduler() !== null` 判断 fiber 可用性，但 kode/fibers 的
      *    `Scheduler::default()` 总会创建并返回默认调度器、永不为 null，导致 auto 模式恒走
      *    fiber 分支；
@@ -141,7 +141,7 @@ final class LockWatchdog
      *
      * 重要限制：ticks 只在以 declare(ticks=N) 编译的作用域内触发。若业务代码文件
      * 未声明 ticks，续期回调一次都不会执行——本实现会在 work 结束后检测「长任务
-     * 期间 0 次续期」并告警（v1.0.52），避免该静默失效伪装成可用防线。
+     * 期间 0 次续期」并告警（v1.0.0），避免该静默失效伪装成可用防线。
      */
     private function tickTicker(callable $work, callable $tick, int $interval): mixed
     {
@@ -176,7 +176,7 @@ final class LockWatchdog
     /**
      * fiber 驱动：把续期协程**并行挂载**到当前事件循环，与 work 并行推进（需 fiber 调度器驱动）。
      *
-     * 与旧实现的差异（v1.0.42 修复）：
+     * 与旧实现的差异（v1.0.0 修复）：
      *  - 不再使用 `Fibers::go()`（同步执行直到任务结束，会把 watchdog 无限循环阻塞在当前
      *    执行单元上，导致 `$work()` 永远不执行）；改用 `Scheduler::current()->go()` 把协程
      *    挂到当前调度器后就立即返回（非阻塞），`$work()` 在自身协程继续执行；

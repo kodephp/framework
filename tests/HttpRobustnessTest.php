@@ -7,7 +7,6 @@ namespace Kode\Framework\Tests;
 use Kode\Database\Db\Db;
 use Kode\Framework\Http\Middleware\JsonBodyMiddleware;
 use Kode\Framework\Http\Middleware\TransactionMiddleware;
-use Kode\Framework\Testing\TestCase;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
 use Psr\Http\Message\ResponseInterface;

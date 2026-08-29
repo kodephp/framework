@@ -6,7 +6,6 @@ namespace Kode\Framework\Tests;
 
 use Kode\Core\Config\Config;
 use Kode\Framework\Config\ConfigCenter;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**
@@ -37,7 +36,7 @@ final class ConfigCenterIntegrationTest extends TestCase
         putenv('CONFIG_CENTER_ENABLED=true');
         putenv('CONFIG_CENTER_FILE=' . $this->markerFile);
 
-        $this->app = $this->bootApp(getcwd());
+        $this->app = $this->bootApp(self::SKELETON_ROOT);
     }
 
     protected function tearDown(): void

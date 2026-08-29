@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Tests;
 
-use Kode\Framework\Testing\TestCase;
 
 /**
  * apidoc 默认关闭验证：未显式开启时 /docs 与 /docs/openapi.json 均不挂载。
@@ -20,7 +19,7 @@ final class ApiDocDisabledByDefaultTest extends TestCase
         // 不设置 configOverrides：使用真实 config/apidoc.php（enabled=false）。
         // 要求独立进程级实例：与启用 apidoc 的测试类（ApiDocTest）配置意图冲突。
         $this->independentApp = true;
-        $this->bootApp(getcwd());
+        $this->bootApp(self::SKELETON_ROOT);
     }
 
     public function testDocsJsonEndpointNotMountedWhenDisabled(): void

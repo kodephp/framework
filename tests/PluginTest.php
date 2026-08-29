@@ -21,7 +21,7 @@ final class PluginTest extends TestCase
 {
     public function testPluginRegistersRouteAndService(): void
     {
-        Application::make(dirname(__DIR__));
+        Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
 
         /** @var PluginManager $manager */
         $manager = resolve(PluginManager::class);

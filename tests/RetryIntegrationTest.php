@@ -10,7 +10,6 @@ use Kode\Framework\Resilience\Events\RetryExhausted as RetryExhaustedEvent;
 use Kode\Framework\Resilience\Events\RetrySucceeded;
 use Kode\Framework\Resilience\Retry;
 use Kode\Framework\Resilience\RetryExhausted;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**

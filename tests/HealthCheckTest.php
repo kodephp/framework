@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\Health\HealthChecker;
-use Kode\Framework\Testing\TestCase;
 
 /**
  * 健康检查：HealthChecker 单元 + /health* 端点集成。
@@ -66,7 +65,7 @@ final class HealthCheckTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->bootApp(getcwd());
+        $this->bootApp(self::SKELETON_ROOT);
     }
 
     public function testReadinessReturnsValidStatus(): void

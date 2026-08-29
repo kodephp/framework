@@ -7,7 +7,6 @@ namespace Kode\Framework\Tests;
 use Kode\Framework\Http\Resp;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Http\App;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**

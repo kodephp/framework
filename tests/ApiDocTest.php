@@ -14,7 +14,6 @@ use Kode\Framework\ApiDoc\Attributes\OpenApiResponse;
 use Kode\Framework\ApiDoc\OpenApiGenerator;
 use Kode\Framework\Console\Commands\ApiDocGenerateCommand;
 use Kode\Framework\Http\RouteRegistry;
-use Kode\Framework\Testing\TestCase;
 use Kode\Http\App;
 
 /**
@@ -183,7 +182,7 @@ final class ApiDocTest extends TestCase
         // 要求独立进程级实例：enabled=true 与默认配置冲突，需重建 kode/core 单例。
         $this->independentApp = true;
         $this->configOverrides = ['apidoc' => ['enabled' => true]];
-        $this->bootApp(getcwd());
+        $this->bootApp(self::SKELETON_ROOT);
     }
 
     public function testOpenApiJsonEndpoint(): void

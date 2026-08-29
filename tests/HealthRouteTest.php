@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Tests;
 
-use Kode\Framework\Testing\TestCase;
 
 /**
  * 健康检查端点 + TestCase 基类冒烟测试。
@@ -17,7 +16,7 @@ final class HealthRouteTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->bootApp(getcwd());
+        $this->bootApp(self::SKELETON_ROOT);
     }
 
     public function testHealthAggregate(): void

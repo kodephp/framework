@@ -29,7 +29,7 @@ final class SchedulingTest extends TestCase
     {
         parent::setUp();
         if (!self::$booted) {
-            Application::make(dirname(__DIR__));
+            Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
             self::$booted = true;
         }
         // 扫描依赖 class_exists 触发自动加载；夹具不在 PSR-4 内，故手动 require。

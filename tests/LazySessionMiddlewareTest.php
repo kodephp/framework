@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Tests;
 
-use Kode\Framework\Testing\TestCase;
 use Kode\Http\App;
 use Kode\Session\SessionManager;
 

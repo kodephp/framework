@@ -6,7 +6,6 @@ namespace Kode\Framework\Tests;
 
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Security\Audit\AuditSink;
-use Kode\Framework\Testing\TestCase;
 use Kode\Http\App;
 use Kode\Http\Response;
 use Monolog\Handler\TestHandler;

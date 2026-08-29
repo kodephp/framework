@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Http\Support;
 
 /**
- * 路由键归一化工具（v1.0.42 新增，供限流 / 熔断等按「路由」维度进行状态隔离时共用）。
+ * 路由键归一化工具（v1.0.0 新增，供限流 / 熔断等按「路由」维度进行状态隔离时共用）。
  *
  * 目的：把动态路径（/users/42、/users/0189abc-....）归一为模板形态（/users/{id}、
  * /users/{uuid}），使同一路由的不同参数实例共享同一个状态键。

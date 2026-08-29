@@ -24,7 +24,7 @@ use Psr\Log\LoggerInterface;
  * 开关见 config/logging.php 的 access_log.enabled；生产建议开启。
  * 自身异常（如日志写入失败）绝不中断请求——观测是辅助，可用性优先。
  *
- * v1.0.42：
+ * v1.0.0：
  *  - query 写入日志前经 {@see QueryMasker} 脱敏（H5），防令牌/密码明文落日志；
  *  - client_ip 仅当直连对端为受信代理时采信转发头（H4），否则一律用 REMOTE_ADDR。
  */

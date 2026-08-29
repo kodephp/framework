@@ -8,7 +8,6 @@ use Kode\Event\Dispatcher;
 use Kode\Framework\Lock\LockAcquired;
 use Kode\Framework\Lock\LockManager;
 use Kode\Framework\Lock\LockReleased;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**

@@ -189,7 +189,7 @@ final class RateLimitTest extends TestCase
     public function testAttributeRoutesAreTaggedInRealApp(): void
     {
         // 启动真实应用，验证 ProductsController 的 #[RateLimit] 已被登记到 registry。
-        Application::make(dirname(__DIR__));
+        Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
         /** @var RouteRegistry $registry */
         $registry = resolve(RouteRegistry::class);
 
@@ -210,7 +210,7 @@ final class RateLimitTest extends TestCase
      */
     public function testLimiterSingletonResolvesFromContainer(): void
     {
-        Application::make(dirname(__DIR__));
+        Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
 
         /** @var \Kode\Limiting\Limiter $limiter */
         $limiter = resolve(\Kode\Limiting\Limiter::class);

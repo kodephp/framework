@@ -8,7 +8,6 @@ use Kode\Context\Context;
 use Kode\Framework\Contracts\AuthGuard;
 use Kode\Framework\Http\Middleware\AuthMiddleware;
 use Kode\Framework\Security\Audit\AuditSink;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use Kode\Http\Request;
 use Kode\Http\Response;

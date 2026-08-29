@@ -21,7 +21,7 @@ final class DatabaseFacadeTest extends TestCase
 {
     public function testFacadeResolvesAndForwards(): void
     {
-        Application::make(dirname(__DIR__));
+        Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
 
         // 门面背后实例是 Db 静态代理类。
         self::assertInstanceOf(Db::class, \Kode\Framework\Facades\DB::getInstance());

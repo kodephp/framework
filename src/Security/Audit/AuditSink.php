@@ -12,7 +12,7 @@ use Psr\Log\LoggerInterface;
  * 设计立场：审计是「合规记录」型观测数据，无需在请求路径内同步落盘。本 Sink 让
  * {@see AuditService::record()} 在热路径上只做**一次内存入队**（µs 级、零 I/O），
  * 真实格式化 + 写入由 {@see flush()} 在响应发出后的 shutdown / 优雅停机钩子里批量执行——
- * 绝不阻塞客户端响应，与 v1.0.23 把追踪导出、v1.0.25 把访问日志移出请求路径完全对称。
+ * 绝不阻塞客户端响应，与 v1.0.0 把追踪导出、v1.0.0 把访问日志移出请求路径完全对称。
  *
  *  - 进程级静态队列：Swoole / Workerman 每个 worker 独立隔离，天然支持常驻运行时。
  *  - 不持有 Logger：解耦录制与导出，flush 时由调用方注入，便于测试替换为内存 logger。
@@ -22,7 +22,7 @@ use Psr\Log\LoggerInterface;
 final class AuditSink
 {
     /**
-     * 队列硬上限（防御性，v1.0.42 对齐 AccessLogSink）：即使下游 flush 因异常未触发，
+     * 队列硬上限（防御性，v1.0.0 对齐 AccessLogSink）：即使下游 flush 因异常未触发，
      * 也保证内存有界，不会在持续高并发下无限累积直至 worker OOM。达上限时丢弃最新条目
      * （审计在极端过载下可丢弃，优于 OOM 致 worker 崩溃、整体不可用）。
      */

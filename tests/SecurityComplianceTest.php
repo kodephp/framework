@@ -8,7 +8,6 @@ use Kode\Context\Context;
 use Kode\Framework\Http\Middleware\VersioningMiddleware;
 use Kode\Framework\Security\Audit\AuditService;
 use Kode\Framework\Security\Audit\AuditSink;
-use Kode\Framework\Testing\TestCase;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
 use Psr\Log\LoggerInterface;
@@ -237,7 +236,7 @@ final class SecurityComplianceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->bootApp(getcwd());
+        $this->bootApp(self::SKELETON_ROOT);
     }
 
     public function testSecurityHeadersIncludeCspAndCoop(): void

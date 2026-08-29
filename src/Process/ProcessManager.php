@@ -224,7 +224,7 @@ final class ProcessManager
     {
         foreach ($this->effectiveSlots($worker) as $slot) {
             $slotWorker = new SlotWorker($worker, $slot);
-            // onStart/onStop 与 handle 同等隔离（v1.0.52）：单个槽位的钩子异常不应
+            // onStart/onStop 与 handle 同等隔离（v1.0.0）：单个槽位的钩子异常不应
             // 中断 start()，导致后续 worker / 槽位全部不启动。
             try {
                 $slotWorker->onStart();

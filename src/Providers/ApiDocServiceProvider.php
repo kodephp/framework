@@ -151,7 +151,7 @@ HTML;
 
     private function remoteAddr(\Psr\Http\Message\ServerRequestInterface $request): string
     {
-        // protect=local 只信对端地址（v1.0.52 安全修复）：X-Forwarded-For / X-Real-IP 可被
+        // protect=local 只信对端地址（v1.0.0 安全修复）：X-Forwarded-For / X-Real-IP 可被
         // 任意客户端伪造，旧实现远程攻击者带 'X-Forwarded-For: 127.0.0.1' 即可绕过本机限制。
         // 经反向代理部署时请改用 token 模式或在网络层隔离 /metrics、/docs。
         $server = $request->getServerParams();

@@ -46,7 +46,8 @@ final class ConfigValidationTest extends TestCase
 
     private function copyConfig(): void
     {
-        $src = getcwd() . '/config';
+        // 骨架夹具的 config/（仓库根自 v1.0.0 起收敛为纯内核，不再携带 config/）。
+        $src = \Kode\Framework\Tests\TestCase::SKELETON_ROOT . '/config';
         foreach (glob($src . '/*.php') ?: [] as $file) {
             copy($file, $this->tmp . '/config/' . basename((string) $file));
         }

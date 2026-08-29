@@ -22,7 +22,7 @@ final class QueueFacadeTest extends TestCase
 {
     public function testFacadeLoadsAndResolves(): void
     {
-        Application::make(dirname(__DIR__));
+        Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
 
         // 门面背后实例是 kode/queue 的 Queue。
         self::assertInstanceOf(Queue::class, \Kode\Framework\Facades\Queue::getInstance());

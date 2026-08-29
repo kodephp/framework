@@ -1,0 +1,2 @@
+<?php exit; ?>
+a:3:{s:3:"foo";a:2:{s:4:"data";s:3:"bar";s:6:"expire";i:1787974048;}s:10:"_flash_new";a:2:{s:4:"data";a:0:{}s:6:"expire";i:1787974048;}s:10:"_flash_old";a:2:{s:4:"data";a:0:{}s:6:"expire";i:1787974048;}}

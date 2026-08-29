@@ -9,7 +9,6 @@ use Kode\Framework\Idempotency\IdempotencyMiddleware;
 use Kode\Framework\Http\Resp;
 use Kode\Framework\Resilience\Breaker;
 use Kode\Framework\Resilience\Retry;
-use Kode\Framework\Testing\TestCase;
 
 /**
  * 框架整体功能门禁（端到端冒烟）。

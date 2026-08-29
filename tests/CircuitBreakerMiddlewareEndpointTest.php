@@ -8,7 +8,6 @@ use Kode\Framework\Http\Resp;
 use Kode\Framework\Http\RouteRegistry;
 use Kode\Framework\Resilience\CircuitBreakerMiddleware;
 use Kode\Http\App;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**

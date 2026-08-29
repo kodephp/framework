@@ -9,8 +9,11 @@
 ## 5 分钟跑起来
 
 ```bash
-# 1. 一句话安装：下载框架 + composer install + 初始化（项目名 myapp 写在包名后）
-composer create-project kode/framework myapp
+# 1. 安装：下载骨架 + composer install + 初始化（项目名 myapp 写在包名后）
+#    骨架仓库 = kode/skeleton；本仓库（kode/framework）自 v1.0.0 起为纯内核，作为依赖被引入
+composer create-project kode/skeleton myapp \
+  --repository='{"type":"vcs","url":"https://github.com/kodephp/skeleton.git"}' \
+  --stability=dev
 cd myapp
 
 # 2. 启动多进程 HTTP 服务（默认 http://127.0.0.1:9527）
@@ -18,11 +21,17 @@ php bin/kode serve
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.0.0","php":"8.3.x","env":"local","time":"..."}
+# {"status":"ok","service":"kode-app","version":"1.0.0","php":"8.3.33","env":"local","time":"..."}
 ```
 
-> 安装时 `composer create-project` 会自动生成 `.env` 与 `storage/` 目录。
-> 若把框架作为依赖引入已有项目：`composer require kode/framework`，再把仓库里的 `app/`、`config/`、`bin/`、`lang/`、`database/` 复制进项目根，然后 `php vendor/bin/kode init`。
+> **为什么多了 `--repository`**：`kode/skeleton` 与 `kode/framework` 目前都**未提交到 Packagist**，
+> 直接 `composer create-project kode/skeleton myapp` 会报 `Could not find package ... with stability stable`。
+> 显式指定 VCS 仓库即可安装；骨架的 `composer.json` 已声明 framework 的 VCS 仓库，依赖可正常解析。
+
+> 安装时 `composer create-project` 会自动执行 `php bin/kode init`，生成 `.env`（含强随机 `JWT_SECRET`，权限 0600）与 `storage/` 目录。
+> 若把框架作为依赖引入已有项目：在 `composer.json` 声明 framework 的 VCS 仓库后 `composer require kode/framework`，再从
+> [kode/skeleton](https://github.com/kodephp/skeleton) 复制 `app/`、`config/`、`bin/`、`lang/`、
+> `database/` 到项目根，然后 `php vendor/bin/kode init`。（本仓库不再自带这些骨架目录。）
 
 第一个接口：
 

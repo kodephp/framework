@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\Application;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**

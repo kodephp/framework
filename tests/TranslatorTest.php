@@ -18,7 +18,8 @@ final class TranslatorTest extends TestCase
     {
         return new Translator(
             ['default' => 'zh-CN'],
-            [__DIR__ . '/../lang'],
+            // 骨架夹具的 lang/（仓库根自 v1.0.0 起收敛为纯内核，不再携带 lang/）。
+            [\Kode\Framework\Tests\TestCase::SKELETON_ROOT . '/lang'],
         );
     }
 

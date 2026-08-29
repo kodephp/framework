@@ -8,7 +8,6 @@ use Kode\Framework\Observability\Trace\Contracts\SpanExporter;
 use Kode\Framework\Observability\Trace\Span;
 use Kode\Framework\Observability\Trace\SpanKind;
 use Kode\Framework\Observability\Trace\Tracer;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**

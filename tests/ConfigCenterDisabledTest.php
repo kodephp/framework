@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Tests;
 
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**
@@ -21,7 +20,7 @@ final class ConfigCenterDisabledTest extends TestCase
         putenv('CONFIG_CENTER_ENABLED=false');
         putenv('CONFIG_CENTER_FILE');
 
-        $this->bootApp(getcwd());
+        $this->bootApp(self::SKELETON_ROOT);
     }
 
     protected function tearDown(): void

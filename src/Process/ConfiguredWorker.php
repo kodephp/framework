@@ -26,7 +26,7 @@ use ReflectionMethod;
  *
  * 优先级约定：声明键（interval/count/once/slots）**优先于**类内方法重写——
  * 条目里写了对应键即以配置为准，未写的键回落类内实现。请勿按「类内重写优先生效」
- * 的理解在类里定制后又于配置声明同名键（v1.0.52 修正 docblock 与实现对齐）。
+ * 的理解在类里定制后又于配置声明同名键（v1.0.0 修正 docblock 与实现对齐）。
  */
 final class ConfiguredWorker extends Worker
 {

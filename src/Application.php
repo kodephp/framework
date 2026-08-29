@@ -88,7 +88,7 @@ final class Application
     private bool $booted = false;
 
     /**
-     * preloadAppConfig() 的调用缓存（v1.0.42，M2）：config/app.php 引导期至多 require 一次，
+     * preloadAppConfig() 的调用缓存（v1.0.0，M2）：config/app.php 引导期至多 require 一次，
      * 避免 providers()/runtimeModes()/checkProviderCoverage() 重复 require 触发顶层副作用
      * （define() 重复定义告警等）。null = 尚未加载。
      *
@@ -323,7 +323,7 @@ final class Application
      * 在 App::boot() 之前预读 config/app.php，用于 providers / runtime 合并。
      * 仅读取单个文件，不依赖完整的配置加载流程。
      *
-     * v1.0.42（M2）：结果缓存于 {@see $preloaded}，引导期内多次调用只 require 一次，
+     * v1.0.0（M2）：结果缓存于 {@see $preloaded}，引导期内多次调用只 require 一次，
      * 消除顶层副作用重复执行风险。
      *
      * @return array<string, mixed>

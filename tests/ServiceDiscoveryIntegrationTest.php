@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\ServiceDiscovery\ServiceDiscovery;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**
@@ -21,7 +20,7 @@ final class ServiceDiscoveryIntegrationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->app = $this->bootApp(getcwd());
+        $this->app = $this->bootApp(self::SKELETON_ROOT);
     }
 
     #[RunInSeparateProcess]

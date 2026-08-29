@@ -36,7 +36,7 @@ spec:
       terminationGracePeriodSeconds: 40
       containers:
         - name: app
-          image: kode-app:0.8.53
+          image: kode-app:1.0.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9527

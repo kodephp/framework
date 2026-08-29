@@ -3,17 +3,11 @@
 
 # 开发/文档产物不进入分发包（仅影响 composer require 的 vendor 压缩包，不影响 git clone / create-project）
 /tests/                export-ignore
-/docs/                 export-ignore
-/examples/             export-ignore
 /.workbuddy/           export-ignore
 /.github/              export-ignore
 
-# 骨架模板（app/config 等）仅用于 composer create-project 的项目根，不进 vendor/kode/framework
-/app/                  export-ignore
-/config/               export-ignore
-/public/               export-ignore
-/database/             export-ignore
-/lang/                 export-ignore
+# 说明：v1.0.0 起本仓库收敛为纯内核，app/ config/ public/ database/ lang/ 已移除
+# （骨架独立为 kode/skeleton 仓库）。tests/skeleton/ 是集成测试夹具，随 /tests/ 一并排除。
 
 # 运行时产物（仅保留目录占位 .gitkeep，由 bin/kode init 重建）
 /storage/cache/*       export-ignore

@@ -17,8 +17,33 @@ final class HotReloadTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // 框架根目录自身含 app/config/src/public/bin，可作为监听目标。
-        $this->root = dirname(__DIR__);
+        // 自建临时项目根（含 app/config/src/public/bin），使本用例不依赖仓库自身布局
+        // ——仓库根自 v1.0.0 起收敛为纯内核，已不再携带 app/config/public。
+        $this->root = sys_get_temp_dir() . '/kode_watch_' . uniqid('', true);
+        foreach (['app', 'config', 'src', 'public', 'bin'] as $sub) {
+            mkdir($this->root . '/' . $sub, 0o755, true);
+        }
+    }
+
+    protected function tearDown(): void
+    {
+        $this->removeDir($this->root);
+        parent::tearDown();
+    }
+
+    private function removeDir(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        foreach (scandir($dir) ?: [] as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $path = $dir . '/' . $item;
+            is_dir($path) ? $this->removeDir($path) : unlink($path);
+        }
+        rmdir($dir);
     }
 
     public function testResolveWatchDirsFallsBackToExistingDefaults(): void

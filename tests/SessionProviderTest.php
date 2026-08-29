@@ -22,7 +22,7 @@ final class SessionProviderTest extends TestCase
     {
         parent::setUp();
         if (app() === null) {
-            Application::make(dirname(__DIR__));
+            Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
         }
     }
 

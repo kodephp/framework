@@ -23,7 +23,7 @@ final class DatabaseFeatureTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        Application::make(dirname(__DIR__));
+        Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
     }
 
     public function testSchemaFacadeResolvesToWrapper(): void
@@ -72,7 +72,7 @@ final class DatabaseFeatureTest extends TestCase
     {
         // 框架自带示例迁移应被发现（文件名含 create_users_table）。
         // 注意：getPendingFiles()/run() 会真实连库（MySQL），离线测试只验证文件发现。
-        $real = new Migrator(dirname(__DIR__) . '/database/migrations');
+        $real = new Migrator(\Kode\Framework\Tests\TestCase::SKELETON_ROOT . '/database/migrations');
         $files = $real->getMigrationFiles();
         self::assertNotEmpty($files);
         self::assertStringContainsString('create_users_table', (string) $files[0]);

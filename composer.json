@@ -87,7 +87,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Kode\\Framework\\Tests\\": "tests/"
+            "Kode\\Framework\\Tests\\": "tests/",
+            "app\\": "tests/skeleton/app/"
         }
     },
     "bin": [
@@ -105,7 +106,6 @@
     "scripts": {
         "serve": "php bin/kode serve",
         "console": "php bin/console",
-        "new": "php bin/kode new",
         "init": "php bin/kode init",
         "test": "php vendor/bin/phpunit"
     }

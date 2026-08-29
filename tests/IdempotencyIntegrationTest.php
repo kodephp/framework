@@ -8,7 +8,6 @@ use Kode\Event\Dispatcher;
 use Kode\Framework\Idempotency\IdempotencyHit;
 use Kode\Framework\Idempotency\IdempotencyManager;
 use Kode\Framework\Idempotency\IdempotencyRecorded;
-use Kode\Framework\Testing\TestCase;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 /**

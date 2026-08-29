@@ -37,7 +37,7 @@ final class ScheduleCommandTest extends TestCase
     {
         parent::setUp();
         if (app() === null) {
-            Application::make(dirname(__DIR__));
+            Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
         }
         $this->fixturesDir = __DIR__ . '/Fixtures/Tasks';
         foreach (glob($this->fixturesDir . '/*.php') ?: [] as $file) {

@@ -9,7 +9,6 @@ use Kode\Fibers\Fibers;
 use Kode\Framework\Resilience\Events\TimeoutExceeded as TimeoutExceededEvent;
 use Kode\Framework\Resilience\Timeout;
 use Kode\Framework\Resilience\TimeoutExceeded;
-use Kode\Framework\Testing\TestCase;
 
 /**
  * 超时集成测试（真引导框架）。
