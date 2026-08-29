@@ -49,7 +49,7 @@ final class ComplianceServiceProvider extends ServiceProvider
             $audit = $this->container->get(AuditService::class);
             $app->use(new AuditMiddleware($audit));
 
-            // 离路径 flush 钩子：审计默认异步入队（v0.8.27，与访问日志同范式），
+            // 离路径 flush 钩子：审计默认异步入队（v1.0.27，与访问日志同范式），
             // 真实写入由响应后的 shutdown / 优雅停机批量执行，不阻塞客户端响应。
             $async = (bool) ($this->config('audit.async', true) ?? true);
             if ($async && $this->container->bound(AuditSink::class)) {

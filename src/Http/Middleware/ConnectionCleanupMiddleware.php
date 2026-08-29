@@ -54,7 +54,7 @@ class ConnectionCleanupMiddleware implements MiddlewareInterface
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        // 请求级上下文收口（v0.8.42）：在**请求开始前**清除上个请求残留的 auth_user_id，
+        // 请求级上下文收口（v1.0.42）：在**请求开始前**清除上个请求残留的 auth_user_id，
         // 防跨请求泄漏。AuditService 现改为「读取不清除」（同请求内多次审计可取到一致用户 ID），
         // 因此必须由本全局最外层中间件兜底清理——未鉴权请求若读到上个请求残留的用户身份，
         // 会把审计错误归属到该用户头上。

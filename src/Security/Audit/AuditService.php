@@ -24,7 +24,7 @@ use Psr\Log\LogLevel;
  * 设计立场：审计是「合规记录」，写入 PSR 日志器（默认 Monolog 落 storage/logs），
  * 不侵入业务；敏感路径可在 config/audit.ignore_paths 屏蔽。
  *
- * 默认**离路径异步导出**（v0.8.27，与 v0.8.25 访问日志同范式）：record() 在热路径上只
+ * 默认**离路径异步导出**（v1.0.27，与 v1.0.25 访问日志同范式）：record() 在热路径上只
  * 做一次内存入队，真实格式化 + 日志写入由响应后的 shutdown / 优雅停机钩子批量执行，绝不
  * 阻塞客户端响应；async=false 时退化为同步写，兼容审计强一致场景。
  */
@@ -34,7 +34,7 @@ final class AuditService
      * 默认敏感字段名（统一小写）。命中其一的查询参数 / 事件明细值将被替换为 '***'。
      * 可经 config/audit.php 的 mask_params 覆盖（设为 [] 即显式关闭脱敏）。
      *
-     * v0.8.42 起移至 {@see QueryMasker::DEFAULT_MASK_PARAMS}，本常量保留为兼容别名
+     * v1.0.42 起移至 {@see QueryMasker::DEFAULT_MASK_PARAMS}，本常量保留为兼容别名
      * （与访问日志共用同一份默认集合，避免两份拷贝漂移）。
      */
     public const DEFAULT_MASK_PARAMS = QueryMasker::DEFAULT_MASK_PARAMS;
@@ -183,7 +183,7 @@ final class AuditService
     }
 
     /**
-     * 脱敏查询串（v0.8.42 起委托 {@see QueryMasker}，与访问日志共用实现）。
+     * 脱敏查询串（v1.0.42 起委托 {@see QueryMasker}，与访问日志共用实现）。
      */
     private function maskQuery(string $query): string
     {
@@ -193,7 +193,7 @@ final class AuditService
     /**
      * 从 kode/context 解析当前用户 ID（AuthMiddleware 鉴权时写入）。
      *
-     * 修复说明（v0.8.42）：旧实现「读取后立即清除」，导致同一请求内先执行一次审计后，
+     * 修复说明（v1.0.42）：旧实现「读取后立即清除」，导致同一请求内先执行一次审计后，
      * 后续业务审计（recordEvent / record）再也取不到用户 ID（H1）。现在**只读不清除**，
      * 同请求内多次读取结果一致；防跨请求泄漏的清理改由全局最外层
      * {@see \Kode\Framework\Http\Middleware\ConnectionCleanupMiddleware} 在每个请求

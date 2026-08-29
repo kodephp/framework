@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace Kode\Framework\Http\Support;
 
 /**
- * 查询串 / 明细数据脱敏工具（v0.8.42 抽出，供审计与访问日志共用）。
+ * 查询串 / 明细数据脱敏工具（v1.0.42 抽出，供审计与访问日志共用）。
  *
  * 背景：审计（AuditService）与访问日志（AccessLogMiddleware）都要把请求查询串写入日志，
  * 敏感参数（password / token / key / cookie 等）必须脱敏，否则凭证会以明文落盘（H5）。
  *
  * 本类统一实现：
- *  - 默认敏感字段名集合 {@see DEFAULT_MASK_PARAMS}（与 v0.8.41 审计服务默认值一致，
+ *  - 默认敏感字段名集合 {@see DEFAULT_MASK_PARAMS}（与 v1.0.41 审计服务默认值一致，
  *    保证已有部署行为不变）；
  *  - 对「& 分隔的查询串」按参数名原地替换为 `key=***`（保留原串格式，不做 URL 重编码）；
  *  - 对嵌套数组（filter[password]=x 这类 query 解构 / 事件明细）递归脱敏。
@@ -58,7 +58,7 @@ final class QueryMasker
     /**
      * 递归脱敏：键命中 mask 集合的值替换为 '***'（兼容嵌套数组，如 filter[password]=x）。
      *
-     * v0.8.52：匹配口径与 {@see maskQuery()} 统一为「子串包含」——旧实现用精确相等，
+     * v1.0.52：匹配口径与 {@see maskQuery()} 统一为「子串包含」——旧实现用精确相等，
      * `api-key`、`user_password`、`client_secret_v2` 等命名因不等于清单精确项而明文落日志。
      *
      * @param array<string, mixed> $data

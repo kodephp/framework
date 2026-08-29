@@ -152,7 +152,7 @@ final class HotReloadWatcher
     /**
      * 优雅关停子进程（SIGTERM → 宽限轮询 → SIGKILL 升级 → 关闭）。
      *
-     * v0.8.52：不再「固定睡 0.8s 后直接 proc_close」——proc_close 会阻塞到子进程真正退出，
+     * v1.0.52：不再「固定睡 0.8s 后直接 proc_close」——proc_close 会阻塞到子进程真正退出，
      * 而 serve 的优雅停机宽限默认可达 30s，开发期每次保存文件都可能让看门狗卡住数十秒。
      *
      * @param resource|null $proc

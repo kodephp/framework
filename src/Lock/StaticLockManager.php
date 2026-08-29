@@ -17,7 +17,7 @@ use RuntimeException;
  * 跨主机分布式锁（Redis / etcd / DB）不属于本类职责——实现 {@see LockManager} 并经
  * {@see \Kode\Framework\Providers\LockServiceProvider} 绑定即可替换，API 完全一致。
  *
- * 复制安全（v0.8.52 修复）：file 模式以 fopen 'x'（O_CREAT|O_EXCL）独占创建作为获取原语，
+ * 复制安全（v1.0.52 修复）：file 模式以 fopen 'x'（O_CREAT|O_EXCL）独占创建作为获取原语，
  * 未过期锁的互斥为强原子；释放为「flock 下重读校验 owner 再 unlink」的原子 compare-and-delete。
  * 已知限制：对「恰好过期」锁的惰性抢占（读→判过期→unlink→重建）仍存在极窄竞态窗口——
  * 两个进程同时抢占同一把刚过期的锁时，理论上可能双双成功。需要严格互斥语义的分布式场景请

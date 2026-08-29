@@ -149,7 +149,7 @@ final class CsrfMiddleware implements MiddlewareInterface
     /**
      * 按优先级解析客户端提交的令牌：请求头 X-CSRF-Token → X-XSRF-Token → 表单/JSON 字段 _token。
      *
-     * 安全说明（v0.8.52）：不再接受查询参数载体——URL 中的令牌会进入访问日志、
+     * 安全说明（v1.0.52）：不再接受查询参数载体——URL 中的令牌会进入访问日志、
      * 浏览器历史与 Referer 头，削弱会话绑定令牌的保密性。
      */
     private function submittedToken(ServerRequestInterface $request): ?string

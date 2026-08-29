@@ -123,7 +123,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
     /**
      * 把响应编码为一个可持久化的 envelope（状态 / Content-Type / 响应头 / 体），体经 base64 避免 JSON 破坏。
      *
-     * 修复说明（v0.8.42）：旧实现只存 status / Content-Type / body，重放时丢失
+     * 修复说明（v1.0.42）：旧实现只存 status / Content-Type / body，重放时丢失
      * Set-Cookie / Location / 缓存控制等业务响应头，导致「重放响应与首次不一致」。
      * 现把（除 hop-by-hop 与 Content-Length 外的）全部响应头一并持久化，重放原样重建。
      */
@@ -184,7 +184,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         $headers = $contentType !== '' ? ['Content-Type' => $contentType] : [];
         $response = Response::make($body, $status, $headers);
 
-        // v0.8.42+：回放持久化的业务响应头（Set-Cookie / Location 等）；
+        // v1.0.42+：回放持久化的业务响应头（Set-Cookie / Location 等）；
         // 旧记录（无 h 字段）静默兼容，仅返回 Content-Type + body。
         $persisted = $data['h'] ?? null;
         if (is_array($persisted)) {

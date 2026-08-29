@@ -44,7 +44,7 @@ final class PcntlTimeoutScheduler implements TimeoutScheduler
 
         try {
             // 关键：真正启动 SIGALRM 计时（旧实现只调 pcntl_alarm(0) 取消、从不启动，
-            // 导致超时永不触发——v0.8.42 修复）。
+            // 导致超时永不触发——v1.0.42 修复）。
             pcntl_alarm($secondsInt);
 
             $result = $op();

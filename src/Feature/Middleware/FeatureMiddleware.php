@@ -23,7 +23,7 @@ use Psr\Http\Server\RequestHandlerInterface;
  * 关闭时返回 fallback（默认 404，可声明 403）。未声明 flag 的路由直接放行。
  *
  * 分桶键：X-User-Id → X-Tenant-Id → 客户端 IP，保证灰度稳定。
- * 注意（v0.8.42，H4）：X-User-Id / X-Tenant-Id **仅当直连对端为受信代理时**才被采信，
+ * 注意（v1.0.42，H4）：X-User-Id / X-Tenant-Id **仅当直连对端为受信代理时**才被采信，
  * 防止客户端直接伪造灰度头操纵分桶；真实客户端 IP 同样只信任受信代理的转发头，
  * 默认（trusted_proxies=[]）一律用 REMOTE_ADDR。
  * 总开关见 config/feature.enabled（关闭即全放行）。

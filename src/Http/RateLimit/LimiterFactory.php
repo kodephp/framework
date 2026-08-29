@@ -34,7 +34,7 @@ final class LimiterFactory
      */
     private array $cache = [];
 
-    /** 存储侧签名前缀（driver + 地址 + prefix），构造时算一次（v0.8.42 热路径优化）。 */
+    /** 存储侧签名前缀（driver + 地址 + prefix），构造时算一次（v1.0.42 热路径优化）。 */
     private readonly string $storeSignature;
 
     /**
@@ -106,7 +106,7 @@ final class LimiterFactory
      * sentinel / cluster 分支不传 prefix、standalone 硬编码前缀 → 配置 redis.prefix 在
      * HA 模式下不生效（H7）；**2.2.0 起上游三处全部修补**：storeFromArray 按 config['mode']
      * 分发 standalone/sentinel/cluster 三分支，且 prefix 全程受控。此处统一走 storeFromArray，
-     * 删除 v0.8.42 的手搓 redisHA()（直接构造 {@see RedisStore} 实例）历史规避。
+     * 删除 v1.0.42 的手搓 redisHA()（直接构造 {@see RedisStore} 实例）历史规避。
      *
      * 字段名对齐上游 2.2.0：sentinel 读 sentinels / masterName，cluster 读 clusterNodes；
      * 框架 config 侧为 sentinels / master_name / cluster_nodes（见 config/limiting.php）。
@@ -230,8 +230,8 @@ final class LimiterFactory
 
     /**
      * 预计算存储侧签名（仅供构造 {@see $storeSignature}）：只依赖 config 中
-     * driver/地址/prefix 等静态段，热路径每请求拼签名时免去 match + 多次兜底取值（v0.8.42）。
-     * 各分支字符串与 v0.8.41 的 signature() 中 store 段逐字一致，缓存键语义不变。
+     * driver/地址/prefix 等静态段，热路径每请求拼签名时免去 match + 多次兜底取值（v1.0.42）。
+     * 各分支字符串与 v1.0.41 的 signature() 中 store 段逐字一致，缓存键语义不变。
      */
     private function buildStoreSignature(): string
     {

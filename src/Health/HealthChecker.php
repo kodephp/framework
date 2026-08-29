@@ -10,7 +10,7 @@ use Kode\Queue\Queue;
 use Psr\Container\ContainerInterface;
 
 /**
- * 就绪探针聚合器（企业级健康检查，v0.8.14 增强为「能力感知」）。
+ * 就绪探针聚合器（企业级健康检查，v1.0.14 增强为「能力感知」）。
  *
  * 三类探测合一：
  *  1) 配置驱动探针（config/health.php 的 `checks`）：db / cache / queue 布尔开关 + 任意自定义闭包；
