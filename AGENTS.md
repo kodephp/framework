@@ -8,8 +8,8 @@
 - **kode/framework**：常驻内存 PHP 框架（**默认 kode/process 原生多进程**，可切 Swoole / Swow / Fiber），当前 **v1.0.0**。
 - 依赖三组自研包（**vendor 内，只读**）：`kode/http`（HTTP 内核与路由）、`kode/process`（进程/运行时）、
   `kode/database`（数据库与连接池）、`kode/fibers`（协程调度）。
-- 性能基线存档：`../kode框架文档/docs/benchmarks.md`（v0.8.51 真机横比结论 + 压测口径，`benchmarks/` 目录已移除）；
-  文档：`../kode框架文档/docs/`（`README.md` 为索引，框架仓内 `docs/` 已通过 `export-ignore` 与分发分离）。
+- 性能基线存档：`https://github.com/kodephp/docs/benchmarks.md`（v0.8.51 真机横比结论 + 压测口径，`benchmarks/` 目录已移除）；
+  文档：`https://github.com/kodephp/docs/`（`README.md` 为索引，框架仓内 `docs/` 已通过 `export-ignore` 与分发分离）。
 
 ## 红线（AI 必须遵守）
 

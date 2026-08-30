@@ -905,13 +905,15 @@ final class HttpServiceProvider extends ServiceProvider
             // 且有重复构建开销。
             $result = $this->healthChecker()->check();
 
+            $now = new \DateTime('now', new \DateTimeZone('Asia/Shanghai'));
             return Resp::json([
                 'status'      => 'ok',
                 'service'     => Application::getInstance()?->config()->get('app.name', 'kode-app'),
                 'version'     => Application::VERSION,
                 'php'         => PHP_VERSION,
                 'env'         => Application::getInstance()?->config()->get('app.env', 'local'),
-                'time'        => date('c'),
+                'time'        => $now->format('Y-m-d\TH:i:s.vP'),
+                'uptime'      => round(microtime(true) - (defined('KODE_START_TIME') ? KODE_START_TIME : $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true)), 3),
                 'components'  => $result['checks'],
             ]);
         });
