@@ -5,7 +5,8 @@
 
 # ── 依赖（Composer 安装产物） ──
 /vendor/
-composer.lock 已提交以保证可重复构建（12-factor V）；框架作为库被依赖时由消费者决定是否忽略
+# 框架作为库被依赖时，锁定应由消费者（骨架/应用）决定；本仓不跟踪 composer.lock。
+# 若某次发版需要锁定依赖树，去掉下一行注释即可让它入库。
 composer.lock
 
 # ── 压测对等框架（benchmarks/peers/* 隔离安装的 vendor，非框架依赖） ──
@@ -25,6 +26,15 @@ composer.lock
 !storage/logs/.gitkeep
 !storage/sessions/.gitkeep
 !storage/framework/cache/.gitkeep
+
+# ── 进程状态目录（bin/kode status 的运行时快照，纯运行时产物，删掉会自动重建）──
+# 内容：master.json / worker.<pid>.json / kode.pid / kode.log
+/storage/runtime/
+/tests/skeleton/storage/runtime/
+
+# ── 测试骨架的运行时产物（会话文件与锁由测试生成，不应入库）──
+/tests/skeleton/storage/sessions/*
+/tests/skeleton/storage/logs/*
 
 # ── 进程临时目录（pid / sockets / 热重载产物） ──
 /.runtime/

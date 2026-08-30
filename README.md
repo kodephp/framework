@@ -21,7 +21,7 @@ php bin/kode serve
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.0.0","php":"8.3.33","env":"local","time":"..."}
+# {"status":"ok","service":"kode-app","version":"1.1.0","php":"8.3.33","env":"local","time":"..."}
 ```
 
 > **为什么多了 `--repository`**：`kode/skeleton` 与 `kode/framework` 目前都**未提交到 Packagist**，
@@ -64,6 +64,62 @@ return function (App $app): void {
 ```bash
 curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```
+
+---
+
+## 服务运维命令（对标 workerman）
+
+启动时会打印进程表横幅，一眼看到**协议 / 用户 / worker 名 / 监听地址与端口 / 进程数 / 状态**：
+
+```text
+Kode[bin/kode] start in PRODUCTION mode
+--- KODE ---------------------------------------------------------------------
+Kode Framework version:1.1.0          PHP version:8.3.33
+Runtime:native                   Event-Loop:event
+--- WORKERS ------------------------------------------------------------------
+proto    user       worker           listen                       processes  status
+http     Zhuanz     kode-http        http://127.0.0.1:9527        8          [OK]
+------------------------------------------------------------------------------
+项目根目录：/srv/myapp
+Press Ctrl+C to stop. Start success.
+```
+
+| 命令 | 作用 |
+| --- | --- |
+| `php bin/kode serve` | 前台启动（`--host` `--port` `--workers` `--watch` `--graceful`） |
+| `php bin/kode serve -d` | **守护进程模式**（脱离终端，写 PID 文件，用 `stop` 停止） |
+| `php bin/kode status` | workerman 风格状态表：GLOBAL STATUS + 逐进程 PROCESS STATUS |
+| `php bin/kode status --pid=N` | 只看某一个进程（master 或 worker）的详情 |
+| `php bin/kode stop [-g]` | 停止服务（默认 SIGTERM 优雅停机，`-g` 强制 SIGKILL） |
+| `php bin/kode reload` | 平滑重启 worker（master 不动，不中断在途请求） |
+| `php bin/kode restart` | 停止并以守护模式重新拉起 |
+
+`status` 输出示例（`connections` / `total_request` / `qps` 来自各 worker 的 1Hz 心跳）：
+
+```text
+----------------------------------------------GLOBAL STATUS----------------------------------------------
+Kode Framework version:1.1.0        PHP version:8.3.33
+start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
+master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
+1 workers       3 processes
+worker_name      processes  status
+kode-http        3          [OK]
+----------------------------------------------PROCESS STATUS---------------------------------------------
+pid      memory    listening                      worker_name    connections  total_request  qps    status
+81667    12.00M    http://127.0.0.1:9527          kode-http#0    0            128            3      [idle]
+```
+
+与 workerman 的**已知差异（如实标注，不做伪装）**：不输出 `exit_status` / `exit_count` 两列——
+workerman 在 master 里收割子进程并记录退出码，而本框架 master 循环位于 `kode/process` 内部，
+业务层观测不到子进程退出码；与其填 0 假装「零退出」误导排障，不如不列。
+
+进程表数据写在 `storage/runtime/`（可用 `config/server.php` 的 `runtime_path` 改），
+纯运行时产物，随时可删，下一心跳自动重建。
+
+> **Ctrl+C 为什么能立刻退出**：`kode/process` 收到停机信号后固定空等一整个
+> `graceful_shutdown_timeout`（骨架默认 30s）——空闲服务按 Ctrl+C 也要等满 30s。
+> 框架在 v1.1.0 补了「快速排空」看门狗：收到信号后一旦在途请求归零就立即结束事件循环，
+> 空闲退出从「等满宽限」压到 ≤0.5s；真有在途请求时仍走完整宽限，不丢请求。
 
 ---
 
@@ -120,7 +176,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 
 ## 版本
 
-- 当前版本：**[v1.0.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.1.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
