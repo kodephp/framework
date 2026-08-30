@@ -903,16 +903,16 @@ final class HttpServiceProvider extends ServiceProvider
         $app->get('/health', function () {
             // 走容器单例（与 /health/ready 同源）：每请求 new 会丢失单例上注册的自定义探针，
             // 且有重复构建开销。
+            $t0 = microtime(true);
             $result = $this->healthChecker()->check();
 
-            $now = new \DateTime('now', new \DateTimeZone('Asia/Shanghai'));
             return Resp::json([
                 'status'      => 'ok',
                 'service'     => Application::getInstance()?->config()->get('app.name', 'kode-app'),
                 'version'     => Application::VERSION,
                 'php'         => PHP_VERSION,
                 'env'         => Application::getInstance()?->config()->get('app.env', 'local'),
-                'time'        => $now->format('Y-m-d\TH:i:s.vP'),
+                'time'        => round((microtime(true) - $t0) * 1000, 2),
                 'uptime'      => round(microtime(true) - (defined('KODE_START_TIME') ? KODE_START_TIME : $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true)), 3),
                 'components'  => $result['checks'],
             ]);
