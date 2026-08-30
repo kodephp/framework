@@ -73,13 +73,13 @@ final class ServerStatusStoreTest extends TestCase
         $store = $this->store();
 
         // 模拟多个 worker 代写同一份 master 记录：各自只补自己观测到的字段。
-        $store->writeMaster(['pid' => 100, 'version' => '1.1.0']);
+        $store->writeMaster(['pid' => 100, 'version' => '1.1.1']);
         $store->writeMaster(['loop' => 'select']);
 
         $master = $store->master();
         $this->assertIsArray($master);
         $this->assertSame(100, $master['pid']);
-        $this->assertSame('1.1.0', $master['version']);
+        $this->assertSame('1.1.1', $master['version']);
         $this->assertSame('select', $master['loop']);
     }
 

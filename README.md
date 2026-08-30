@@ -21,7 +21,8 @@ php bin/kode serve
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.1.0","php":"8.3.33","env":"local","time":"..."}
+# {"status":"ok","service":"kode-app","version":"1.1.1","php":"8.3.33","env":"local","time":0.52}
+# time = health check 方法执行耗时（毫秒）
 ```
 
 > **为什么多了 `--repository`**：`kode/skeleton` 与 `kode/framework` 目前都**未提交到 Packagist**，
@@ -74,7 +75,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[bin/kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.1.0          PHP version:8.3.33
+Kode Framework version:1.1.1          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -98,7 +99,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.1.0        PHP version:8.3.33
+Kode Framework version:1.1.1        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -176,7 +177,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.1.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.1.1](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

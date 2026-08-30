@@ -59,7 +59,7 @@ final class ServerStatusTest extends TestCase
     public function testGlobalStatusCountsProcessesFromLiveWorkerRecords(): void
     {
         $store = $this->store();
-        $store->writeMaster(['pid' => getmypid(), 'version' => '1.1.0', 'runtime' => 'native']);
+        $store->writeMaster(['pid' => getmypid(), 'version' => '1.1.1', 'runtime' => 'native']);
         $store->writeWorker(getmypid(), [
             'worker_id'   => 0,
             'worker_name' => 'kode-http#0',
