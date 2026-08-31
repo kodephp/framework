@@ -10,8 +10,8 @@ define('KODE_START_TIME', microtime(true));
  *
  * 用法：
  *   bin/kode init                    初始化当前项目（生成 .env + storage/，composer create-project 后自动执行）
- *   bin/kode serve [--host H] [--port P] [--workers N]
- *                                    启动多进程 HTTP 服务（kode/process master-worker）
+ *   bin/kode start [--host H] [--port P] [--workers N]
+ *                                    启动多进程 HTTP 服务（kode/process master-worker，serve 为别名）
  *   bin/kode console <args...>        透传执行控制台命令
  *   bin/kode help                     帮助
  *
@@ -55,6 +55,7 @@ match ($command) {
     'help'         => KodeCli::help(),
     'status'       => (new KodeStatusCommand())->run($args),
     'init'         => (new KodeInitCommand($packageRoot))->run($args),
+    'start'        => (new KodeServeCommand())->run($args),
     'serve'        => (new KodeServeCommand())->run($args),
     'stop'         => (new KodeStopCommand())->run($args),
     'reload'       => (new KodeReloadCommand())->run($args),
@@ -627,8 +628,8 @@ final class KodeCli
         echo "Kode Framework 命令行工具\n\n";
         echo "  composer create-project kode/skeleton <项目名>   一句话安装（下载 + composer install + 初始化）\n";
         echo "  bin/kode init                    初始化当前项目（生成 .env + storage/）\n";
-        echo "  bin/kode serve [--host H] [--port P] [--workers N] [--watch] [--daemon|-d] [--graceful N]\n";
-        echo "                                    启动多进程 HTTP 服务（--watch 开热重载，-d 守护化）\n";
+        echo "  bin/kode start [--host H] [--port P] [--workers N] [--watch] [--daemon|-d] [--graceful N]\n";
+        echo "                                    启动多进程 HTTP 服务（--watch 开热重载，-d 守护化；serve 为别名）\n";
         echo "  bin/kode stop [-g]                 停止服务（默认优雅停机，-g 强制 SIGKILL）\n";
         echo "  bin/kode reload                    平滑重启 worker（不中断在途请求）\n";
         echo "  bin/kode restart [--host H] [--port P]   停止并以守护模式重新拉起\n";
