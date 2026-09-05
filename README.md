@@ -21,7 +21,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.3.0","php":"8.3.33","env":"local","time":0.52}
+# {"status":"ok","service":"kode-app","version":"1.3.1","php":"8.3.33","env":"local","time":0.52}
 # time = health check 方法执行耗时（毫秒）
 ```
 
@@ -73,7 +73,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 启动时会打印进程表横幅，一眼看到**协议 / 用户 / worker 名 / 监听地址与端口 / 进程数 / 状态**：
 
 ```text
-Kode[bin/kode] start in PRODUCTION mode
+Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
 Kode Framework version:1.2.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
@@ -92,13 +92,13 @@ Press Ctrl+C to stop. Start success.
 | `php kode status` | workerman 风格状态表：GLOBAL STATUS + 逐进程 PROCESS STATUS |
 | `php kode status [--port P] [--pid=N]` | 查看服务状态（`--port` 定位多实例，`--pid` 看单进程） |
 
-> 多实例（v1.3.0）：不同端口实例的 PID/日志/状态隔离在 `storage/runtime/<port>/`（如 `kode start --port 9599`），
+> 多实例（v1.3.1）：不同端口实例的 PID/日志/状态隔离在 `storage/runtime/<port>/`（如 `kode start --port 9599`），
 > 用 `kode stop/status --port 9599` 精确操作该实例；老版本单文件（`storage/runtime/kode.pid`）自动兼容一次。
 | `php kode stop [--port P] [-g]` | 停止服务（默认优雅停机，`-g` 强杀；`--port` 定位多实例） |
 | `php kode reload [-d]` | 全量重载（等价 stop 后 start；默认前台，`-d` 进守护） |
 | `php kode restart` | 运行中平滑滚动 worker；未运行按 `start` 拉起 |
 
-> 命令约定（v1.3.0 起）：`reload`＝重载所有（stop＋start），`restart`＝只平滑滚动
+> 命令约定（v1.3.1 起）：`reload`＝重载所有（stop＋start），`restart`＝只平滑滚动
 > worker。注意这与 workerman 的命名相反（那边 restart 是全量、reload 是平滑），
 > 为统一记忆：**带 e 的 reload 做“全套”（rEload＝Everything），短小的 restart 做“滚动”（rolling）**。
 
@@ -184,7 +184,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.3.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.3.1](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

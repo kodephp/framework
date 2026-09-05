@@ -159,7 +159,9 @@ final class HttpServer
         // 守护化与运行时路径（PID/日志/状态目录）。
         $daemonize = (bool) ($this->config['daemonize'] ?? false);
         $paths     = self::resolveRuntimePaths($root, $this->config);
-        $statusStore = ServerStatusStore::forRoot($root, isset($this->config['runtime_path']) ? (string) $this->config['runtime_path'] : null);
+        // 状态仓库必须与 $paths 同源（多实例按端口隔离后各实例独占一目录）；
+        // 此前两处各拼一次导致 PID 进了分片目录、状态却落在共享目录。
+        $statusStore = new ServerStatusStore($paths['runtime_dir']);
         $statusStore->ensureDir();
         // 只清失效记录：重复 serve 不抹掉另一个仍在运行的实例的状态。
         $statusStore->prune();
@@ -522,7 +524,7 @@ final class HttpServer
         $loop         = $this->loopLabel();
         $user         = $this->currentUser();
 
-        $out  = "Kode[bin/kode] start in {$mode} mode\n";
+        $out  = "Kode[kode] start in {$mode} mode\n";
         $out .= self::separator('KODE') . "\n";
         $out .= sprintf(
             "Kode Framework version:%-14s PHP version:%s\n",
