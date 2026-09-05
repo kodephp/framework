@@ -25,6 +25,22 @@ return [
     'json_skip_paths' => ['/health', '/metrics', '/ping'],
 
     /*
+     * 裸模式双开关（对标 webman 默认内核，按需关闭框架安全层）。
+     *
+     *  - exception_middleware：框架结构化异常中间件（默认开）。关闭后异常回落到
+     *    kode/http 默认 JsonErrorHandler（E1500 极简 JSON）；注意默认栈内 handler
+     *    异常本就由内层 JsonError 先行捕获，关闭不改变对外形态，只省一层中间件帧。
+     *  - connection_cleanup：连接生命周期收口（默认开）：泄漏事务自动回滚 + auth
+     *    上下文清理。关闭后每请求省一层中间件帧，但手动 begin 未回滚的事务会跨请求
+     *    残留，须由业务自行保证事务闭合（与 webman 默认内核一致，无此兜底）。
+     *
+     * 两者同时关闭即裸模式：全局管道只剩 kode/http 默认异常中间件（dispatcher 裸栈），
+     * 压测口径见 docs/benchmarks.md §七。
+     */
+    'exception_middleware' => (bool) env('HTTP_EXCEPTION_MIDDLEWARE', true),
+    'connection_cleanup' => (bool) env('HTTP_CONNECTION_CLEANUP', true),
+
+    /*
      * HTTP 错误响应配置（非信封模式，由 Resp::error 使用）。
      */
     'error_keys' => [
