@@ -11,12 +11,12 @@ use Kode\Framework\Validation\ValidationException;
  *
  * `http.exception_middleware=false` + `http.connection_cleanup=false` 时，全局管道
  * 只剩 kode/http 默认的 JsonErrorHandlerMiddleware（dispatcher 裸栈），应用须仍能
- * 正常运行。实测锁定的行为对等性（2026-09-05）：
- *  - 默认栈内 handler 抛出的异常本就由内层 JsonError 先行捕获（E1500 极简 JSON），
- *    ExceptionMiddleware 的 422/结构化分支在默认栈中不可达——因此关闭它不改变
- *    任何 handler 异常的对外形态（本测试双档同断言锁定该对等性）；
- *  - 真正的行为差只在 ConnectionCleanup：泄漏事务不再自动回滚，auth 上下文不再
- *    自动清理（裸跑须由业务自行保证事务闭合，与 webman 默认内核一致）。
+ * 正常运行。v1.3.4 起默认栈摘除了内层 JsonError（否则它先行捕获一切异常，框架
+ * ExceptionMiddleware 恒不可达），因此默认档与裸档的错误形态真实分叉：
+ *  - 默认档：ValidationException → 422（含字段明细）；普通异常 → 结构化 JSON；
+ *  - 裸档：一切 handler 异常 → 500 E1500 极简 JSON（kode/http 默认行为）。
+ * 关闭 connection_cleanup 的代价不变：泄漏事务不再自动回滚，auth 上下文不再
+ * 自动清理，裸跑须由业务自行保证事务闭合（与 webman 默认内核一致）。
  */
 final class BareModeTest extends TestCase
 {
@@ -80,10 +80,10 @@ final class BareModeTest extends TestCase
         $this->assertStringNotContainsString('chain', $r->body());
     }
 
-    public function testDefaultStackHasIdenticalErrorShape(): void
+    public function testDefaultStackReturnsStructured422(): void
     {
-        // 默认双开关开启：内层 JsonError 先行捕获，handler 异常形态与裸模式一致
-        //（守卫不得改变错误语义；结构化分支仅隔离单测覆盖）。
+        // 默认双开关开启：内层 JsonError 已摘除，ValidationException 真正走框架
+        // 结构化路径（422 + 字段明细），与裸档的 500 E1500 分叉。
         $this->bootApp();
 
         $this->app()->http()->get('/_bare/invalid', static function (): never {
@@ -91,7 +91,22 @@ final class BareModeTest extends TestCase
         });
 
         $r = $this->get('/_bare/invalid');
+        $r->assertStatus(422);
+        $this->assertStringContainsString('name', $r->body());
+        $this->assertStringNotContainsString('E1500', $r->body());
+    }
+
+    public function testDefaultStackRuntimeExceptionIsStructured(): void
+    {
+        // 普通异常默认档走 ExceptionManager 结构化（不再是 E1500 极简体）。
+        $this->bootApp();
+
+        $this->app()->http()->get('/_bare/boom', static function (): never {
+            throw new \RuntimeException('bare-boom-marker');
+        });
+
+        $r = $this->get('/_bare/boom');
         $r->assertStatus(500);
-        $this->assertStringContainsString('E1500', $r->body());
+        $this->assertStringNotContainsString('E1500', $r->body());
     }
 }

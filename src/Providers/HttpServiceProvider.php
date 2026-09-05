@@ -40,6 +40,7 @@ use Kode\Framework\Security\Csrf\CsrfAttributeReader;
 use Kode\Database\Db\Db;
 use Kode\Http\App;
 use Kode\Http\Middleware\CorsMiddleware;
+use Kode\Http\Middleware\JsonErrorHandlerMiddleware;
 use Kode\Http\Middleware\RequestId;
 use Kode\Http\Middleware\SecurityHeaders;
 
@@ -336,23 +337,20 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 用框架异常中间件包裹 kode/http 内置管线。
+     * 用框架异常中间件替换 kode/http 默认管线。
      *
-     * kode/http 的 App 在构造时已把 JsonErrorHandlerMiddleware 挂为最外层；
-     * 框架需要让自家的 {@see ExceptionMiddleware}（产出结构化 JSON、含 file/line/
-     * chain、透传 X-Trace-Id）成为最外层。这里直接对调度管线调用 prepend()，
-     * 把 ExceptionMiddleware 插到 JsonErrorHandlerMiddleware 之前即可——异常被前者
-     * 捕获后直接返回，JsonErrorHandlerMiddleware 不再会被触达，行为等价且无需反射
-     * 改写 App 的私有 dispatcher 属性。
+     * kode/http 的 App 在构造时已把 JsonErrorHandlerMiddleware 挂为最外层；若保留它，
+     * 它在内层先行捕获一切下游异常，外层框架 {@see ExceptionMiddleware}（结构化 JSON、
+     * 含 file/line/chain、ValidationException 转 422）恒不可达。因此挂载框架中间件时
+     * 一并把默认值从管线摘除（需 kode/http >= 3.4.19 的 `removeMiddleware`；老版本
+     * method_exists 守卫退化为保留旧行为）——省一层帧开销，且异常真正走结构化路径。
      */
     private function pipeExceptionHandling(App $app): void
     {
-        // 可关闭（http.exception_middleware=false）：裸模式对标 webman 默认内核——不再用
-        // 框架结构化异常中间件包裹管线。注意：默认栈内 handler 异常本就由内层的
-        // kode/http JsonErrorHandlerMiddleware 先行捕获（E1500 极简 JSON），关闭本开关
-        // 不改变任何 handler 异常的对外形态（BareModeTest 双档同断言锁定）；省的是一层
-        // 中间件帧与 ExceptionManager 单例构建。桥接层之外的极端异常仍由
-        // HttpServer::errorResponse 经 ExceptionManager 结构化兜底。
+        // 可关闭（http.exception_middleware=false）：裸模式对标 webman 默认内核——不再
+        // 挂载框架结构化异常中间件，异常回落到 kode/http 默认 JsonErrorHandler
+        // （E1500 极简 JSON）；省一层中间件帧与 ExceptionManager 单例构建。
+        // 桥接层之外的极端异常仍由 HttpServer::errorResponse 经 ExceptionManager 结构化兜底。
         if (empty($this->config('http.exception_middleware', true))) {
             return;
         }
@@ -360,7 +358,11 @@ final class HttpServiceProvider extends ServiceProvider
         /** @var ExceptionManager $manager */
         $manager = $this->container->get(ExceptionManager::class);
 
-        $app->getDispatcher()->prepend(new ExceptionMiddleware($manager));
+        $dispatcher = $app->getDispatcher();
+        if (method_exists($dispatcher, 'removeMiddleware')) {
+            $dispatcher->removeMiddleware(JsonErrorHandlerMiddleware::class);
+        }
+        $dispatcher->prepend(new ExceptionMiddleware($manager));
     }
 
     /**
