@@ -25,6 +25,14 @@ final class TracerServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        // 追踪总开关关闭时，一并关闭 kode/http 的入站链路头同步（每请求省 4× 头嗅探）：
+        // Tracer / TraceMiddleware / 日志关联均不依赖此次同步（各自独立），RequestId
+        // 中间件直接读请求头亦不受影响。注意这是进程级静态开关，每次引导按本进程配置重设。
+        $tracingEnabled = !empty($this->config('observability.tracing.enabled', true));
+        if (method_exists(\Kode\Http\Request::class, 'setTraceSyncEnabled')) {
+            \Kode\Http\Request::setTraceSyncEnabled($tracingEnabled);
+        }
+
         $this->container->singleton(Tracer::class, function (): Tracer {
             /** @var array<string, mixed> $cfg */
             $cfg = (array) $this->config('observability.tracing', []);
