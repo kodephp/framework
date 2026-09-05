@@ -21,7 +21,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.2.1","php":"8.3.33","env":"local","time":0.52}
+# {"status":"ok","service":"kode-app","version":"1.2.2","php":"8.3.33","env":"local","time":0.52}
 # time = health check 方法执行耗时（毫秒）
 ```
 
@@ -177,7 +177,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.2.1](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.2.2](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

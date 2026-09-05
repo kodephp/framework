@@ -245,6 +245,30 @@ abstract class KodeServerCommand
     {
         return is_file($root . '/kode') ? $root . '/kode' : $root . '/bin/kode';
     }
+
+    /**
+     * 等待首个 worker 心跳并直接渲染进程表（启动类命令的即时反馈）。
+     *
+     * 后台拉起后终端本无输出；等 1Hz 心跳落地再展示 GLOBAL+PROCESS 两段表，
+     * 与 `kode status` 输出完全一致。超时则只提示用 status 查看，不报错。
+     */
+    protected function renderStatusWhenReady(string $root, float $timeout = 6.0): void
+    {
+        $config = $this->loadServerConfig($root);
+        $store  = ServerStatusStore::forRoot($root, isset($config['runtime_path']) ? (string) $config['runtime_path'] : null);
+        $deadline = microtime(true) + $timeout;
+        do {
+            $status = new ServerStatus($store);
+            $snap = $status->snapshot();
+            if ($snap['running'] && $snap['workers'] !== []) {
+                echo $status->render();
+                return;
+            }
+            usleep(250_000);
+        } while (microtime(true) < $deadline);
+
+        echo "进程表暂无 worker 心跳，用 `kode status` 查看\n";
+    }
 }
 
 final class KodeServeCommand extends KodeServerCommand
@@ -466,7 +490,8 @@ final class KodeRestartCommand extends KodeServerCommand
             exit(1);
         }
 
-        echo "服务已重启（守护模式，pid={$newPid}），用 `kode status` 查看进程表\n";
+        echo "服务已重启（守护模式，pid={$newPid}）\n";
+        $this->renderStatusWhenReady($root);
         exit(0);
     }
 

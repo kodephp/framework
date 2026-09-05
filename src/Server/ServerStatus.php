@@ -101,7 +101,7 @@ final class ServerStatus
         $master  = $snap['master'];
         $workers = $snap['workers'];
 
-        $out = "Kode[bin/kode] status \n";
+        $out = "Kode[kode] status \n";
         $out .= "----------------------------------------------GLOBAL STATUS----------------------------------------------\n";
 
         $version    = (string) ($master['version'] ?? 'unknown');
@@ -221,7 +221,7 @@ final class ServerStatus
             return implode("\n", $lines) . "\n";
         }
 
-        return sprintf("未找到进程 %d（用 `bin/kode status` 查看全部进程）\n", $pid);
+        return sprintf("未找到进程 %d（用 `kode status` 查看全部进程）\n", $pid);
     }
 
     /**
