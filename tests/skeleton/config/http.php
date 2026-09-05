@@ -27,9 +27,9 @@ return [
     /*
      * 裸模式双开关（对标 webman 默认内核，按需关闭框架安全层）。
      *
-     *  - exception_middleware：框架结构化异常中间件（默认开）。关闭后异常回落到
-     *    kode/http 默认 JsonErrorHandler（E1500 极简 JSON）；注意默认栈内 handler
-     *    异常本就由内层 JsonError 先行捕获，关闭不改变对外形态，只省一层中间件帧。
+     *  - exception_middleware：框架结构化异常中间件（默认开）：ValidationException
+     *    转 422（含字段明细），普通异常走结构化 JSON。关闭后异常回落到 kode/http
+     *    默认 JsonErrorHandler（E1500 极简 JSON）。
      *  - connection_cleanup：连接生命周期收口（默认开）：泄漏事务自动回滚 + auth
      *    上下文清理。关闭后每请求省一层中间件帧，但手动 begin 未回滚的事务会跨请求
      *    残留，须由业务自行保证事务闭合（与 webman 默认内核一致，无此兜底）。
