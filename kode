@@ -440,7 +440,8 @@ final class KodeStopCommand extends KodeServerCommand
  * 平滑重启 worker（滚动重载，不动 master）。
  *
  * 只重建 worker 进程：新代码在下一个 worker 上生效，已建立的长连接由旧 worker
- * 处理到自然结束，因此不会中断在途请求。未运行时无可滚动对象，直接报错指引。
+ * 处理到自然结束，因此不会中断在途请求。未运行时退化为按 start 语义直接拉起，
+ * 保证 restart/start 在任何状态下都能把服务带起来。
  */
 final class KodeRestartCommand extends KodeServerCommand
 {
@@ -451,8 +452,14 @@ final class KodeRestartCommand extends KodeServerCommand
         $pid   = $this->readPid($paths['pid_file']);
 
         if ($pid === null || !$this->isRunning($pid)) {
-            fwrite(STDERR, "服务未运行，无可滚动重启的 worker（PID 文件：{$paths['pid_file']}），请先 `php kode start` 拉起\n");
-            exit(1);
+            // 未运行则按 start 语义直接拉起（默认前台 + 默认热重载，-d 进守护），
+            // 保证 restart/start 在任何状态下都能把服务带起来。
+            if (is_file($paths['pid_file'])) {
+                @unlink($paths['pid_file']);
+            }
+            echo "服务未运行，直接按 start 语义拉起\n";
+            (new KodeServeCommand())->run($args);
+            return;
         }
 
         // SIGUSR1：kode/process master 收到后逐个通知 worker 退出并由 master 重新拉起。
@@ -769,7 +776,7 @@ final class KodeCli
         echo "                                    启动多进程 HTTP 服务（非 production 默认热重载，-d 守护化；serve 为别名）\n";
         echo "  kode stop [-g]                 停止服务（默认优雅停机，-g 强制 SIGKILL）\n";
         echo "  kode reload [-d]                 全量重载（等价 stop 后 start；默认前台，-d 进守护）\n";
-        echo "  kode restart                   平滑滚动重启 worker（不动 master；未运行则报错）\n";
+        echo "  kode restart                   运行中平滑滚动 worker；未运行按 start 拉起\n";
         echo "  kode status [--pid=N]          查看服务状态（对标 workerman status；--pid 看单进程）\n";
         echo "  kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
