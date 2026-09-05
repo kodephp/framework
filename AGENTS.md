@@ -5,7 +5,7 @@
 
 ## 仓库是什么
 
-- **kode/framework**：常驻内存 PHP 框架（**默认 kode/process 原生多进程**，可切 Swoole / Swow / Fiber），当前 **v1.1.2**。
+- **kode/framework**：常驻内存 PHP 框架（**默认 kode/process 原生多进程**，可切 Swoole / Swow / Fiber），当前 **v1.1.5**。
 - 依赖三组自研包（**vendor 内，只读**）：`kode/http`（HTTP 内核与路由）、`kode/process`（进程/运行时）、
   `kode/database`（数据库与连接池）、`kode/fibers`（协程调度）。
 - 性能基线存档：`https://github.com/kodephp/docs/benchmarks.md`（v0.8.51 真机横比结论 + 压测口径，`benchmarks/` 目录已移除）；
@@ -39,7 +39,7 @@
 
 ```bash
 vendor/bin/phpunit                      # 全量测试（需 PHP ≥ 8.1 + 常用扩展）
-php bin/kode greet Kode                 # 命令自动发现冒烟（app/console/ 单层）
+php kode greet Kode                      # 命令自动发现冒烟（app/console/ 单层）
 # 新增 app/ 类无需 dump-autoload（PSR-4 即时加载）；仅改 composer.json 的 autoload 时再跑（见红线 6）
 ```
 
@@ -54,10 +54,10 @@ php bin/kode greet Kode                 # 命令自动发现冒烟（app/console
 
 ## 通用约定
 
-- **CLI 单一实现（勿再复制一份）**：`bin/kode` 的唯一实现在**本仓库**。`kode/skeleton` 的 `bin/kode`
-  是薄壳，只做定位 + `pcntl_exec` 转发到 `vendor/kode/framework/bin/kode`。历史上两份并存导致骨架里的
+- **CLI 单一实现（勿再复制一份）**：CLI 唯一实现在**本仓库根目录 `kode`**（`bin/kode` 仅为兼容垫片，直接 `require ../kode`）。`kode/skeleton` 的 `kode` / `bin/kode`
+  均为薄壳，只做定位 + 转发到 `vendor/kode/framework/kode`（优先）/`bin/kode`（兼容旧版）。历史上两份并存导致骨架里的
   `status` 长期停留在「打一次 /health」的老实现，框架的进程表 / 守护模式 / 快速排空一律缺席，
-  且 `composer update` 拉不到。新增/修改 CLI 命令时**只改本仓库**，骨架无需同步。
+  且 `composer update` 拉不到。新增/修改 CLI 命令时**只改本仓库的根 `kode`**，骨架无需同步。
 - **不主动提交**：git 提交仅在用户明确要求时执行；提交前 `git status` + `git diff` 复核范围。
 - **合入前自查**：版本号、文档口径、测试结果、vendor 完整性（无 patch）、未提交遗留产物（`git status` 确认
   无临时文件/运行产物残留）全部就绪后再提交。

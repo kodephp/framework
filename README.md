@@ -10,18 +10,18 @@
 
 ```bash
 # 1. 安装：下载骨架 + composer install + 初始化（项目名 myapp 写在包名后）
-#    骨架仓库 = kode/skeleton；本仓库（kode/framework）自 v1.1.4 起为纯内核，作为依赖被引入
+#    骨架仓库 = kode/skeleton；本仓库（kode/framework）自 v1.1.5 起为纯内核，作为依赖被引入
 composer create-project kode/skeleton myapp \
   --repository='{"type":"vcs","url":"https://github.com/kodephp/skeleton.git"}' \
   --stability=dev
 cd myapp
 
 # 2. 启动多进程 HTTP 服务（默认 http://127.0.0.1:9527）
-php bin/kode serve
+php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.1.4","php":"8.3.33","env":"local","time":0.52}
+# {"status":"ok","service":"kode-app","version":"1.1.5","php":"8.3.33","env":"local","time":0.52}
 # time = health check 方法执行耗时（毫秒）
 ```
 
@@ -29,7 +29,7 @@ curl http://127.0.0.1:9527/health
 > 直接 `composer create-project kode/skeleton myapp` 会报 `Could not find package ... with stability stable`。
 > 显式指定 VCS 仓库即可安装；骨架的 `composer.json` 已声明 framework 的 VCS 仓库，依赖可正常解析。
 
-> 安装时 `composer create-project` 会自动执行 `php bin/kode init`，生成 `.env`（含强随机 `JWT_SECRET`，权限 0600）与 `storage/` 目录。
+> 安装时 `composer create-project` 会自动执行 `php kode init`，生成 `.env`（含强随机 `JWT_SECRET`，权限 0600）与 `storage/` 目录。
 > 若把框架作为依赖引入已有项目：在 `composer.json` 声明 framework 的 VCS 仓库后 `composer require kode/framework`，再从
 > [kode/skeleton](https://github.com/kodephp/skeleton) 复制 `app/`、`config/`、`bin/`、`lang/`、
 > `database/` 到项目根，然后 `php vendor/bin/kode init`。（本仓库不再自带这些骨架目录。）
@@ -75,7 +75,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[bin/kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.1.4          PHP version:8.3.33
+Kode Framework version:1.1.5          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -87,19 +87,19 @@ Press Ctrl+C to stop. Start success.
 
 | 命令 | 作用 |
 | --- | --- |
-| `php bin/kode serve` | 前台启动（`--host` `--port` `--workers` `--watch` `--graceful`） |
-| `php bin/kode serve -d` | **守护进程模式**（脱离终端，写 PID 文件，用 `stop` 停止） |
-| `php bin/kode status` | workerman 风格状态表：GLOBAL STATUS + 逐进程 PROCESS STATUS |
-| `php bin/kode status --pid=N` | 只看某一个进程（master 或 worker）的详情 |
-| `php bin/kode stop [-g]` | 停止服务（默认 SIGTERM 优雅停机，`-g` 强制 SIGKILL） |
-| `php bin/kode reload` | 平滑重启 worker（master 不动，不中断在途请求） |
-| `php bin/kode restart` | 停止并以守护模式重新拉起 |
+| `php kode start` | 前台启动（`--host` `--port` `--workers` `--watch` `--graceful`，`serve` 为别名） |
+| `php kode start -d` | **守护进程模式**（脱离终端，写 PID 文件，用 `stop` 停止） |
+| `php kode status` | workerman 风格状态表：GLOBAL STATUS + 逐进程 PROCESS STATUS |
+| `php kode status --pid=N` | 只看某一个进程（master 或 worker）的详情 |
+| `php kode stop [-g]` | 停止服务（默认 SIGTERM 优雅停机，`-g` 强制 SIGKILL） |
+| `php kode reload` | 平滑重启 worker（master 不动，不中断在途请求） |
+| `php kode restart` | 停止并以守护模式重新拉起 |
 
 `status` 输出示例（`connections` / `total_request` / `qps` 来自各 worker 的 1Hz 心跳）：
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.1.4        PHP version:8.3.33
+Kode Framework version:1.1.5        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -119,7 +119,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 > **Ctrl+C 为什么能立刻退出**：`kode/process` 收到停机信号后固定空等一整个
 > `graceful_shutdown_timeout`（骨架默认 30s）——空闲服务按 Ctrl+C 也要等满 30s。
-> 框架在 v1.1.4 补了「快速排空」看门狗：收到信号后一旦在途请求归零就立即结束事件循环，
+> 框架在 v1.1.5 补了「快速排空」看门狗：收到信号后一旦在途请求归零就立即结束事件循环，
 > 空闲退出从「等满宽限」压到 ≤0.5s；真有在途请求时仍走完整宽限，不丢请求。
 
 ---
@@ -151,8 +151,8 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 | 重试 | `retry($op, attempts: 3)` + `BackoffStrategy` | 框架内置（固定/指数/去相关抖动，零依赖） |
 | 超时 | `timeout($op, seconds: 2.0)` + `fallback` | 框架内置（fiber 真实抢占 / pcntl / sync 退化，零依赖） |
 | HTTP 重试中间件 | `RetryMiddleware`（安全方法 502/503/504 自动重试，复用 retry 段退避） | 框架内置（PSR-15 薄壳层，复用 `Retry`） |
-| 定时任务 | `#[Cron]` + `bin/kode cron` | kode/process 定时器 |
-| 多进程服务 | `bin/kode serve`（--watch 热重载） | kode/process |
+| 定时任务 | `#[Cron]` + `kode cron` | kode/process 定时器 |
+| 多进程服务 | `kode start`（--watch 热重载） | kode/process |
 | 缓存 / 队列 / 数据库 / 事件 / HTTP 客户端 / 消息 | `cache()/queue()/db()/event()/http()/messaging()` | kode/cache · queue · database · event · http-client · messaging |
 | 国际化 | `lang()` / `LocaleMiddleware` | Symfony Translation |
 | 分布式 ID | `snowflake()` | kode/process |
@@ -177,7 +177,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.1.4](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.1.5](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
