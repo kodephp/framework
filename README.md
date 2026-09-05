@@ -21,7 +21,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.2.3","php":"8.3.33","env":"local","time":0.52}
+# {"status":"ok","service":"kode-app","version":"1.2.4","php":"8.3.33","env":"local","time":0.52}
 # time = health check 方法执行耗时（毫秒）
 ```
 
@@ -87,13 +87,17 @@ Press Ctrl+C to stop. Start success.
 
 | 命令 | 作用 |
 | --- | --- |
-| `php kode start` | 前台启动（`--host` `--port` `--workers` `--watch` `--graceful`，`serve` 为别名） |
+| `php kode start` | 前台启动（非 production 默认热重载，`--no-watch` 关闭；`serve` 为别名） |
 | `php kode start -d` | **守护进程模式**（脱离终端，写 PID 文件，用 `stop` 停止） |
 | `php kode status` | workerman 风格状态表：GLOBAL STATUS + 逐进程 PROCESS STATUS |
 | `php kode status --pid=N` | 只看某一个进程（master 或 worker）的详情 |
 | `php kode stop [-g]` | 停止服务（默认 SIGTERM 优雅停机，`-g` 强制 SIGKILL） |
-| `php kode reload` | 平滑重启 worker（master 不动，不中断在途请求） |
-| `php kode restart [-d]` | 运行中先停再起，未运行直接拉起（默认前台同 `start`，`-d` 进守护） |
+| `php kode reload [-d]` | 全量重载（等价 stop 后 start；默认前台，`-d` 进守护） |
+| `php kode restart` | 平滑滚动重启 worker（不动 master；未运行则报错） |
+
+> 命令约定（v1.2.4 起）：`reload`＝重载所有（stop＋start），`restart`＝只平滑滚动
+> worker。注意这与 workerman 的命名相反（那边 restart 是全量、reload 是平滑），
+> 为统一记忆：**带 e 的 reload 做“全套”（rEload＝Everything），短小的 restart 做“滚动”（rolling）**。
 
 `status` 输出示例（`connections` / `total_request` / `qps` 来自各 worker 的 1Hz 心跳）：
 
@@ -177,7 +181,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.2.3](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.2.4](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

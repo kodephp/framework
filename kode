@@ -281,12 +281,17 @@ final class KodeServeCommand extends KodeServerCommand
         $runtime = null;
         $graceful = null;
         $watch = false;
+        $watchExplicit = false;
+        $noWatch = false;
         $daemon = false;
         $serveArgs = [];
 
         for ($i = 0; $i < count($args); $i++) {
             if ($args[$i] === '--watch') {
                 $watch = true;
+                $watchExplicit = true;
+            } elseif ($args[$i] === '--no-watch') {
+                $noWatch = true;
             } elseif ($args[$i] === '--daemon' || $args[$i] === '-d') {
                 // 守护化：脱离终端、写 PID 文件（stop/reload/status 依赖它）。
                 $daemon = true;
@@ -335,6 +340,20 @@ final class KodeServeCommand extends KodeServerCommand
         }
         if ($daemon) {
             $config['daemonize'] = true;
+        }
+
+        // 热重载默认开（开发改代码即时生效）：仅 production 默认关闭，可用
+        // --watch 强制开启、--no-watch 强制关闭；守护模式下强制关闭（看门狗输出
+        // 无处可去），显式 --watch 配 -d 时给提示。
+        if (!$watch && !$noWatch) {
+            $env = (string) (($_SERVER['APP_ENV'] ?? $_ENV['APP_ENV'] ?? getenv('APP_ENV')) ?: 'local');
+            $watch = strtolower($env) !== 'production';
+        }
+        if ($daemon && $watch) {
+            if ($watchExplicit) {
+                echo "提示：守护模式已关闭热重载（看门狗需依附终端），如需开发期热重载请用前台 `php kode start --watch`\n";
+            }
+            $watch = false;
         }
 
         if ($watch) {
@@ -416,12 +435,12 @@ final class KodeStopCommand extends KodeServerCommand
 }
 
 /**
- * 平滑重载（对标 workerman 的 `php start.php reload`）。
+ * 平滑重启 worker（滚动重载，不动 master）。
  *
- * 只重建 worker 进程、不动 master：新代码在下一个 worker 上生效，
- * 已建立的长连接由旧 worker 处理到自然结束，因此不会中断在途请求。
+ * 只重建 worker 进程：新代码在下一个 worker 上生效，已建立的长连接由旧 worker
+ * 处理到自然结束，因此不会中断在途请求。未运行时无可滚动对象，直接报错指引。
  */
-final class KodeReloadCommand extends KodeServerCommand
+final class KodeRestartCommand extends KodeServerCommand
 {
     public function run(array $args): void
     {
@@ -430,7 +449,7 @@ final class KodeReloadCommand extends KodeServerCommand
         $pid   = $this->readPid($paths['pid_file']);
 
         if ($pid === null || !$this->isRunning($pid)) {
-            fwrite(STDERR, "服务未运行，无法 reload（PID 文件：{$paths['pid_file']}）\n");
+            fwrite(STDERR, "服务未运行，无可滚动重启的 worker（PID 文件：{$paths['pid_file']}），请先 `php kode start` 拉起\n");
             exit(1);
         }
 
@@ -442,13 +461,14 @@ final class KodeReloadCommand extends KodeServerCommand
 }
 
 /**
- * 重启服务（对标 workerman 的 `restart`）：运行中则先停再起，未运行则直接拉起。
+ * 全量重载（等价 stop 后 start）：停掉整个服务再按给定模式重新拉起。
  *
- * 与 `start` 一致：默认前台运行（开发调试直接看输出，Ctrl+C 退出），加 `-d` /
- * `--daemon` 才进守护模式。透传 --host/--port/--workers/--runtime/--graceful，
+ * 模式与 `start` 一致：默认前台（开发调试直接看输出，Ctrl+C 退出），加 `-d` /
+ * `--daemon` 进守护模式。透传 --host/--port/--workers/--runtime/--graceful，
  * 前台模式下 --watch 照常透给热重载（守护模式下无意义，会被忽略并提示）。
+ * 未运行则直接按给定模式拉起（与 restart 的区别：restart 只滚动 worker）。
  */
-final class KodeRestartCommand extends KodeServerCommand
+final class KodeReloadCommand extends KodeServerCommand
 {
     public function run(array $args): void
     {
@@ -477,7 +497,7 @@ final class KodeRestartCommand extends KodeServerCommand
         }
 
         if (in_array('--watch', $args, true)) {
-            echo "提示：restart 已忽略 --watch（守护模式下热重载无意义），开发期请直接 `php kode start --watch`\n";
+            echo "提示：reload 已忽略 --watch（守护模式下热重载无意义），开发期请直接 `php kode start --watch`\n";
         }
 
         // 与终端彻底脱钩：守护 restart 拉起的服务必须活过当前 shell。
@@ -498,7 +518,7 @@ final class KodeRestartCommand extends KodeServerCommand
             exit(1);
         }
 
-        echo "服务已重启（守护模式，pid={$newPid}）\n";
+        echo "服务已重载（守护模式，pid={$newPid}）\n";
         $this->renderStatusWhenReady($root);
         exit(0);
     }
@@ -509,7 +529,7 @@ final class KodeRestartCommand extends KodeServerCommand
      */
     private function serveArgs(array $args): array
     {
-        // restart 自身不带 --daemon 之外的 serve 选项时，透传用户给的 --host/--port 等；
+        // reload 自身不带 --daemon 之外的 serve 选项时，透传用户给的 --host/--port 等；
         // --watch 在守护模式下无意义，一并剔除（已在 run() 中提示）。
         $pass = [];
         foreach ($args as $arg) {
@@ -743,11 +763,11 @@ final class KodeCli
         echo "Kode Framework 命令行工具\n\n";
         echo "  composer create-project kode/skeleton <项目名>   一句话安装（下载 + composer install + 初始化）\n";
         echo "  kode init                    初始化当前项目（生成 .env + storage/）\n";
-        echo "  kode start [--host H] [--port P] [--workers N] [--watch] [--daemon|-d] [--graceful N]\n";
-        echo "                                    启动多进程 HTTP 服务（--watch 开热重载，-d 守护化；serve 为别名）\n";
+        echo "  kode start [--host H] [--port P] [--workers N] [--watch] [--no-watch] [--daemon|-d] [--graceful N]\n";
+        echo "                                    启动多进程 HTTP 服务（非 production 默认热重载，-d 守护化；serve 为别名）\n";
         echo "  kode stop [-g]                 停止服务（默认优雅停机，-g 强制 SIGKILL）\n";
-        echo "  kode reload                    平滑重启 worker（不中断在途请求）\n";
-        echo "  kode restart [--host H] [--port P] [-d]   运行中先停再起，未运行直接拉起（默认前台，-d 进守护）\n";
+        echo "  kode reload [-d]                 全量重载（等价 stop 后 start；默认前台，-d 进守护）\n";
+        echo "  kode restart                   平滑滚动重启 worker（不动 master；未运行则报错）\n";
         echo "  kode status [--pid=N]          查看服务状态（对标 workerman status；--pid 看单进程）\n";
         echo "  kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
