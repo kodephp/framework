@@ -127,11 +127,14 @@ final class HotReloadWatcher
     /**
      * 启动一个 serve 子进程，返回 proc_open 资源。
      *
+     * 入口优先项目根 kode（v1.1.9 起 CLI 收敛至根），兼容仍保留 bin/kode 的老项目。
+     *
      * @return resource
      */
     private function spawn()
     {
-        $cmd = [PHP_BINARY, $this->root . '/bin/kode', 'serve', ...$this->serveArgs];
+        $entry = is_file($this->root . '/kode') ? $this->root . '/kode' : $this->root . '/bin/kode';
+        $cmd = [PHP_BINARY, $entry, 'start', ...$this->serveArgs];
         $quoted = implode(' ', array_map('escapeshellarg', $cmd));
 
         $descriptors = [

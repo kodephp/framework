@@ -92,8 +92,7 @@
         }
     },
     "bin": [
-        "kode",
-        "bin/kode"
+        "kode"
     ],
     "config": {
         "sort-packages": true,
@@ -105,9 +104,10 @@
         }
     },
     "scripts": {
-        "serve": "php bin/kode serve",
-        "console": "php bin/console",
-        "init": "php bin/kode init",
+        "start": "php kode start",
+        "serve": "php kode start",
+        "console": "php kode console",
+        "init": "php kode init",
         "test": "php vendor/bin/phpunit"
     }
 }
