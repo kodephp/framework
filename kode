@@ -21,14 +21,19 @@ define('KODE_START_TIME', microtime(true));
  */
 
 // ---- 定位自动加载器（兼容「仓库内」与「composer 安装后」两种上下文）----
+// 注意层级：本文件位于项目根（仓库内）或 vendor/kode/framework/kode（被依赖时），
+// 项目 autoload 恒为 <packageRoot>/vendor/autoload.php 或 <packageRoot>/../../../vendor/autoload.php；
+// 再加 getcwd() 兜底，覆盖 vendor 符号链接（path 仓库）导致 .. 解析漂移的场景。
 $packageRoot = __DIR__;
+$cwd = getcwd();
 $autoloadCandidates = [
     $packageRoot . '/vendor/autoload.php',
-    realpath($packageRoot . '/../../../autoload.php'),
+    $packageRoot . '/../../../vendor/autoload.php',
+    ($cwd !== false && $cwd !== '') ? $cwd . '/vendor/autoload.php' : null,
 ];
 $autoload = null;
 foreach ($autoloadCandidates as $candidate) {
-    if ($candidate !== false && is_file($candidate)) {
+    if (is_string($candidate) && is_file($candidate)) {
         $autoload = $candidate;
         break;
     }

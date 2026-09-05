@@ -10,7 +10,7 @@
 
 ```bash
 # 1. 安装：下载骨架 + composer install + 初始化（项目名 myapp 写在包名后）
-#    骨架仓库 = kode/skeleton；本仓库（kode/framework）自 v1.1.5 起为纯内核，作为依赖被引入
+#    骨架仓库 = kode/skeleton；本仓库（kode/framework）自 v1.1.6 起为纯内核，作为依赖被引入
 composer create-project kode/skeleton myapp \
   --repository='{"type":"vcs","url":"https://github.com/kodephp/skeleton.git"}' \
   --stability=dev
@@ -21,7 +21,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.1.5","php":"8.3.33","env":"local","time":0.52}
+# {"status":"ok","service":"kode-app","version":"1.1.6","php":"8.3.33","env":"local","time":0.52}
 # time = health check 方法执行耗时（毫秒）
 ```
 
@@ -75,7 +75,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[bin/kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.1.5          PHP version:8.3.33
+Kode Framework version:1.1.6          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -99,7 +99,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.1.5        PHP version:8.3.33
+Kode Framework version:1.1.6        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -119,7 +119,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 > **Ctrl+C 为什么能立刻退出**：`kode/process` 收到停机信号后固定空等一整个
 > `graceful_shutdown_timeout`（骨架默认 30s）——空闲服务按 Ctrl+C 也要等满 30s。
-> 框架在 v1.1.5 补了「快速排空」看门狗：收到信号后一旦在途请求归零就立即结束事件循环，
+> 框架在 v1.1.6 补了「快速排空」看门狗：收到信号后一旦在途请求归零就立即结束事件循环，
 > 空闲退出从「等满宽限」压到 ≤0.5s；真有在途请求时仍走完整宽限，不丢请求。
 
 ---
@@ -177,7 +177,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.1.5](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.1.6](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
