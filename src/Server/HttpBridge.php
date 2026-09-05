@@ -116,7 +116,10 @@ final class HttpBridge
 
         $hasContentLength = false;
         foreach ($response->getHeaders() as $name => $values) {
-            if (strtolower($name) === 'content-length') {
+            // 精确匹配快路径：常见大小写命中即免去 strtolower() 调用，仅非常见写法回退。
+            $isContentLength = $name === 'Content-Length' || $name === 'content-length'
+                || strtolower($name) === 'content-length';
+            if ($isContentLength) {
                 if ($bodyless) {
                     continue; // 204/304/1xx 剥离 Content-Length
                 }

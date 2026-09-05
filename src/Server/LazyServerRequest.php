@@ -146,13 +146,15 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         }
 
         $native = $this->native;
+        // host() 只调一次：原生实现可能涉及 header 查找，多次调用纯浪费。
+        $host = $native->host() ?: 'localhost';
 
         return $this->lazyServerParams = [
             'REQUEST_METHOD'     => $native->method(),
             'REQUEST_URI'        => $native->uri(),
             'SERVER_PROTOCOL'    => $native->protocol(),
-            'SERVER_NAME'        => $native->host() ?: 'localhost',
-            'HTTP_HOST'          => $native->host() ?: 'localhost',
+            'SERVER_NAME'        => $host,
+            'HTTP_HOST'          => $host,
             'REMOTE_ADDR'        => $native->ip(),
             'REQUEST_TIME'       => time(),
             'REQUEST_TIME_FLOAT' => microtime(true),
