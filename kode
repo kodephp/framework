@@ -24,7 +24,12 @@ define('KODE_START_TIME', microtime(true));
 // 注意层级：本文件位于项目根（仓库内）或 vendor/kode/framework/kode（被依赖时），
 // 项目 autoload 恒为 <packageRoot>/vendor/autoload.php 或 <packageRoot>/../../../vendor/autoload.php；
 // 再加 getcwd() 兜底，覆盖 vendor 符号链接（path 仓库）导致 .. 解析漂移的场景。
-$packageRoot = __DIR__;
+// 项目根优先采用入口薄壳定义的 KODE_PROJECT_ROOT：经骨架 kode 转发 require 本文件时，
+// __DIR__ 会漂到 vendor/kode/framework，导致 init 把 .env 写进 vendor 目录。
+// 直接运行本文件（框架仓库开发）时常量未定义，回退 __DIR__ 保持原行为。
+$packageRoot = (defined('KODE_PROJECT_ROOT') && is_string(KODE_PROJECT_ROOT) && KODE_PROJECT_ROOT !== '' && is_dir(KODE_PROJECT_ROOT))
+    ? KODE_PROJECT_ROOT
+    : __DIR__;
 $cwd = getcwd();
 $autoloadCandidates = [
     $packageRoot . '/vendor/autoload.php',
