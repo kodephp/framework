@@ -33,7 +33,7 @@ final class BareModeTest extends TestCase
     {
         return [
             'http' => ['exception_middleware' => false, 'connection_cleanup' => false],
-            'security' => ['request_id' => false],
+            'security' => ['request_id' => false, 'enabled' => false],
             'logging' => ['access_log' => ['enabled' => false]],
             'cors' => ['enabled' => false],
             'locale' => ['enabled' => false],
