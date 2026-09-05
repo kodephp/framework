@@ -21,7 +21,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.2.2","php":"8.3.33","env":"local","time":0.52}
+# {"status":"ok","service":"kode-app","version":"1.2.3","php":"8.3.33","env":"local","time":0.52}
 # time = health check 方法执行耗时（毫秒）
 ```
 
@@ -93,7 +93,7 @@ Press Ctrl+C to stop. Start success.
 | `php kode status --pid=N` | 只看某一个进程（master 或 worker）的详情 |
 | `php kode stop [-g]` | 停止服务（默认 SIGTERM 优雅停机，`-g` 强制 SIGKILL） |
 | `php kode reload` | 平滑重启 worker（master 不动，不中断在途请求） |
-| `php kode restart` | 运行中先停再起，未运行直接拉起（恒守护模式，透传启动参数） |
+| `php kode restart [-d]` | 运行中先停再起，未运行直接拉起（默认前台同 `start`，`-d` 进守护） |
 
 `status` 输出示例（`connections` / `total_request` / `qps` 来自各 worker 的 1Hz 心跳）：
 
@@ -177,7 +177,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.2.2](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.2.3](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

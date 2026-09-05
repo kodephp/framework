@@ -444,8 +444,9 @@ final class KodeReloadCommand extends KodeServerCommand
 /**
  * 重启服务（对标 workerman 的 `restart`）：运行中则先停再起，未运行则直接拉起。
  *
- * 恒以守护模式拉起（与终端脱钩，活过当前 shell）；透传 --host/--port/--workers/
- * --runtime/--graceful。--watch 在守护重启下无意义，会被忽略并提示。
+ * 与 `start` 一致：默认前台运行（开发调试直接看输出，Ctrl+C 退出），加 `-d` /
+ * `--daemon` 才进守护模式。透传 --host/--port/--workers/--runtime/--graceful，
+ * 前台模式下 --watch 照常透给热重载（守护模式下无意义，会被忽略并提示）。
  */
 final class KodeRestartCommand extends KodeServerCommand
 {
@@ -465,14 +466,21 @@ final class KodeRestartCommand extends KodeServerCommand
             if (is_file($paths['pid_file'])) {
                 @unlink($paths['pid_file']);
             }
-            echo "服务未运行，直接启动（守护模式）\n";
+        }
+
+        $daemon = in_array('--daemon', $args, true) || in_array('-d', $args, true);
+        if (!$daemon) {
+            // 前台模式：与 `start` 完全一致（含 --watch 热重载），阻塞运行直到 Ctrl+C。
+            echo "服务未运行，直接前台启动（Ctrl+C 退出；加 -d 进守护模式）\n";
+            (new KodeServeCommand())->run($args);
+            return;
         }
 
         if (in_array('--watch', $args, true)) {
             echo "提示：restart 已忽略 --watch（守护模式下热重载无意义），开发期请直接 `php kode start --watch`\n";
         }
 
-        // 与终端彻底脱钩：restart 拉起的服务必须活过当前 shell，故固定走守护模式。
+        // 与终端彻底脱钩：守护 restart 拉起的服务必须活过当前 shell。
         $cmd = sprintf(
             '%s %s start --daemon %s >> %s 2>&1 &',
             escapeshellarg(PHP_BINARY),
@@ -739,7 +747,7 @@ final class KodeCli
         echo "                                    启动多进程 HTTP 服务（--watch 开热重载，-d 守护化；serve 为别名）\n";
         echo "  kode stop [-g]                 停止服务（默认优雅停机，-g 强制 SIGKILL）\n";
         echo "  kode reload                    平滑重启 worker（不中断在途请求）\n";
-        echo "  kode restart [--host H] [--port P]   运行中先停再起，未运行直接拉起（恒守护模式）\n";
+        echo "  kode restart [--host H] [--port P] [-d]   运行中先停再起，未运行直接拉起（默认前台，-d 进守护）\n";
         echo "  kode status [--pid=N]          查看服务状态（对标 workerman status；--pid 看单进程）\n";
         echo "  kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
