@@ -185,6 +185,27 @@ abstract class KodeServerCommand
     }
 
     /**
+     * 启动前端口预检：被占用直接报错退出（提示 stop / 换端口），不进入服务。
+     *
+     * 只做尽力而为的预判（检查与真实 bind 之间存在极窄竞态），残余的确定性
+     * 启动失败由看门狗的连续快速退出熔断兜底。
+     */
+    protected function assertPortFree(string $host, int $port): void
+    {
+        if ($port <= 0) {
+            return;
+        }
+        $errno = 0;
+        $errstr = '';
+        $probe = @stream_socket_server("tcp://{$host}:{$port}", $errno, $errstr);
+        if ($probe === false) {
+            fwrite(STDERR, "端口被占用：{$host}:{$port}（{$errstr}），请先 `kode stop --port {$port}` 或换端口后重试。\n");
+            exit(1);
+        }
+        fclose($probe);
+    }
+
+    /**
      * 控制面路径解析：加载配置 → 应用 --port/--host 命令行覆盖 → 解析路径 →
      * 老版本单文件回退（v1.3.0 前 PID/状态都在 storage/runtime/ 根下）。
      *
@@ -393,6 +414,15 @@ final class KodeServeCommand extends KodeServerCommand
         }
         if ($daemon) {
             $config['daemonize'] = true;
+        }
+
+        // 启动前端口预检：被占用直接 fail-fast，而不是进去之后靠异常/看门狗重拉
+        // 无限刷屏。reuse_port 下多进程可共享端口，跳过预检。
+        if (empty($config['reuse_port'])) {
+            $this->assertPortFree(
+                (string) ($config['host'] ?? '127.0.0.1'),
+                (int) ($config['port'] ?? 8000)
+            );
         }
 
         // 热重载默认开（开发改代码即时生效）：仅 production 默认关闭，可用

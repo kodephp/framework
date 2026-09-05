@@ -35,6 +35,17 @@ final class HotReloadWatcher
     /** stopChild 的 SIGTERM 宽限上限（秒）：超时升级 SIGKILL，防 proc_close 长阻塞。 */
     private const STOP_GRACE_SECONDS = 5.0;
 
+    /**
+     * 连续快速退出的判定阈值（秒）：子进程存活不足此时长即崩溃，累计计数。
+     *
+     * 端口被占 / 配置错误等确定性启动失败会使每次拉起都秒崩；无此熔断看门狗会
+     * 「子进程已退出，重新拉起...」无限刷屏。达到上限直接退出并指路。
+     */
+    private const FAST_EXIT_SECONDS = 5.0;
+
+    /** 连续快速退出达到此次数即放弃重拉（fail-fast，不断言具体退出原因）。 */
+    private const MAX_FAST_RESTARTS = 3;
+
     /** 当前 serve 子进程资源（供信号处理器关停）。 */
     private $currentProc = null;
 
@@ -50,6 +61,16 @@ final class HotReloadWatcher
         private readonly array $watchDirs = [],
         private readonly array $excludeDirs = self::DEFAULT_EXCLUDE,
     ) {
+    }
+
+    /**
+     * 连续快速退出计数：本次存活不足阈值则 +1（疑似秒崩），否则清零（跑稳过）。
+     *
+     * 纯函数，便于单测锁定熔断语义。
+     */
+    public static function countFastExit(int $previous, float $ageSeconds): int
+    {
+        return $ageSeconds < self::FAST_EXIT_SECONDS ? $previous + 1 : 0;
     }
 
     /**
@@ -101,17 +122,30 @@ final class HotReloadWatcher
             count($dirs)
         );
 
+        $spawnedAt = microtime(true);
+        $fastExits = 0;
         while (!WorkerState::$stop) {
             if ($monitor->tick()) {
                 echo "[watch] 检测到文件变化，重启服务...\n";
                 $this->stopChild($this->currentProc);
                 $this->currentProc = $this->spawn();
                 $this->installSignalHandlers();
+                // 有意重启：计数清零，只对「非预期的秒崩」熔断。
+                $spawnedAt = microtime(true);
+                $fastExits = 0;
             } elseif (!is_resource($this->currentProc) || !$this->isRunning($this->currentProc)) {
+                $fastExits = self::countFastExit($fastExits, microtime(true) - $spawnedAt);
+                if ($fastExits >= self::MAX_FAST_RESTARTS) {
+                    fwrite(STDERR, "[watch] 子进程连续 " . self::MAX_FAST_RESTARTS . " 次启动后 "
+                        . self::FAST_EXIT_SECONDS . "s 内退出（多为端口被占用或配置错误），已停止重拉。"
+                        . "请检查端口占用（`kode stop --port <端口>`）或配置后重试。\n");
+                    exit(1);
+                }
                 // 子进程意外退出：自动重新拉起。
                 echo "[watch] 子进程已退出，重新拉起...\n";
                 $this->currentProc = $this->spawn();
                 $this->installSignalHandlers();
+                $spawnedAt = microtime(true);
             }
 
             usleep(self::CHECK_USLEEP);

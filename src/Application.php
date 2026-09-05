@@ -58,7 +58,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '1.3.2';
+    public const VERSION = '1.3.3';
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。

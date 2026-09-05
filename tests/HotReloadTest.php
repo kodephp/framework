@@ -77,4 +77,16 @@ final class HotReloadTest extends TestCase
 
         self::assertSame(['--port', '9599'], $prop->getValue($watcher));
     }
+
+    public function testFastExitCounterTripsAfterConsecutiveCrashes(): void
+    {
+        // 连续秒崩累计，达到熔断阈值；中间跑稳一次即清零。
+        $n = 0;
+        $n = HotReloadWatcher::countFastExit($n, 0.5);
+        $n = HotReloadWatcher::countFastExit($n, 1.2);
+        self::assertSame(2, $n);
+
+        $n = HotReloadWatcher::countFastExit($n, 30.0);
+        self::assertSame(0, $n, '跑稳过的实例不应计入崩溃熔断');
+    }
 }

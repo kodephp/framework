@@ -88,13 +88,18 @@ final class HttpServiceProvider extends ServiceProvider
         // 一定会回收泄漏事务 / 按需释放缓存连接，无论请求成功还是异常（仅靠 finally 保证）。
         // 默认开启、零开销：正常路径无泄漏事务则不触碰连接；release_per_request 默认关以保留
         // 常驻进程的连接池性能。
-        $app->getDispatcher()->prepend(new ConnectionCleanupMiddleware(
-            releasePerRequest: (bool) $this->config('database.release_per_request', false),
-            leakRollback: (bool) $this->config('database.leak_rollback', true),
-            logger: $this->container->has(LoggerInterface::class)
-                ? $this->container->get(LoggerInterface::class)
-                : null,
-        ));
+        // 可关闭（http.connection_cleanup=false）：裸模式对标 webman 默认内核——跳过事务泄漏
+        // 兜底与 auth 上下文清理，每请求省一层中间件帧；关闭后手动 begin 未回滚的事务会跨请求
+        // 残留，须由业务自行保证事务闭合。
+        if (!empty($this->config('http.connection_cleanup', true))) {
+            $app->getDispatcher()->prepend(new ConnectionCleanupMiddleware(
+                releasePerRequest: (bool) $this->config('database.release_per_request', false),
+                leakRollback: (bool) $this->config('database.leak_rollback', true),
+                logger: $this->container->has(LoggerInterface::class)
+                    ? $this->container->get(LoggerInterface::class)
+                    : null,
+            ));
+        }
 
         // 404 / 405：API 框架统一返回标准 JSON（不含堆栈，异常由 ExceptionMiddleware 处理）。
         $app->notFound(fn(): \Kode\Http\Response => Resp::error('Not Found', 404));
@@ -342,6 +347,16 @@ final class HttpServiceProvider extends ServiceProvider
      */
     private function pipeExceptionHandling(App $app): void
     {
+        // 可关闭（http.exception_middleware=false）：裸模式对标 webman 默认内核——不再用
+        // 框架结构化异常中间件包裹管线。注意：默认栈内 handler 异常本就由内层的
+        // kode/http JsonErrorHandlerMiddleware 先行捕获（E1500 极简 JSON），关闭本开关
+        // 不改变任何 handler 异常的对外形态（BareModeTest 双档同断言锁定）；省的是一层
+        // 中间件帧与 ExceptionManager 单例构建。桥接层之外的极端异常仍由
+        // HttpServer::errorResponse 经 ExceptionManager 结构化兜底。
+        if (empty($this->config('http.exception_middleware', true))) {
+            return;
+        }
+
         /** @var ExceptionManager $manager */
         $manager = $this->container->get(ExceptionManager::class);
 
