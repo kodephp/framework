@@ -106,14 +106,20 @@ final class KodeInitCommand
             copy($example, $env);
             @chmod($env, 0600);
             // 将占位密钥替换为强随机值（H2）：避免 cp .env.example 即生产可用的裸奔。
+            // 占位符含 __GENERATED_ON_INIT__（现行）与 change-me*（历史兼容），任一命中即替换；
+            // 成功回执以实际写入结果为准，不再无条件宣称成功。
             $raw = @file_get_contents($env);
-            if (is_string($raw) && str_contains($raw, 'change-me')) {
+            $replaced = false;
+            if (is_string($raw) && (str_contains($raw, '__GENERATED_ON_INIT__') || str_contains($raw, 'change-me'))) {
                 $strong = bin2hex(random_bytes(32));
+                $raw = str_replace('__GENERATED_ON_INIT__', $strong, $raw);
                 $raw = str_replace('change-me-to-a-long-random-string', $strong, $raw);
                 $raw = str_replace('change-me', $strong, $raw);
-                @file_put_contents($env, $raw);
+                $replaced = @file_put_contents($env, $raw) !== false;
             }
-            echo "✅ 已生成 .env（已写入强随机 JWT_SECRET，权限 0600）\n";
+            echo $replaced
+                ? "✅ 已生成 .env（已写入强随机 JWT_SECRET，权限 0600）\n"
+                : "⚠️  已生成 .env，但未能写入强随机 JWT_SECRET（请手动设置），权限 0600\n";
         } elseif (is_file($env)) {
             // 已有 .env：确保权限收紧
             @chmod($env, 0600);
