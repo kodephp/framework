@@ -299,7 +299,11 @@ final class HttpServiceProvider extends ServiceProvider
 
         // 3) 为显式路由（[类, 方法] / "类@方法" / 类名 等可反射 handler）补充
         //    #[RateLimit] 规则登记。属性路由已在扫描阶段登记，此处仅处理显式路由。
-        $this->scanExplicitRateLimits($app, $registry);
+        //    限流总开关关闭时跳过：免去构建 RateLimitAttributeReader/LimiterFactory
+        //    与全路由表反射扫描的启动开销（与 feature/csrf/韧性各段守卫同范式）。
+        if (!empty($this->config('limiting.enabled', true))) {
+            $this->scanExplicitRateLimits($app, $registry);
+        }
 
         // 4) 为显式路由（可反射 handler）补充 #[Feature] 开关登记（与限流同范式）。
         if (!empty($this->config('feature.enabled', true))) {
