@@ -21,7 +21,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.2.4","php":"8.3.33","env":"local","time":0.52}
+# {"status":"ok","service":"kode-app","version":"1.2.5","php":"8.3.33","env":"local","time":0.52}
 # time = health check 方法执行耗时（毫秒）
 ```
 
@@ -95,7 +95,7 @@ Press Ctrl+C to stop. Start success.
 | `php kode reload [-d]` | 全量重载（等价 stop 后 start；默认前台，`-d` 进守护） |
 | `php kode restart` | 平滑滚动重启 worker（不动 master；未运行则报错） |
 
-> 命令约定（v1.2.4 起）：`reload`＝重载所有（stop＋start），`restart`＝只平滑滚动
+> 命令约定（v1.2.5 起）：`reload`＝重载所有（stop＋start），`restart`＝只平滑滚动
 > worker。注意这与 workerman 的命名相反（那边 restart 是全量、reload 是平滑），
 > 为统一记忆：**带 e 的 reload 做“全套”（rEload＝Everything），短小的 restart 做“滚动”（rolling）**。
 
@@ -181,7 +181,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.2.4](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.2.5](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

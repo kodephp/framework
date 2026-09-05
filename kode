@@ -359,6 +359,8 @@ final class KodeServeCommand extends KodeServerCommand
         if ($watch) {
             // 开发期热重载：把真实 serve 作为子进程，父进程监听文件变化后自动重启。
             // 守护化与热重载互斥：-d 脱离终端后看门狗的输出无处可去，也没有意义。
+            // 子进程必须带 --no-watch：否则子进程按默认规则再次进入看门狗，形成嵌套。
+            $serveArgs[] = '--no-watch';
             (new HotReloadWatcher($root, $serveArgs))->run();
             exit(0);
         }
