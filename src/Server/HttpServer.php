@@ -80,7 +80,11 @@ final class HttpServer
      * `serve` 与 CLI 的 `stop` / `reload` / `status` 共用同一套解析规则，
      * 避免「启停两处各拼一次路径」导致的漂移（改了配置却发现 stop 找不到 pid 文件）。
      *
-     * 优先级：config/server.php 显式配置 > 默认值（状态目录下的 kode.pid / kode.log）。
+     * 优先级：config/server.php 显式配置 > 默认值。
+     * 多实例隔离（v1.3.0）：默认运行时目录按端口分片（`storage/runtime/9527`），
+     * 不同端口实例的 PID / 日志 / 状态互不覆盖；显式 `runtime_path` 保持原样
+     * （高阶用户自理隔离）。老版本单文件（`storage/runtime/kode.pid`）由 CLI 层
+     * 回退兼容，见 `kode` 的 controlPaths()。
      * 相对路径按项目根解析，绝对路径原样使用。
      *
      * @param array<string, mixed> $config config/server.php 内容
@@ -89,7 +93,12 @@ final class HttpServer
     public static function resolveRuntimePaths(string $root, array $config = []): array
     {
         $root   = rtrim($root, '/');
-        $store  = ServerStatusStore::forRoot($root, isset($config['runtime_path']) ? (string) $config['runtime_path'] : null);
+        $runtimePath = isset($config['runtime_path']) ? (string) $config['runtime_path'] : '';
+        if ($runtimePath === '') {
+            $port = max(0, (int) ($config['port'] ?? 0));
+            $runtimePath = $port > 0 ? "storage/runtime/{$port}" : 'storage/runtime';
+        }
+        $store  = ServerStatusStore::forRoot($root, $runtimePath);
         $dir    = $store->dir();
 
         $pidFile = isset($config['pid_file']) ? (string) $config['pid_file'] : '';
@@ -521,6 +530,11 @@ final class HttpServer
             PHP_VERSION
         );
         $out .= sprintf("Runtime:%-24s Event-Loop:%s\n", $runtimeLabel, $loop);
+        // 前台模式直接给出 master pid（本进程即 master，stop/status 可直接用）；
+        // 守护模式此刻尚未 fork，真实 master pid 以 pid 文件 + status 表为准，此处不写避免误导。
+        if (empty($ctx['daemon'])) {
+            $out .= sprintf("master pid:%-10d (前台运行，Ctrl+C 退出)\n", getmypid());
+        }
         $out .= self::separator('WORKERS') . "\n";
         $out .= sprintf(
             "%-8s %-10s %-16s %-28s %-10s %s\n",

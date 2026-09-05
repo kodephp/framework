@@ -184,6 +184,51 @@ abstract class KodeServerCommand
         return HttpServer::resolveRuntimePaths($root, $this->loadServerConfig($root));
     }
 
+    /**
+     * 控制面路径解析：加载配置 → 应用 --port/--host 命令行覆盖 → 解析路径 →
+     * 老版本单文件回退（v1.3.0 前 PID/状态都在 storage/runtime/ 根下）。
+     *
+     * 多实例靠端口区分：`kode start --port 9599` 的 PID/日志/状态落在
+     * `storage/runtime/9599/`，再用 `kode stop --port 9599` 精确操作该实例。
+     * 老版本残留的 `storage/runtime/kode.pid` 若仍对应存活进程则继续沿用，
+     * 并返回 $legacy=true 供调用方打印一次性迁移提示。
+     *
+     * @param list<string> $args
+     * @return array{0: array{pid_file: string, log_file: string, runtime_dir: string}, 1: array<string, mixed>, 2: bool}
+     */
+    protected function controlPaths(string $root, array $args): array
+    {
+        $config = $this->loadServerConfig($root);
+        $count = count($args);
+        for ($i = 0; $i < $count; $i++) {
+            if (($args[$i] === '--port' || $args[$i] === '--host') && isset($args[$i + 1])) {
+                $config[substr($args[$i], 2)] = $args[++$i];
+            } elseif (str_starts_with($args[$i], '--port=')) {
+                $config['port'] = substr($args[$i], strlen('--port='));
+            } elseif (str_starts_with($args[$i], '--host=')) {
+                $config['host'] = substr($args[$i], strlen('--host='));
+            }
+        }
+
+        $paths = HttpServer::resolveRuntimePaths($root, $config);
+
+        // 老版本回退：新路径无 PID 文件，但旧单文件对应存活进程 → 沿用旧路径。
+        $legacyPid = rtrim($root, '/') . '/storage/runtime/kode.pid';
+        if (!is_file($paths['pid_file']) && $legacyPid !== $paths['pid_file'] && is_file($legacyPid)) {
+            $pid = $this->readPid($legacyPid);
+            if ($pid !== null && $this->isRunning($pid)) {
+                $legacyDir = dirname($legacyPid);
+                return [
+                    ['pid_file' => $legacyPid, 'log_file' => $legacyDir . '/kode.log', 'runtime_dir' => $legacyDir],
+                    $config,
+                    true,
+                ];
+            }
+        }
+
+        return [$paths, $config, false];
+    }
+
     /** 读取 PID 文件；缺失或内容非法时返回 null。 */
     protected function readPid(string $file): ?int
     {
@@ -244,6 +289,14 @@ abstract class KodeServerCommand
     protected function entry(string $root): string
     {
         return is_file($root . '/kode') ? $root . '/kode' : $root . '/bin/kode';
+    }
+
+    /** 老版本单文件回退提示（仅命中时输出一次）。 */
+    protected function warnLegacy(bool $legacy): void
+    {
+        if ($legacy) {
+            fwrite(STDERR, "提示：命中老版本单文件路径（storage/runtime/kode.pid），已兼容操作；下次 start 将启用按端口隔离的新路径。\n");
+        }
     }
 
     /**
@@ -394,7 +447,7 @@ final class KodeStopCommand extends KodeServerCommand
     public function performStop(array $args): int
     {
         $root    = getcwd();
-        $paths   = $this->runtimePaths($root);
+        [$paths, $config, $legacy] = $this->controlPaths($root, $args);
         $pid     = $this->readPid($paths['pid_file']);
         $force   = in_array('-g', $args, true) || in_array('--force', $args, true);
 
@@ -412,7 +465,7 @@ final class KodeStopCommand extends KodeServerCommand
             return 1;
         }
 
-        $graceful = max(0, (int) ($this->loadServerConfig($root)['graceful_shutdown_timeout'] ?? 3));
+        $graceful = max(0, (int) ($config['graceful_shutdown_timeout'] ?? 3));
 
         if ($force) {
             @posix_kill($pid, SIGKILL);
@@ -428,10 +481,11 @@ final class KodeStopCommand extends KodeServerCommand
             @posix_kill($pid, SIGKILL);
             $this->waitExit($pid, 5.0);
             echo "优雅停机超时，已强制停止服务（pid={$pid}）\n";
-            return 0;
+        } else {
+            echo "已停止服务（pid={$pid}）\n";
         }
+        $this->warnLegacy($legacy);
 
-        echo "已停止服务（pid={$pid}）\n";
         return 0;
     }
 }
@@ -448,16 +502,15 @@ final class KodeRestartCommand extends KodeServerCommand
     public function run(array $args): void
     {
         $root  = getcwd();
-        $paths = $this->runtimePaths($root);
+        [$paths, , $legacy] = $this->controlPaths($root, $args);
         $pid   = $this->readPid($paths['pid_file']);
 
         if ($pid === null || !$this->isRunning($pid)) {
             // 未运行则按 start 语义直接拉起（默认前台 + 默认热重载，-d 进守护），
-            // 保证 restart/start 在任何状态下都能把服务带起来。
+            // 保证 restart/start 在任何状态下都能把服务带起来（静默交接，serve 自带横幅）。
             if (is_file($paths['pid_file'])) {
                 @unlink($paths['pid_file']);
             }
-            echo "服务未运行，直接按 start 语义拉起\n";
             (new KodeServeCommand())->run($args);
             return;
         }
@@ -465,6 +518,7 @@ final class KodeRestartCommand extends KodeServerCommand
         // SIGUSR1：kode/process master 收到后逐个通知 worker 退出并由 master 重新拉起。
         @posix_kill($pid, SIGUSR1);
         echo "已发送 SIGUSR1 给 master（pid={$pid}），worker 将逐个平滑重启\n";
+        $this->warnLegacy($legacy);
         exit(0);
     }
 }
@@ -482,7 +536,7 @@ final class KodeReloadCommand extends KodeServerCommand
     public function run(array $args): void
     {
         $root  = getcwd();
-        $paths = $this->runtimePaths($root);
+        [$paths, , $legacy] = $this->controlPaths($root, $args);
         $pid   = $this->readPid($paths['pid_file']);
 
         if ($pid !== null && $this->isRunning($pid)) {
@@ -496,6 +550,7 @@ final class KodeReloadCommand extends KodeServerCommand
                 @unlink($paths['pid_file']);
             }
         }
+        $this->warnLegacy($legacy);
 
         $daemon = in_array('--daemon', $args, true) || in_array('-d', $args, true);
         if (!$daemon) {
@@ -728,11 +783,14 @@ final class KodeStatusCommand extends KodeServerCommand
         }
 
         $root    = getcwd();
-        $config  = $this->loadServerConfig($root);
-        $store   = ServerStatusStore::forRoot($root, isset($config['runtime_path']) ? (string) $config['runtime_path'] : null);
+        [$paths, $config, $legacy] = $this->controlPaths($root, $args);
+        // 状态目录与 PID 文件同源（多实例按端口隔离后，status 必须读同一目录，
+        // 否则会把别的端口实例的进程表混进来）。
+        $store   = new ServerStatusStore($paths['runtime_dir']);
         $status  = new ServerStatus($store);
 
         echo $status->render($onlyPid);
+        $this->warnLegacy($legacy);
 
         if (!$status->isRunning()) {
             fwrite(STDERR, "提示：先用 `kode start` 或 `kode start --daemon` 启动服务。\n");
@@ -774,10 +832,10 @@ final class KodeCli
         echo "  kode init                    初始化当前项目（生成 .env + storage/）\n";
         echo "  kode start [--host H] [--port P] [--workers N] [--watch] [--no-watch] [--daemon|-d] [--graceful N]\n";
         echo "                                    启动多进程 HTTP 服务（非 production 默认热重载，-d 守护化；serve 为别名）\n";
-        echo "  kode stop [-g]                 停止服务（默认优雅停机，-g 强制 SIGKILL）\n";
+        echo "  kode stop [--port P] [-g]      停止服务（默认优雅停机，-g 强杀；--port 定位多实例）\n";
         echo "  kode reload [-d]                 全量重载（等价 stop 后 start；默认前台，-d 进守护）\n";
         echo "  kode restart                   运行中平滑滚动 worker；未运行按 start 拉起\n";
-        echo "  kode status [--pid=N]          查看服务状态（对标 workerman status；--pid 看单进程）\n";
+        echo "  kode status [--port P] [--pid=N] 查看服务状态（--port 定位多实例，--pid 看单进程）\n";
         echo "  kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
         echo "  kode console <args...>         透传执行控制台命令\n";
