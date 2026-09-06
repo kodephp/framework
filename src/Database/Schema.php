@@ -26,25 +26,25 @@ use Kode\Database\Schema\Schema as BaseSchema;
  * 返回值为生成的 DDL（与 kode/database 签名保持一致），副作用是已执行建表。
  * 表/字段存在性检查用 {@see self::tableExists()}/{@see self::columnExistsInDb()}（返回布尔）。
  *
- * 注意：当前 kode/database 的 DDL/存在性判断为 MySQL 方言（INFORMATION_SCHEMA），
- * 生产落地以 MySQL 为准；sqlite 等其它驱动的支持以包版本为准。
+ * DDL 方言自动跟随默认连接的驱动（sqlite/mysql/pgsql…），显式传参可覆盖；
+ * 连接不可用时回退包默认 MySQL 方言。
  */
 class Schema extends BaseSchema
 {
     /**
      * 门面实例化用：允许无参构造（静态方法不依赖实例的表名）。
      */
-    public function __construct(string $table = '')
+    public function __construct(string $table = '', ?string $driver = null)
     {
-        parent::__construct($table);
+        parent::__construct($table, $driver);
     }
 
     /**
      * 仅生成建表 DDL（不执行），便于预览/迁移文件复用。
      */
-    public static function preview(string $table, callable $callback): string
+    public static function preview(string $table, callable $callback, ?string $driver = null): string
     {
-        $schema = new self($table);
+        $schema = new self($table, $driver ?? self::connectionDriver());
         $callback($schema);
 
         return $schema->toSql();
@@ -53,13 +53,13 @@ class Schema extends BaseSchema
     /**
      * 创建表并执行（返回生成的 DDL）。
      *
-     * @param string|null $driver 目标驱动（kode/database 1.15.5+ 签名兼容位；框架始终在
-     *                            默认连接上执行 DDL，故此处仅占位接收、不另行路由）。
+     * @param string|null $driver 目标驱动；缺省时取默认连接的驱动，保证 DDL 方言与
+     *                            执行连接一致（此前恒为 MySQL 方言，sqlite 下建表直接报错）。
      */
     public static function create(string $table, callable $callback, string $driver = null): string
     {
         self::assertIdentifier($table, '表名');
-        $schema = new self($table);
+        $schema = new self($table, $driver ?? self::connectionDriver());
         $callback($schema);
         $sql = $schema->toSql();
         Db::statement($sql);
@@ -70,12 +70,12 @@ class Schema extends BaseSchema
     /**
      * 修改表并执行（返回生成的 DDL）。
      *
-     * @param string|null $driver 目标驱动（同 {@see self::create} 签名兼容位）。
+     * @param string|null $driver 目标驱动（同 {@see self::create}，缺省跟默认连接）。
      */
     public static function table(string $table, callable $callback, string $driver = null): string
     {
         self::assertIdentifier($table, '表名');
-        $schema = new self($table);
+        $schema = new self($table, $driver ?? self::connectionDriver());
         $callback($schema);
         $sql = $schema->toAlterSql();
         Db::statement($sql);
@@ -93,6 +93,22 @@ class Schema extends BaseSchema
         Db::statement($sql);
 
         return $sql;
+    }
+
+    /**
+     * 默认连接的驱动名（sqlite/mysql/pgsql…），供 DDL 方言对齐执行连接。
+     *
+     * 连接未配置/不可用时返回 null（回退包全局默认 MySQL，保持旧行为）。
+     */
+    private static function connectionDriver(): ?string
+    {
+        try {
+            $driver = Db::getDriver();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return is_string($driver) && $driver !== '' ? $driver : null;
     }
 
     /**

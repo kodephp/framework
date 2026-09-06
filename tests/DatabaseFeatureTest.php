@@ -52,6 +52,19 @@ final class DatabaseFeatureTest extends TestCase
         self::assertTrue(method_exists(FrameworkSchema::class, 'columnExistsInDb'));
     }
 
+    public function testSchemaPreviewFollowsSqliteDialect(): void
+    {
+        // 显式 sqlite 方言：自增列须为 SQLite 合法形态（无 UNSIGNED/ENGINE）.
+        $sql = FrameworkSchema::preview('roles', function (FrameworkSchema $t): void {
+            $t->id();
+            $t->string('name', 64);
+        }, 'sqlite');
+
+        self::assertStringContainsString('AUTOINCREMENT', $sql);
+        self::assertStringNotContainsString('UNSIGNED', $sql);
+        self::assertStringNotContainsString('ENGINE=', $sql);
+    }
+
     public function testModelBaseInfersTableAndFills(): void
     {
         $user = new class extends Model
