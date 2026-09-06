@@ -30,7 +30,9 @@ final class SessionServiceProvider extends ServiceProvider
             // （从非项目根目录启动时会话文件会落错位置）。此处经 ServiceProvider::basePath()
             // （config('path.base')，启动期已预置）解析为绝对路径并确保目录存在。
             // 路径统一落在 storage/sessions（复数，匹配 .gitignore 既有约定）。
-            if (($config['drivers']['file']['path'] ?? null) === null) {
+            // 空字符串同样视为未配置（.env 模板常含 `SESSION_FILE_PATH=` 空值，
+            // 空串会绕过 ?? null 回退，导致驱动拿到空路径报无意义的锁错误）。
+            if (empty($config['drivers']['file']['path'])) {
                 $config['drivers']['file']['path'] = $this->basePath('storage/sessions');
             }
             $this->ensureDirectory($config['drivers']['file']['path']);
