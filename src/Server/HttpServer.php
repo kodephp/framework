@@ -7,6 +7,7 @@ namespace Kode\Framework\Server;
 use Kode\Exception\ExceptionManager;
 use Kode\Framework\Application;
 use Kode\Framework\Http\Resp;
+use Kode\Framework\Support\Snowflake;
 use Kode\Http\App as HttpApp;
 use Kode\Http\Psr7\Stream;
 use Kode\Http\Response;
@@ -176,12 +177,15 @@ final class HttpServer
         // 各子进程此后独立递增（写时复制，互不干扰），无需任何跨进程同步。
         $telemetry = new WorkerTelemetry();
 
-        $bootWorker = function () use ($root, &$http, &$app, &$graceful): void {
+        $bootWorker = function (?int $workerIndex = null) use ($root, &$http, &$app, &$graceful): void {
             if ($http === null) {
                 $app = Application::make($root);
                 $http = $app->http();
                 // 优雅停机管理器：每 worker 一个实例，请求路径上用于计入/计出在途请求。
                 $graceful = $app->core()->container->get(GracefulShutdown::class);
+            }
+            if ($workerIndex !== null) {
+                $this->isolateWorkerServices($app, $workerIndex);
             }
         };
 
@@ -218,7 +222,7 @@ final class HttpServer
             $startedAt,
             $runtimeType
         ): void {
-            $bootWorker();
+            $bootWorker($workerId);
             // worker 级启动钩子：应用已就绪，可建立独立连接池 / 启动周期任务。
             try {
                 event(new \Kode\Framework\Lifecycle\WorkerStarting($workerId));
@@ -357,6 +361,7 @@ final class HttpServer
             'name'    => $name,
             'daemon'  => $daemonize,
             'debug'   => $debug,
+            'pid_file' => $paths['pid_file'],
         ]);
 
         $runtime->start();
@@ -369,6 +374,29 @@ final class HttpServer
     }
 
     // ------------------------------------------------------------ 可观测性
+
+    /**
+     * 按 worker 隔离有状态单例（fork 安全收口）。
+     *
+     * master 预热期构建的容器随 fork 被完整复制；持有进程级可变状态的单例若不
+     * 重建，多 worker 将互相干扰。本方法在 workerStart（序号确定）时执行：
+     *  - Snowflake：重绑确定性机器 ID（基址 + worker 序号），杜绝跨 worker 同毫秒
+     *    ID 碰撞（provider 侧另有 PID 偏移兜底，供 Swoole/Workerman/CLI 直用场景）。
+     */
+    private function isolateWorkerServices(Application $app, int $workerIndex): void
+    {
+        $container = $app->core()->container;
+        $base = (int) $app->config()->get('snowflake.worker_id', 0);
+        $epoch = (int) $app->config()->get('snowflake.epoch', 1704067200000);
+
+        $container->instance(
+            Snowflake::class,
+            new Snowflake(new \Kode\Process\Cluster\Snowflake(
+                ($base + $workerIndex) % (\Kode\Process\Cluster\Snowflake::MAX_WORKER_ID + 1),
+                $epoch,
+            )),
+        );
+    }
 
     /**
      * 在 worker 内启动遥测心跳 + 快速排空看门狗。
@@ -560,8 +588,9 @@ final class HttpServer
         $out .= "项目根目录：" . (string) $ctx['root'] . "\n";
 
         // 守护模式下终端已经脱离，Ctrl+C 不再可达，必须提示用 stop 命令停止。
+        // PID 文件用运行期解析出的真实路径（按端口分片），不用 config 原始值。
         $out .= !empty($ctx['daemon'])
-            ? "守护模式已启动（PID 文件：" . ($this->config['pid_file'] ?? 'storage/runtime/kode.pid') . "）。\n"
+            ? "守护模式已启动（PID 文件：" . (string) ($ctx['pid_file'] ?? 'storage/runtime/kode.pid') . "）。\n"
               . "Input \"php bin/kode stop\" to stop. Start success.\n"
             : "Press Ctrl+C to stop. Start success.\n";
 

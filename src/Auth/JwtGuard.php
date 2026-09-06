@@ -95,18 +95,27 @@ final class JwtGuard implements AuthGuard
      * 委托 kode/jwt 的守卫签发：每个守卫内部持有独立 Builder 实例，
      * 不会像共享单例那样冻结 jti / 累积 claims（旧实现会导致后续令牌
      * 复用首签 jti 并泄漏前次声明）。
+     *
+     * 有效期钳制：exp 恒不超过 iat + 守卫 ttl——调用方传入的超长 exp 会被
+     * 压到上限（需更长有效期请调高 ttl，而非逐次传参）；iat 缺省为当前时间。
      */
     public function issue(array $claims, string $guard = 'api'): string
     {
         $guardConfig = $this->guardConfig($guard);
         $ttl = (int) ($guardConfig['ttl'] ?? 3600);
 
+        $iat = (int) ($claims['iat'] ?? time());
+        $exp = (int) ($claims['exp'] ?? ($iat + $ttl));
+        if ($exp > $iat + $ttl) {
+            $exp = $iat + $ttl;
+        }
+
         $payload = new Payload(
             uid: $claims['uid'] ?? null,
             username: $claims['username'] ?? null,
             platform: $claims['platform'] ?? $guardConfig['platform'] ?? 'default',
-            exp: (int) ($claims['exp'] ?? time() + $ttl),
-            iat: (int) ($claims['iat'] ?? time()),
+            exp: $exp,
+            iat: $iat,
             jti: $claims['jti'] ?? ('jwt_' . bin2hex(random_bytes(16))),
             roles: $claims['roles'] ?? null,
             perms: $claims['perms'] ?? null,

@@ -158,4 +158,14 @@ final class JwtGuardTest extends TestCase
 
         $guard->issue(['uid' => 1], 'admin');
     }
+
+    public function testIssueClampsExpToTtl(): void
+    {
+        // 调用方传入超长 exp 会被压到 iat + ttl（ttl=3600）。
+        $guard = $this->guard();
+        $token = $guard->issue(['uid' => 1, 'exp' => time() + 999999]);
+
+        $payload = $guard->authenticate($token);
+        self::assertLessThanOrEqual($payload->iat + 3600, $payload->exp);
+    }
 }

@@ -382,6 +382,12 @@ final class HttpServiceProvider extends ServiceProvider
             throw new \RuntimeException('CORS 配置错误：allowed_origins 为 "*" 时不可开启 allow_credentials（规范禁止），请收敛为具体域名或关闭凭证。');
         }
 
+        // 单字符串归一化（M7）：vendor CorsMiddleware 仅对数组做白名单校验，单字符串
+        // 会回显任意请求 Origin。非 '*' 字符串一律转为单元素数组走白名单分支。
+        if (is_string($origins) && $origins !== '*') {
+            $origins = [$origins];
+        }
+
         return [
             'origin' => $origins,
             'methods' => $cors['allowed_methods'] ?? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -917,7 +923,7 @@ final class HttpServiceProvider extends ServiceProvider
 
             return Resp::json([
                 'status'  => $result['healthy'] ? 'ok' : 'degraded',
-                'checks'  => $result['checks'],
+                'checks'  => $this->presentChecks($result['checks']),
             ], $status);
         });
 
@@ -935,11 +941,33 @@ final class HttpServiceProvider extends ServiceProvider
                 'env'         => Application::getInstance()?->config()->get('app.env', 'local'),
                 'time'        => round((microtime(true) - $t0) * 1000, 2),
                 'uptime'      => round(microtime(true) - (defined('KODE_START_TIME') ? KODE_START_TIME : $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true)), 3),
-                'components'  => $result['checks'],
+                'components'  => $this->presentChecks($result['checks']),
             ]);
         });
 
         $app->get('/ping', static fn() => Resp::json(['pong' => true]));
+    }
+
+    /**
+     * 健康检查明细脱敏：探针失败文本常含 DB/缓存底层报错（连接串、SQLSTATE），
+     * 未鉴权的 /health 对外只应暴露状态。debug 开时保留全文便于排障。
+     *
+     * @param array<string, string> $checks
+     * @return array<string, string>
+     */
+    private function presentChecks(array $checks): array
+    {
+        if (!empty($this->config('app.debug', false))) {
+            return $checks;
+        }
+
+        foreach ($checks as $name => $status) {
+            if (str_starts_with((string) $status, 'error')) {
+                $checks[$name] = 'error';
+            }
+        }
+
+        return $checks;
     }
 
     /**

@@ -15,8 +15,9 @@ use Psr\Http\Message\ResponseInterface;
  *
  * 下游应用测试继承本类即可获得：
  *  - bootApp()：启动一个真实框架应用（容器 + 路由 + 中间件全链路）；
- *  - get()/post()/put()/delete()：发起真实 HTTP 请求并拿到 TestResponse；
- *  - 断言助手：assertStatus() / assertJson() / assertSee()。
+ *    跨测试类配置不同时置 `protected bool $independentApp = true`（默认复用首个实例）；
+ *  - get()/post()/put()/patch()/delete()/jsonRequest()：发起真实 HTTP 请求并拿到 TestResponse；
+ *  - 断言助手：assertStatus() / assertJson() / assertJsonPath() / assertHeader() / assertSee()。
  *
  * 用法：
  * <code>
@@ -127,17 +128,30 @@ abstract class TestCase extends BaseTestCase
     /**
      * @param array<string, mixed> $data
      */
+    public function patch(string $uri, array $data = [], array $headers = []): TestResponse
+    {
+        return $this->jsonRequest('PATCH', $uri, $data, $headers);
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
     public function jsonRequest(string $method, string $uri, array $data = [], array $headers = []): TestResponse
     {
         $headers['Content-Type'] = 'application/json';
 
-        return $this->request($method, $uri, (string) json_encode($data), $headers);
+        return $this->request($method, $uri, (string) json_encode($data), $headers, $data);
     }
 
-    private function request(string $method, string $uri, string $body = '', array $headers = []): TestResponse
+    private function request(string $method, string $uri, string $body = '', array $headers = [], ?array $parsedBody = null): TestResponse
     {
         $this->app();
         $request = new ServerRequest($method, $uri, $headers, $body);
+        if ($parsedBody !== null) {
+            // JSON 体同步解析后形态：真实服务端由 LazyServerRequest 按需解析，
+            // 测试内显式预置，避免控制器 getParsedBody() 读到 null。
+            $request = $request->withParsedBody($parsedBody);
+        }
         // Cookie 头 → cookieParams：PSR-7 不会从头自动解析 Cookie，而会话等组件
         // 消费的是 getCookieParams()；此处显式桥接以贴合真实 HTTP 语义。
         $cookieHeader = '';
@@ -257,6 +271,51 @@ final class TestResponse
     public function assertSee(string $needle): self
     {
         $this->test->assertStringContainsString($needle, $this->body(), "响应体未包含：{$needle}");
+
+        return $this;
+    }
+
+    /**
+     * 响应体为合法 JSON（且可选断言顶层子集相等）。
+     *
+     * @param array<string, mixed> $subset 非空时断言解码后数组包含该子集
+     */
+    public function assertJson(array $subset = []): self
+    {
+        $decoded = json_decode($this->body(), true);
+        $this->test->assertIsArray($decoded, '响应体不是合法 JSON：' . $this->body());
+        foreach ($subset as $key => $value) {
+            $this->test->assertArrayHasKey($key, $decoded);
+            $this->test->assertEquals($value, $decoded[$key]);
+        }
+
+        return $this;
+    }
+
+    /**
+     * JSON 点路径断言（`data.user.name`，数字段按数组下标）。
+     */
+    public function assertJsonPath(string $path, mixed $expected): self
+    {
+        $node = $this->json();
+        foreach (explode('.', $path) as $segment) {
+            if (is_array($node) && array_key_exists($segment, $node)) {
+                $node = $node[$segment];
+                continue;
+            }
+            $this->test->fail("JSON 路径不存在：{$path}；响应体：" . $this->body());
+        }
+        $this->test->assertEquals($expected, $node, "JSON 路径 {$path} 不符预期");
+
+        return $this;
+    }
+
+    /**
+     * 响应头断言（单行值比较）。
+     */
+    public function assertHeader(string $name, string $expected): self
+    {
+        $this->test->assertSame($expected, $this->header($name), "响应头 {$name} 不符预期");
 
         return $this;
     }

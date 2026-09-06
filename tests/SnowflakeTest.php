@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Tests;
 
 use Kode\Framework\Support\Snowflake;
+use Kode\Framework\Providers\SnowflakeServiceProvider;
 use Kode\Process\Exceptions\ClusterException;
 use Kode\Process\Cluster\Snowflake as ClusterSnowflake;
 use PHPUnit\Framework\TestCase;
@@ -111,5 +112,18 @@ final class SnowflakeTest extends TestCase
 
         // 解析出的绝对时间戳应 >= 自定义 epoch。
         self::assertGreaterThanOrEqual($epoch, $parts['timestamp']);
+    }
+
+    public function testResolveWorkerIdIsIsolatedPerProcess(): void
+    {
+        // 不同基址必得不同机器 ID（同进程内即可验证偏移逻辑）；
+        // 范围恒落在 0~1023。
+        $a = SnowflakeServiceProvider::resolveWorkerId(0);
+        $b = SnowflakeServiceProvider::resolveWorkerId(1);
+        self::assertNotSame($a, $b);
+        foreach ([$a, $b, SnowflakeServiceProvider::resolveWorkerId(2000)] as $id) {
+            self::assertGreaterThanOrEqual(0, $id);
+            self::assertLessThanOrEqual(ClusterSnowflake::MAX_WORKER_ID, $id);
+        }
     }
 }

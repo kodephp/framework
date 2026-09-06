@@ -8,12 +8,15 @@ define('KODE_START_TIME', microtime(true));
 /**
  * Kode Framework 命令行工具
  *
- * 用法：
+ * 常用：
  *   kode init                    初始化当前项目（生成 .env + storage/，composer create-project 后自动执行）
  *   kode start [--host H] [--port P] [--workers N]
  *                                    启动多进程 HTTP 服务（kode/process master-worker，serve 为别名）
+ *   kode stop / restart / reload / status
+ *                                    运维三件套（restart=平滑滚动 worker，reload=全量 stop+start）
  *   kode console <args...>        透传执行控制台命令
- *   kode help                     帮助
+ *
+ * 完整命令表见 `kode help`（以其为准，本注释仅列高频）。
  *
  * 作为 composer 包发布后，用户安装 kode/framework 即可通过 vendor/bin/kode 调用。
  * 新项目请用骨架仓库：composer create-project kode/skeleton <项目名>
@@ -541,6 +544,7 @@ final class KodeRestartCommand extends KodeServerCommand
             if (is_file($paths['pid_file'])) {
                 @unlink($paths['pid_file']);
             }
+            echo "服务未运行，直接前台拉起（Ctrl+C 退出；加 -d 进守护模式）\n";
             (new KodeServeCommand())->run($args);
             return;
         }
@@ -881,6 +885,7 @@ final class KodeCli
         echo "  kode apidoc:generate [--output=] [--check]   生成/校验 OpenAPI 文档\n";
         echo "  kode help                      显示本帮助\n\n";
         echo "serve 选项：--host 127.0.0.1  --port 9527  --workers 4  --graceful 3  --daemon\n";
+        echo "（上为骨架默认值；纯内核默认 host 127.0.0.1 / port 8000 / workers cpu_count / graceful 3）\n";
         echo "进程表数据来自各 worker 的 1Hz 心跳，写在 storage/runtime/（可随时删除，会自动重建）\n";
         echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/tasks 示例\n";
         echo "迁移文件放在 database/migrations/，文件名形如 2024_01_01_000000_create_users_table.php\n";
