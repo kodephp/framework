@@ -21,6 +21,17 @@ final class CacheServiceProvider extends ServiceProvider
             /** @var array<string, mixed> $config */
             $config = (array) $this->config('cache', []);
 
+            // 配置归一化：config/cache.php 各 store 用 `driver` 键，而 CacheManager
+            // 按 `type` 建驱动；缺 `type` 时回退 file，导致命名 redis store 永远不生效。
+            // 此处补齐，未声明的保持原样。
+            if (isset($config['stores']) && is_array($config['stores'])) {
+                foreach ($config['stores'] as $name => $store) {
+                    if (is_array($store) && !isset($store['type']) && isset($store['driver'])) {
+                        $config['stores'][$name]['type'] = $store['driver'];
+                    }
+                }
+            }
+
             $manager = new CacheManager();
             $manager->setConfig($config);
 
