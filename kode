@@ -52,6 +52,27 @@ if ($autoload === null) {
 }
 require $autoload;
 
+/**
+ * 判断路径是否为绝对路径（跨平台）。
+ *
+ * 必须置于分发器之前：分发在文件载入期即执行（KodeScheduleCommand::taskDirs 等），
+ * 放文件尾会导致 schedule:list/cron 报函数未定义。
+ */
+if (!function_exists('is_absolute_path')) {
+    function is_absolute_path(string $path): bool
+    {
+        if ($path === '' || $path === '/') {
+            return true;
+        }
+
+        if (DIRECTORY_SEPARATOR === '\\') {
+            return (bool) preg_match('#^[A-Za-z]:[\\\\/]#', $path) || str_starts_with($path, '\\\\');
+        }
+
+        return str_starts_with($path, '/');
+    }
+}
+
 use Kode\Attributes\Reader;
 use Kode\Framework\Application;
 use Kode\Framework\Scheduling\ScheduleDispatcher;
@@ -890,23 +911,5 @@ final class KodeCli
         echo "cron 任务用 #[Cron('分 时 日 月 周')] 声明，见 app/tasks 示例\n";
         echo "迁移文件放在 database/migrations/，文件名形如 2024_01_01_000000_create_users_table.php\n";
         exit(0);
-    }
-}
-
-/**
- * 判断路径是否为绝对路径（跨平台）。
- */
-if (!function_exists('is_absolute_path')) {
-    function is_absolute_path(string $path): bool
-    {
-        if ($path === '' || $path === '/') {
-            return true;
-        }
-
-        if (DIRECTORY_SEPARATOR === '\\') {
-            return (bool) preg_match('#^[A-Za-z]:[\\\\/]#', $path) || str_starts_with($path, '\\\\');
-        }
-
-        return str_starts_with($path, '/');
     }
 }
