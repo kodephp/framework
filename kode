@@ -311,6 +311,98 @@ abstract class KodeServerCommand
     }
 
     /**
+     * 等待端口真正空闲（master 退出 ≠ 监听释放：优雅排空中的旧 worker 仍占 socket，
+     * 此时直接 bind 必撞车）。用试绑定探测，不依赖 lsof/ss，跨平台。
+     *
+     * @return bool 超时前变空返回 true
+     */
+    protected function waitPortFree(string $host, int $port, float $timeout): bool
+    {
+        $deadline = microtime(true) + $timeout;
+        do {
+            $srv = @stream_socket_server("tcp://{$host}:{$port}", $errno, $errstr);
+            if ($srv !== false) {
+                fclose($srv);
+
+                return true;
+            }
+            usleep(200_000);
+        } while (microtime(true) < $deadline);
+
+        return false;
+    }
+
+    /**
+     * 清理残留的 kode-http 进程（master/worker）。
+     *
+     * 仅匹配进程名含 `kode-http:` 的行（框架自有命名），用 ps 解析 PID 后 SIGKILL，
+     * 最多等 5 秒。返回清理数量（日志用）。
+     */
+    protected function killResidualWorkers(): int
+    {
+        $killed = 0;
+        $out = [];
+        @exec('ps aux 2>/dev/null', $out);
+        foreach ($out as $line) {
+            if (!str_contains($line, 'kode-http:')) {
+                continue;
+            }
+            if (str_contains($line, 'grep')) {
+                continue;
+            }
+            $parts = preg_split('/\s+/', trim($line));
+            $pid = isset($parts[1]) ? (int) $parts[1] : 0;
+            if ($pid > 1 && function_exists('posix_kill')) {
+                @posix_kill($pid, SIGKILL);
+                $killed++;
+            }
+        }
+        if ($killed > 0) {
+            $deadline = microtime(true) + 5.0;
+            while (microtime(true) < $deadline) {
+                $left = 0;
+                $out2 = [];
+                @exec('ps aux 2>/dev/null', $out2);
+                foreach ($out2 as $line) {
+                    if (str_contains($line, 'kode-http:') && !str_contains($line, 'grep')) {
+                        $left++;
+                    }
+                }
+                if ($left === 0) {
+                    break;
+                }
+                usleep(200000);
+            }
+            echo "已清理 {$killed} 个残留 worker 进程\n";
+        }
+
+        return $killed;
+    }
+
+    /**
+     * 全量重启前置：清残留 worker 后等待端口真正空闲。
+     *
+     * 超时仍 busy 说明端口被非 kode 进程占用，此时绝不强杀，中止并提示自查。
+     *
+     * @param array<string, mixed> $config controlPaths 解析后的服务配置（含 host/port）
+     */
+    protected function drainPort(array $config): bool
+    {
+        $this->killResidualWorkers();
+
+        $host = (string) ($config['host'] ?? '127.0.0.1');
+        $port = (int) ($config['port'] ?? 8000);
+        if ($this->waitPortFree($host, $port, 15.0)) {
+            return true;
+        }
+
+        fwrite(STDERR, "端口 {$host}:{$port} 仍被占用（非 kode 残留进程或外部服务），已中止重启以免误杀。\n");
+        fwrite(STDERR, "自查：lsof -i tcp:{$port}；确认后 `kode stop --port {$port}` 再重试。\n");
+
+        return false;
+    }
+
+    /**
      * 轮询等待 master 拉起；返回有效 pid，超时返回 null。
      *
      * 旧 PID 文件残留的已死 pid 会被 isRunning 过滤，不会误判。
@@ -573,7 +665,7 @@ final class KodeRestartCommand extends KodeServerCommand
         // 默认：全量重启——先停同端口旧实例（含残留 worker），再按 start 语义拉起。
         // 不带 -d 则前台运行并显示启动界面（与 start 一致）；-d 进守护。
         $root  = getcwd();
-        [$paths, , $legacy] = $this->controlPaths($root, $args);
+        [$paths, $config, $legacy] = $this->controlPaths($root, $args);
         $pid   = $this->readPid($paths['pid_file']);
 
         if ($pid !== null && $this->isRunning($pid)) {
@@ -588,58 +680,15 @@ final class KodeRestartCommand extends KodeServerCommand
         }
 
         // 收尸：master 退出后可能残留孤儿 worker（曾被 kill -9 或 watch 嵌套），
-        // 进程名 kode-http 具有区分度，只清理它，不碰其它进程；随后端口必然干净。
-        $this->killResidualWorkers();
+        // 进程名 kode-http 具有区分度，只清理它，不碰其它进程；随后等端口排空。
+        // （基类 drainPort：清残留 + 等端口真空闲，超时中止。）
         $this->warnLegacy($legacy);
 
+        if (!$this->drainPort($config)) {
+            exit(1);
+        }
+
         (new KodeServeCommand())->run($args);
-    }
-
-    /**
-     * 清理残留的 kode-http 进程（master/worker）。
-     *
-     * 仅匹配进程名含 `kode-http:` 的行（框架自有命名），用 ps 解析 PID 后 SIGKILL，
-     * 最多等 5 秒。返回清理数量（日志用）。
-     */
-    private function killResidualWorkers(): int
-    {
-        $killed = 0;
-        $out = [];
-        @exec('ps aux 2>/dev/null', $out);
-        foreach ($out as $line) {
-            if (!str_contains($line, 'kode-http:')) {
-                continue;
-            }
-            if (str_contains($line, 'grep')) {
-                continue;
-            }
-            $parts = preg_split('/\s+/', trim($line));
-            $pid = isset($parts[1]) ? (int) $parts[1] : 0;
-            if ($pid > 1 && function_exists('posix_kill')) {
-                @posix_kill($pid, SIGKILL);
-                $killed++;
-            }
-        }
-        if ($killed > 0) {
-            $deadline = microtime(true) + 5.0;
-            while (microtime(true) < $deadline) {
-                $left = 0;
-                $out2 = [];
-                @exec('ps aux 2>/dev/null', $out2);
-                foreach ($out2 as $line) {
-                    if (str_contains($line, 'kode-http:') && !str_contains($line, 'grep')) {
-                        $left++;
-                    }
-                }
-                if ($left === 0) {
-                    break;
-                }
-                usleep(200000);
-            }
-            echo "已清理 {$killed} 个残留 worker 进程\n";
-        }
-
-        return $killed;
     }
 }
 
@@ -649,14 +698,14 @@ final class KodeRestartCommand extends KodeServerCommand
  * 模式与 `start` 一致：默认前台（开发调试直接看输出，Ctrl+C 退出），加 `-d` /
  * `--daemon` 进守护模式。透传 --host/--port/--workers/--runtime/--graceful，
  * 前台模式下 --watch 照常透给热重载（守护模式下无意义，会被忽略并提示）。
- * 未运行则直接按给定模式拉起（与 restart 的区别：restart 只滚动 worker）。
+ * 未运行则直接按给定模式拉起。与 restart 同为“停旧启新”，区别仅在提示与守护细节。
  */
 final class KodeReloadCommand extends KodeServerCommand
 {
     public function run(array $args): void
     {
         $root  = getcwd();
-        [$paths, , $legacy] = $this->controlPaths($root, $args);
+        [$paths, $config, $legacy] = $this->controlPaths($root, $args);
         $pid   = $this->readPid($paths['pid_file']);
 
         if ($pid !== null && $this->isRunning($pid)) {
@@ -671,6 +720,11 @@ final class KodeReloadCommand extends KodeServerCommand
             }
         }
         $this->warnLegacy($legacy);
+
+        // 停旧启新之间必须等端口真空闲（排空中的旧 worker 仍占监听），否则必撞车。
+        if (!$this->drainPort($config)) {
+            exit(1);
+        }
 
         $daemon = in_array('--daemon', $args, true) || in_array('-d', $args, true);
         if (!$daemon) {
