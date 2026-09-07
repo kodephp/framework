@@ -555,26 +555,91 @@ final class KodeRestartCommand extends KodeServerCommand
 {
     public function run(array $args): void
     {
+        // --rolling 保留旧行为：运行中平滑滚动 worker（零停机，不换 master）。
+        if (in_array('--rolling', $args, true)) {
+            $root  = getcwd();
+            [$paths, , $legacy] = $this->controlPaths($root, $args);
+            $pid   = $this->readPid($paths['pid_file']);
+            if ($pid === null || !$this->isRunning($pid)) {
+                fwrite(STDERR, "服务未运行，无法滚动；用不带 --rolling 的 restart 全量拉起。\n");
+                exit(1);
+            }
+            @posix_kill($pid, SIGUSR1);
+            echo "已发送 SIGUSR1 给 master（pid={$pid}），worker 将逐个平滑重启\n";
+            $this->warnLegacy($legacy);
+            exit(0);
+        }
+
+        // 默认：全量重启——先停同端口旧实例（含残留 worker），再按 start 语义拉起。
+        // 不带 -d 则前台运行并显示启动界面（与 start 一致）；-d 进守护。
         $root  = getcwd();
         [$paths, , $legacy] = $this->controlPaths($root, $args);
         $pid   = $this->readPid($paths['pid_file']);
 
-        if ($pid === null || !$this->isRunning($pid)) {
-            // 未运行则按 start 语义直接拉起（默认前台 + 默认热重载，-d 进守护），
-            // 保证 restart/start 在任何状态下都能把服务带起来（静默交接，serve 自带横幅）。
+        if ($pid !== null && $this->isRunning($pid)) {
+            $code = (new KodeStopCommand())->performStop($args);
+            if ($code !== 0) {
+                exit($code);
+            }
+        } else {
             if (is_file($paths['pid_file'])) {
                 @unlink($paths['pid_file']);
             }
-            echo "服务未运行，直接前台拉起（Ctrl+C 退出；加 -d 进守护模式）\n";
-            (new KodeServeCommand())->run($args);
-            return;
         }
 
-        // SIGUSR1：kode/process master 收到后逐个通知 worker 退出并由 master 重新拉起。
-        @posix_kill($pid, SIGUSR1);
-        echo "已发送 SIGUSR1 给 master（pid={$pid}），worker 将逐个平滑重启\n";
+        // 收尸：master 退出后可能残留孤儿 worker（曾被 kill -9 或 watch 嵌套），
+        // 进程名 kode-http 具有区分度，只清理它，不碰其它进程；随后端口必然干净。
+        $this->killResidualWorkers();
         $this->warnLegacy($legacy);
-        exit(0);
+
+        (new KodeServeCommand())->run($args);
+    }
+
+    /**
+     * 清理残留的 kode-http 进程（master/worker）。
+     *
+     * 仅匹配进程名含 `kode-http:` 的行（框架自有命名），用 ps 解析 PID 后 SIGKILL，
+     * 最多等 5 秒。返回清理数量（日志用）。
+     */
+    private function killResidualWorkers(): int
+    {
+        $killed = 0;
+        $out = [];
+        @exec('ps aux 2>/dev/null', $out);
+        foreach ($out as $line) {
+            if (!str_contains($line, 'kode-http:')) {
+                continue;
+            }
+            if (str_contains($line, 'grep')) {
+                continue;
+            }
+            $parts = preg_split('/\s+/', trim($line));
+            $pid = isset($parts[1]) ? (int) $parts[1] : 0;
+            if ($pid > 1 && function_exists('posix_kill')) {
+                @posix_kill($pid, SIGKILL);
+                $killed++;
+            }
+        }
+        if ($killed > 0) {
+            $deadline = microtime(true) + 5.0;
+            while (microtime(true) < $deadline) {
+                $left = 0;
+                $out2 = [];
+                @exec('ps aux 2>/dev/null', $out2);
+                foreach ($out2 as $line) {
+                    if (str_contains($line, 'kode-http:') && !str_contains($line, 'grep')) {
+                        $left++;
+                    }
+                }
+                if ($left === 0) {
+                    break;
+                }
+                usleep(200000);
+            }
+            echo "已清理 {$killed} 个残留 worker 进程\n";
+        }
+
+        return $killed;
     }
 }
 
@@ -889,7 +954,8 @@ final class KodeCli
         echo "                                    启动多进程 HTTP 服务（非 production 默认热重载，-d 守护化；serve 为别名）\n";
         echo "  kode stop [--port P] [-g]      停止服务（默认优雅停机，-g 强杀；--port 定位多实例）\n";
         echo "  kode reload [-d]                 全量重载（等价 stop 后 start；默认前台，-d 进守护）\n";
-        echo "  kode restart                   运行中平滑滚动 worker；未运行按 start 拉起\n";
+        echo "  kode restart [-d] [--rolling]     全量重启：先停同端口旧实例（含残留 worker），再按 start 拉起\n";
+        echo "                                  （默认前台显示启动界面，-d 进守护；--rolling 则零停机滚动 worker）\n";
         echo "  kode status [--port P] [--pid=N] 查看服务状态（--port 定位多实例，--pid 看单进程）\n";
         echo "  kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
         echo "  kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
