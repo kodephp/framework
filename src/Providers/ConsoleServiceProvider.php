@@ -13,11 +13,13 @@ use Kode\Framework\Console\Commands\MakeControllerCommand;
 use Kode\Framework\Console\Commands\MakeMiddlewareCommand;
 use Kode\Framework\Console\Commands\MakeMigrationCommand;
 use Kode\Framework\Console\Commands\MakeModelCommand;
+use Kode\Framework\Console\Commands\MakePluginCommand;
 use Kode\Framework\Console\Commands\MessagingConsumeCommand;
 use Kode\Framework\Console\Commands\MigrateCommand;
 use Kode\Framework\Console\Commands\MigrateResetCommand;
 use Kode\Framework\Console\Commands\MigrateRollbackCommand;
 use Kode\Framework\Console\Commands\PackBinCommand;
+use Kode\Framework\Console\Commands\PackInfoCommand;
 use Kode\Framework\Console\Commands\PackPharCommand;
 use Kode\Framework\Console\Commands\PackVerifyCommand;
 use Kode\Framework\Console\Commands\ProcessCheckCommand;
@@ -85,6 +87,7 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(MakeMigrationCommand::class);
         $kernel->add(MakeMiddlewareCommand::class);
         $kernel->add(MakeCommandCommand::class);
+        $kernel->add(MakePluginCommand::class);
         $kernel->add(DbSeedCommand::class);
         $kernel->add(ApiDocGenerateCommand::class);
         $kernel->add(ConfigReloadCommand::class);
@@ -126,5 +129,6 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(PackPharCommand::class);
         $kernel->add(PackBinCommand::class);
         $kernel->add(PackVerifyCommand::class);
+        $kernel->add(PackInfoCommand::class);
     }
 }
