@@ -54,6 +54,27 @@ final class ScheduledTask
     }
 
     /**
+     * 复制并替换启停状态（值对象不可变，启停必须换新实例）。
+     *
+     * 供 {@see ScheduleDispatcher::setEnabled()} 在运行时启停某条任务时使用：
+     * 插件暂停/恢复不应改写扫描产物，而是替换注册表中的记录。
+     */
+    public function withEnabled(bool $enabled): self
+    {
+        return new self(
+            class: $this->class,
+            method: $this->method,
+            expression: $this->expression,
+            name: $this->name,
+            description: $this->description,
+            enabled: $enabled,
+            cluster: $this->cluster,
+            source: $this->source,
+            handler: $this->handler,
+        );
+    }
+
+    /**
      * 调用目标标识，形如 CleanupTask::handle；内联闭包任务形如 Closure::__invoke。
      */
     public function target(): string

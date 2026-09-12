@@ -49,6 +49,10 @@ final class ScheduleDispatcher
     /**
      * 把任务注册进底层 Scheduler。
      *
+     * **幂等**：同名任务替换框架侧记录并复用底层同一个 Task，不会重复派发。
+     * 底层 kode/scheduling 的 register() 只做追加、无去重，若此处不拦，
+     * 「卸载→重装→重扫」会产生两条同名引擎任务、到期被派发两次。
+     *
      * @param list<ScheduledTask> $tasks
      * @return int 实际启用（会被调度）的任务数
      */
@@ -58,16 +62,7 @@ final class ScheduleDispatcher
         $useCluster = false;
 
         foreach ($tasks as $task) {
-            $this->registered[] = $task;
-
-            $callback = function () use ($task): void {
-                $this->invoke($task);
-            };
-
-            $this->scheduler->call($task->name, $callback)
-                ->cron($task->expression)
-                ->enabled($task->enabled)
-                ->description((string) ($task->description ?? ''));
+            $this->upsert($task);
 
             if ($task->enabled) {
                 $count++;
@@ -82,6 +77,173 @@ final class ScheduleDispatcher
         }
 
         return $count;
+    }
+
+    /**
+     * 幂等写入单条任务：首次注册建引擎 Task，重名则替换记录并就地刷新引擎 Task。
+     */
+    private function upsert(ScheduledTask $task): void
+    {
+        $engine = $this->scheduler->find($task->name);
+
+        if ($engine !== null) {
+            $index = $this->registeredIndex($task->name);
+            if ($index === false) {
+                $this->registered[] = $task;
+            } else {
+                $this->registered[$index] = $task;
+            }
+            $engine->cron($task->expression)
+                ->enabled($task->enabled)
+                ->description((string) ($task->description ?? ''));
+
+            return;
+        }
+
+        // 按名称惰性查找当前生效记录，避免闭包长期持有陈旧副本：
+        // 重名替换后旧闭包仍会跑到旧 handler，unregister() 后也会漏跑一次。
+        $name = $task->name;
+        $callback = function () use ($name): void {
+            $current = $this->find($name);
+            if ($current !== null) {
+                $this->invoke($current);
+            }
+        };
+
+        $this->registered[] = $task;
+        $this->scheduler->call($task->name, $callback)
+            ->cron($task->expression)
+            ->enabled($task->enabled)
+            ->description((string) ($task->description ?? ''));
+    }
+
+    /**
+     * 按任务名查注册表（不含未启用的过滤，禁用任务同样可查）。
+     */
+    public function find(string $name): ?ScheduledTask
+    {
+        foreach ($this->registered as $task) {
+            if ($task->name === $name) {
+                return $task;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 按来源标签取任务（app / plugin:<name>），用于「回收某个插件的全部任务」。
+     *
+     * @return list<ScheduledTask>
+     */
+    public function bySource(string $source): array
+    {
+        $tasks = [];
+        foreach ($this->registered as $task) {
+            if ($task->source === $source) {
+                $tasks[] = $task;
+            }
+        }
+
+        return $tasks;
+    }
+
+    /**
+     * 运行时启停一条任务：同步替换注册表记录并更新底层 Task 的 enabled。
+     *
+     * 用于插件 pause/resume——暂停后任务不再到期派发，恢复后无需重启即重新调度。
+     * 注意 {@see runOnce()} 仍按既有契约绕过 enabled（便于调试手动触发）。
+     *
+     * @return bool 是否找到并更新
+     */
+    public function setEnabled(string $name, bool $enabled = true): bool
+    {
+        $task = $this->find($name);
+        if ($task === null || $task->enabled === $enabled) {
+            return $task !== null;
+        }
+
+        $index = $this->registeredIndex($name);
+        if ($index === false) {
+            return false;
+        }
+
+        $this->registered[$index] = $task->withEnabled($enabled);
+        $this->scheduler->find($name)?->enabled($enabled);
+
+        return true;
+    }
+
+    /**
+     * 按来源标签批量启停（插件暂停/恢复的全部定时任务）。
+     *
+     * @return int 实际改变状态的任务数
+     */
+    public function setEnabledBySource(string $source, bool $enabled = true): int
+    {
+        $changed = 0;
+        foreach ($this->bySource($source) as $task) {
+            if ($this->setEnabled($task->name, $enabled)) {
+                $changed++;
+            }
+        }
+
+        return $changed;
+    }
+
+    /**
+     * 移除一条任务（框架侧彻底忘掉；底层引擎无删除 API，改为禁用占位）。
+     *
+     * 用于插件卸载——卸载后任务既不在 schedule:list 里，也不会再被派发。
+     * 底层仍留一个 disabled 的 Task 占位（kode/scheduling 不提供删除），
+     * 但 shouldRun() 对 disabled 直接短路，故不会再执行。
+     *
+     * @return bool 是否找到并移除
+     */
+    public function unregister(string $name): bool
+    {
+        $index = $this->registeredIndex($name);
+        if ($index === false) {
+            return false;
+        }
+
+        // array_splice 保序：注册表规模很小（数十条），不为换 O(1) 让 schedule:list
+        // 的输出顺序在暂停/卸载后发生漂移。
+        array_splice($this->registered, $index, 1);
+        $this->scheduler->find($name)?->enabled(false);
+
+        return true;
+    }
+
+    /**
+     * 按来源标签批量移除（插件卸载时回收其全部定时任务）。
+     *
+     * @return int 实际移除的任务数
+     */
+    public function unregisterBySource(string $source): int
+    {
+        $removed = 0;
+        foreach ($this->bySource($source) as $task) {
+            if ($this->unregister($task->name)) {
+                $removed++;
+            }
+        }
+
+        return $removed;
+    }
+
+    /**
+     * 注册表内某任务名的下标；不存在返回 false。
+     */
+    private function registeredIndex(string $name): int|false
+    {
+        foreach ($this->registered as $index => $task) {
+            if ($task->name === $name) {
+                return $index;
+            }
+        }
+
+        return false;
     }
 
     /**
