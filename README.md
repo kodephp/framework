@@ -21,7 +21,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.4.0","php":"8.3.33","env":"local","time":0.52}
+# {"status":"ok","service":"kode-app","version":"1.4.1","php":"8.3.33","env":"local","time":0.52}
 # time = health check 方法执行耗时（毫秒）
 ```
 
@@ -75,7 +75,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.4.0          PHP version:8.3.33
+Kode Framework version:1.4.1          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -106,7 +106,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.4.0        PHP version:8.3.33
+Kode Framework version:1.4.1        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -158,7 +158,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 | 重试 | `retry($op, attempts: 3)` + `BackoffStrategy` | 框架内置（固定/指数/去相关抖动，零依赖） |
 | 超时 | `timeout($op, seconds: 2.0)` + `fallback` | 框架内置（fiber 真实抢占 / pcntl / sync 退化，零依赖） |
 | HTTP 重试中间件 | `RetryMiddleware`（安全方法 502/503/504 自动重试，复用 retry 段退避） | 框架内置（PSR-15 薄壳层，复用 `Retry`） |
-| 定时任务 | 约定式 `#[Cron]` 自动发现 + 命令式 `PluginManager::addCron()`（插件 `boot()` 内登记，支持 `[类, 方法]` / `'类::方法'` / 闭包）；`kode cron`、`schedule:list` 统一支持 `schedule.discover_plugins` 发现插件任务（来源标记 `plugin:<name>`） | kode/scheduling |
+| 定时任务 | 约定式 `#[Cron]` 自动发现 + 命令式 `PluginManager::addCron()`（插件 `boot()` 内登记，支持 `[类, 方法]` / `'类::方法'` / 闭包）；`kode cron`、`schedule:list` 统一支持 `schedule.discover_plugins` 发现插件任务（来源标记 `plugin:<name>`）；运行时生命周期 `setEnabled()` / `setEnabledBySource()` / `unregister()` / `unregisterBySource()` 供插件暂停/卸载即时下线其任务 | kode/scheduling |
 | 多进程服务 | `kode start`（--watch 热重载） | kode/process |
 | 缓存 / 队列 / 数据库 / 事件 / HTTP 客户端 / 消息 | `cache()/queue()/db()/event()/http()/messaging()` | kode/cache · queue · database · event · http-client · messaging |
 | 国际化 | `lang()` / `LocaleMiddleware` | Symfony Translation |
@@ -184,7 +184,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.4.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.4.1](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
