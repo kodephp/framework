@@ -154,13 +154,15 @@ final class ScheduleDispatcher
      * 用于插件 pause/resume——暂停后任务不再到期派发，恢复后无需重启即重新调度。
      * 注意 {@see runOnce()} 仍按既有契约绕过 enabled（便于调试手动触发）。
      *
-     * @return bool 是否找到并更新
+     * @return bool 状态是否真的翻转（未找到、或已是目标状态均返回 false）。
+     *              要区分「不存在」与「已是目标状态」请用 {@see find()}——二者在本方法
+     *              的返回值里合并，是为了让 {@see setEnabledBySource()} 能如实统计「实际改变数」。
      */
     public function setEnabled(string $name, bool $enabled = true): bool
     {
         $task = $this->find($name);
         if ($task === null || $task->enabled === $enabled) {
-            return $task !== null;
+            return false;
         }
 
         $index = $this->registeredIndex($name);

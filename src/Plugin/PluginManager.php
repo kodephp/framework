@@ -16,7 +16,10 @@ use Kode\Http\Routing\Route;
 /**
  * 插件管理器（框架薄封装）
  *
- * 读取 config/plugins.php 的 plugins 列表，逐个实例化并注册。
+ * 逐个实例化并注册已解析的插件类。要加载哪些类由 PluginServiceProvider 决定，
+ * 其真值源是 PluginDiscoverer::discover()（代码层事实）+ config/plugins.php
+ * （声明/收窄），本类不自行扫描目录，避免产生第三份插件清单。
+ *
  * 插件通过本管理器提供的语义化方法完成注册，与「手动在 Provider/bootstrap 里写」
  * 等价，但更内聚、可被 route:list 按来源（plugin:<name>）聚合展示。
  *

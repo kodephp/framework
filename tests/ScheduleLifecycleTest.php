@@ -207,11 +207,15 @@ final class ScheduleLifecycleTest extends TestCase
         $record = $this->dispatcher()->find('demo.already-off');
         self::assertNotNull($record);
 
-        // 已是目标状态：返回 true（找到了）但不替换实例。
-        self::assertTrue($this->dispatcher()->setEnabled('demo.already-off', false));
+        // 已是目标状态：不视为「已改变」，且不替换实例（withEnabled 不产生新值对象）。
+        self::assertFalse($this->dispatcher()->setEnabled('demo.already-off', false));
         self::assertSame($record, $this->dispatcher()->find('demo.already-off'));
+        self::assertSame(0, $this->dispatcher()->setEnabledBySource('plugin:demo', false),
+            '重复调用不得虚增「实际改变数」');
 
         self::assertFalse($this->dispatcher()->setEnabled('no.such.task', false));
+        self::assertNull($this->dispatcher()->find('no.such.task'),
+            '不存在与已是目标状态在本方法里合并为 false，区分二者要用 find()');
     }
 
     public function testSetEnabledBySourceTogglesEveryTaskOfOnePlugin(): void

@@ -17,6 +17,9 @@ use Kode\Framework\Console\Commands\MessagingConsumeCommand;
 use Kode\Framework\Console\Commands\MigrateCommand;
 use Kode\Framework\Console\Commands\MigrateResetCommand;
 use Kode\Framework\Console\Commands\MigrateRollbackCommand;
+use Kode\Framework\Console\Commands\PackBinCommand;
+use Kode\Framework\Console\Commands\PackPharCommand;
+use Kode\Framework\Console\Commands\PackVerifyCommand;
 use Kode\Framework\Console\Commands\ProcessCheckCommand;
 use Kode\Framework\Console\Commands\ProcessListCommand;
 use Kode\Framework\Console\Commands\ProcessStartCommand;
@@ -116,5 +119,12 @@ final class ConsoleServiceProvider extends ServiceProvider
 
         // 审计（薄壳层）：开发期查看最近审计记录，验证脱敏 / 事件是否生效
         $kernel->add(AuditRecentCommand::class);
+
+        // 系统级打包（整站 → PHAR / 独立二进制 / 产物校验）。
+        // 引擎在 Kode\Framework\Packaging\Packager，命令只负责参数解析与输出；
+        // 应用继承 Packager 并在 config/packaging.php 写 'packager' 键即可定制，无需改命令。
+        $kernel->add(PackPharCommand::class);
+        $kernel->add(PackBinCommand::class);
+        $kernel->add(PackVerifyCommand::class);
     }
 }
