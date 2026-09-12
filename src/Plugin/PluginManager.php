@@ -8,6 +8,8 @@ use Kode\Console\Kernel;
 use Kode\DI\Container;
 use Kode\Event\Dispatcher;
 use Kode\Framework\Http\RouteRegistry;
+use Kode\Framework\Scheduling\ScheduleDispatcher;
+use Kode\Framework\Scheduling\ScheduledTask;
 use Kode\Http\App;
 use Kode\Http\Routing\Route;
 
@@ -136,6 +138,121 @@ final class PluginManager
         /** @var Kernel $kernel */
         $kernel = $this->container->get(Kernel::class);
         $kernel->add($command);
+    }
+
+    /**
+     * 注册一条定时任务（兑现 PluginInterface::boot() 承诺的「注册定时任务」）。
+     *
+     * 与 #[Cron] 属性扫描互补：属性扫描是约定式（目录 + 类/方法标注），本方法是命令式
+     * （在 register()/boot() 里直接登记），适合「处理器即插件自身方法」或需要运行时
+     * 决定表达式/开关的场景。两者最终都进同一个 ScheduleDispatcher，schedule:list 可见。
+     *
+     * 处理器支持三种写法：
+     *  - ['App\\Tasks\\SyncTask', 'handle']  类方法元组，走容器解析（支持构造/属性注入）
+     *  - 'App\\Tasks\\SyncTask::handle'      类方法字符串（解析同上）
+     *  - fn(): void 闭包                     内联处理器，不经容器直接调用
+     *
+     * 任务来源统一标记 plugin:<插件名>；任务名重复会显式抛错（调度器按名索引，
+     * 静默覆盖会让其中一个任务永久失效）。
+     *
+     * @param array{0: class-string, 1: string}|\Closure|string $handler 处理器
+     * @throws \InvalidArgumentException 处理器形态非法
+     * @throws \RuntimeException 任务名与已注册任务冲突
+     */
+    public function addCron(
+        string $expression,
+        string|array|\Closure $handler,
+        string $name = '',
+        string $description = '',
+        bool $cluster = false,
+        bool $enabled = true,
+    ): ScheduledTask {
+        [$class, $method, $inline] = $this->normalizeCronHandler($handler);
+
+        $name = $name !== '' ? $name : $this->current . '.' . $method;
+
+        /** @var ScheduleDispatcher $dispatcher */
+        $dispatcher = $this->container->get(ScheduleDispatcher::class);
+        foreach ($dispatcher->registered() as $existing) {
+            if ($existing->name === $name) {
+                throw new \RuntimeException(sprintf(
+                    'addCron(): 任务名「%s」已被占用（来源 %s），请改用唯一名称',
+                    $name,
+                    $existing->source
+                ));
+            }
+        }
+
+        $task = new ScheduledTask(
+            class: $class,
+            method: $method,
+            expression: $expression,
+            name: $name,
+            description: $description !== '' ? $description : null,
+            enabled: $enabled,
+            cluster: $cluster,
+            source: $this->cronSource(),
+            handler: $inline,
+        );
+
+        $dispatcher->register([$task]);
+
+        return $task;
+    }
+
+    /**
+     * addCron() 任务的来源标签。
+     *
+     * 插件 register()/boot() 内调用时标记为 plugin:<插件名>；在插件生命周期之外直接调用
+     * （$current 仍为 unknown）时标记为 app——避免产出无意义的 plugin:unknown。
+     */
+    private function cronSource(): string
+    {
+        return $this->current === 'unknown' ? 'app' : 'plugin:' . $this->current;
+    }
+
+    /**
+     * 把 addCron() 的处理器归一为 [类, 方法, 内联闭包|null]。
+     *
+     * @param array|string|\Closure $handler 处理器
+     * @return array{0: string, 1: string, 2: \Closure|null}
+     * @throws \InvalidArgumentException 处理器形态非法
+     */
+    private function normalizeCronHandler(string|array|\Closure $handler): array
+    {
+        if ($handler instanceof \Closure) {
+            // 展示用 class 固定为 Closure（schedule:list 可见其为内联处理器）：
+            // 反查闭包归属类在 PHP 8.4 之前没有稳定公共 API（getClosureScopeName 8.4+），
+            // 不值得为一个展示字段引入版本分支。invoke() 会短路直接调闭包，不会解析该值。
+            return [\Closure::class, '__invoke', $handler];
+        }
+
+        if (is_array($handler)) {
+            $class = $handler[0] ?? null;
+            $method = $handler[1] ?? null;
+            if (!is_string($class) || $class === '' || !is_string($method) || $method === '') {
+                throw new \InvalidArgumentException(
+                    'addCron(): 元组处理器须为 [类名, 方法名]，两项均须为非空字符串'
+                );
+            }
+
+            return [$class, $method, null];
+        }
+
+        if (str_contains($handler, '::')) {
+            [$class, $method] = explode('::', $handler, 2);
+            if ($class === '' || $method === '') {
+                throw new \InvalidArgumentException(
+                    sprintf('addCron(): 字符串处理器须为 "类名::方法名"，收到「%s」', $handler)
+                );
+            }
+
+            return [$class, $method, null];
+        }
+
+        throw new \InvalidArgumentException(
+            sprintf('addCron(): 字符串处理器须形如 "类名::方法名"，收到「%s」', $handler)
+        );
     }
 
     /**

@@ -12,14 +12,15 @@ namespace Kode\Framework\Scheduling;
 final class ScheduledTask
 {
     /**
-     * @param class-string         $class       任务类 FQCN
-     * @param string               $method      被调用的方法名（类级默认为 handle）
+     * @param class-string         $class       任务类 FQCN（内联闭包任务固定为 Closure，仅供展示）
+     * @param string               $method      被调用的方法名（类级默认为 handle；内联闭包为 __invoke）
      * @param string               $expression  cron 表达式
      * @param string               $name        任务名（人类可读，用于展示/日志）
      * @param string|null          $description 任务说明
      * @param bool                 $enabled     是否启用
      * @param bool                 $cluster     是否集群模式（分布式锁保证至多一次）
      * @param string               $source      来源标签（app / plugin:<name>）
+     * @param \Closure|null        $handler     内联处理器（插件 addCron() 传闭包时用）；非空时优先于类方法调用
      */
     public function __construct(
         public readonly string $class,
@@ -30,7 +31,16 @@ final class ScheduledTask
         public readonly bool $enabled,
         public readonly bool $cluster,
         public readonly string $source,
+        public readonly ?\Closure $handler = null,
     ) {
+    }
+
+    /**
+     * 是否为内联闭包任务（非 class::method 形式）。
+     */
+    public function isInline(): bool
+    {
+        return $this->handler !== null;
     }
 
     /**
@@ -44,7 +54,7 @@ final class ScheduledTask
     }
 
     /**
-     * 调用目标标识，形如 CleanupTask::handle。
+     * 调用目标标识，形如 CleanupTask::handle；内联闭包任务形如 Closure::__invoke。
      */
     public function target(): string
     {

@@ -139,16 +139,22 @@ final class ScheduleDispatcher
     }
 
     /**
-     * 调用任务方法（走容器，与路由 handler 同约定：支持构造注入/属性注入）。
+     * 调用任务（走容器，与路由 handler 同约定：支持构造注入/属性注入）。
+     *
+     * 内联闭包任务（handler 非空，插件 addCron() 传闭包）直接调用闭包，不经容器解析。
      */
     private function invoke(ScheduledTask $task): void
     {
         $started = microtime(true);
         try {
-            $instance = $this->resolver !== null
-                ? ($this->resolver)($task->class)
-                : resolve($task->class);
-            $instance->{$task->method}();
+            if ($task->handler !== null) {
+                ($task->handler)();
+            } else {
+                $instance = $this->resolver !== null
+                    ? ($this->resolver)($task->class)
+                    : resolve($task->class);
+                $instance->{$task->method}();
+            }
             $ms = round((microtime(true) - $started) * 1000, 2);
             logger()->info(sprintf('[schedule] ✓ %s（%s）耗时 %sms', $task->name, $task->expression, $ms));
         } catch (Throwable $e) {
