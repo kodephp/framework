@@ -8,19 +8,26 @@ namespace Kode\Framework\Scheduling;
  * 一条被发现定时任务的不可变描述（扫描结果值对象）。
  *
  * 由 {@see TaskScanner} 产出，交给 {@see ScheduleDispatcher} 注册到运行时定时器。
+ *
+ * v1.6.0 增强：
+ *  - tenant_id：多租户作用域（0 = 全局/无租户），供租户级隔离与权限收敛；
+ *  - metadata：JSONB 扩展字段（任务级配置、标签、分组等），供 API 展示与调度逻辑读取；
+ *  - withMetadata()：不可变替换 metadata（值对象约定，启停/元数据变更均换新实例）。
  */
 final class ScheduledTask
 {
     /**
-     * @param class-string         $class       任务类 FQCN（内联闭包任务固定为 Closure，仅供展示）
-     * @param string               $method      被调用的方法名（类级默认为 handle；内联闭包为 __invoke）
-     * @param string               $expression  cron 表达式
-     * @param string               $name        任务名（人类可读，用于展示/日志）
-     * @param string|null          $description 任务说明
-     * @param bool                 $enabled     是否启用
-     * @param bool                 $cluster     是否集群模式（分布式锁保证至多一次）
-     * @param string               $source      来源标签（app / plugin:<name>）
-     * @param \Closure|null        $handler     内联处理器（插件 addCron() 传闭包时用）；非空时优先于类方法调用
+     * @param class-string        $class       任务类 FQCN（内联闭包任务固定为 Closure，仅供展示）
+     * @param string              $method      被调用的方法名（类级默认为 handle；内联闭包为 __invoke）
+     * @param string              $expression  cron 表达式
+     * @param string              $name        任务名（人类可读，用于展示/日志）
+     * @param string|null         $description 任务说明
+     * @param bool                $enabled     是否启用
+     * @param bool                $cluster     是否集群模式（分布式锁保证至多一次）
+     * @param string              $source      来源标签（app / plugin:<name>）
+     * @param \Closure|null       $handler     内联处理器（插件 addCron() 传闭包时用）；非空时优先于类方法调用
+     * @param int                 $tenantId    租户 ID（0 = 全局任务，跨租户共享）
+     * @param array<string,mixed> $metadata    JSONB 扩展字段（任务配置、标签等）
      */
     public function __construct(
         public readonly string $class,
@@ -32,6 +39,8 @@ final class ScheduledTask
         public readonly bool $cluster,
         public readonly string $source,
         public readonly ?\Closure $handler = null,
+        public readonly int $tenantId = 0,
+        public readonly array $metadata = [],
     ) {
     }
 
@@ -41,6 +50,22 @@ final class ScheduledTask
     public function isInline(): bool
     {
         return $this->handler !== null;
+    }
+
+    /**
+     * 是否为租户任务（tenant_id > 0）。
+     */
+    public function isTenantScoped(): bool
+    {
+        return $this->tenantId > 0;
+    }
+
+    /**
+     * 是否为全局任务（tenant_id = 0，跨租户共享）。
+     */
+    public function isGlobal(): bool
+    {
+        return $this->tenantId === 0;
     }
 
     /**
@@ -71,6 +96,32 @@ final class ScheduledTask
             cluster: $this->cluster,
             source: $this->source,
             handler: $this->handler,
+            tenantId: $this->tenantId,
+            metadata: $this->metadata,
+        );
+    }
+
+    /**
+     * 复制并替换 metadata（不可变更新，供运行时动态调整任务配置）。
+     *
+     * 用于租户 API 修改任务参数（如通知渠道、执行超时等）而无需重建任务。
+     *
+     * @param array<string, mixed> $metadata 新 metadata（完整替换，非合并）
+     */
+    public function withMetadata(array $metadata): self
+    {
+        return new self(
+            class: $this->class,
+            method: $this->method,
+            expression: $this->expression,
+            name: $this->name,
+            description: $this->description,
+            enabled: $this->enabled,
+            cluster: $this->cluster,
+            source: $this->source,
+            handler: $this->handler,
+            tenantId: $this->tenantId,
+            metadata: $metadata,
         );
     }
 
