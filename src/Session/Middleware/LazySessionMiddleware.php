@@ -52,7 +52,7 @@ final class LazySessionMiddleware extends BaseSessionMiddleware implements Middl
                 $this->maybeGarbageCollect();
 
                 // saveSession() 内部已处理脏数据 / 闪存 / 释放锁（调用 $session->save()）。
-                $response = $this->saveSession($session, $response);
+                $response = $this->saveSession($session, $response, $request);
                 $saved = true;
             }
 
