@@ -15,6 +15,10 @@ return [
     'workers'     => (int) env('SERVER_WORKERS', 0), // 0 = 自动取 CPU 核心数
     'max_request' => (int) env('SERVER_MAX_REQUEST', 0),
     'reuse_port'  => (bool) env('SERVER_REUSE_PORT', false),
+    // 进程标题前缀（形如 "kode-http: worker"）。kode stop/restart 依据「{name}:」清理孤儿
+    // worker，所以清理作用域是「同名进程」而不是「同端口」：一台机器跑多套 kode 时必须给
+    // 每套配不同的 SERVER_NAME，否则重启一套会把另一套的 worker 一并清掉。
+    // （框架 ≥ 1.7.3 才按本键取匹配串；更早的版本把默认名写死，改名后收尸永远命中 0 个。）
     'name'        => env('SERVER_NAME', 'kode-http'),
 
     /*

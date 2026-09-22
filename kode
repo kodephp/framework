@@ -333,18 +333,25 @@ abstract class KodeServerCommand
     }
 
     /**
-     * 清理残留的 kode-http 进程（master/worker）。
+     * 清理残留 worker 进程（master/worker）。
      *
-     * 仅匹配进程名含 `kode-http:` 的行（框架自有命名），用 ps 解析 PID 后 SIGKILL，
-     * 最多等 5 秒。返回清理数量（日志用）。
+     * 匹配串取自 config `server.name`（HttpServer::processMatchToken，进程标题形如
+     * "{name}: {role}"）——写死 'kode-http:' 会让自定义过 SERVER_NAME 的项目收尸永远
+     * 命中 0 个，孤儿 worker 占着端口导致重启失败。用 ps 解析 PID 后 SIGKILL，最多等 5 秒。
+     *
+     * 注意作用域是「同名进程」而非「同端口」：一台机器上跑多套 kode 时请给每套配不同的
+     * SERVER_NAME，否则重启其中一套会把另一套的 worker 一并清掉。
+     *
+     * @return int 清理数量（日志用）
      */
-    protected function killResidualWorkers(): int
+    protected function killResidualWorkers(?string $token = null): int
     {
+        $token ??= HttpServer::processMatchToken(null);
         $killed = 0;
         $out = [];
         @exec('ps aux 2>/dev/null', $out);
         foreach ($out as $line) {
-            if (!str_contains($line, 'kode-http:')) {
+            if (!str_contains($line, $token)) {
                 continue;
             }
             if (str_contains($line, 'grep')) {
@@ -364,7 +371,7 @@ abstract class KodeServerCommand
                 $out2 = [];
                 @exec('ps aux 2>/dev/null', $out2);
                 foreach ($out2 as $line) {
-                    if (str_contains($line, 'kode-http:') && !str_contains($line, 'grep')) {
+                    if (str_contains($line, $token) && !str_contains($line, 'grep')) {
                         $left++;
                     }
                 }
@@ -388,7 +395,7 @@ abstract class KodeServerCommand
      */
     protected function drainPort(array $config): bool
     {
-        $this->killResidualWorkers();
+        $this->killResidualWorkers(HttpServer::processMatchToken($config['name'] ?? null));
 
         $host = (string) ($config['host'] ?? '127.0.0.1');
         $port = (int) ($config['port'] ?? 8000);
@@ -681,7 +688,8 @@ final class KodeRestartCommand extends KodeServerCommand
         }
 
         // 收尸：master 退出后可能残留孤儿 worker（曾被 kill -9 或 watch 嵌套），
-        // 进程名 kode-http 具有区分度，只清理它，不碰其它进程；随后等端口排空。
+        // 进程名（config server.name，默认 kode-http）具有区分度，只清理它，不碰其它进程；
+        // 随后等端口排空。
         // （基类 drainPort：清残留 + 等端口真空闲，超时中止。）
         $this->warnLegacy($legacy);
 

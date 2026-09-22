@@ -127,7 +127,7 @@ final class ServerStatus
         // 按 worker 名聚合（一个 worker 名对应 N 个进程）。
         $byName = [];
         foreach ($workers as $row) {
-            $name = (string) ($row['name'] ?? 'kode-http');
+            $name = (string) ($row['name'] ?? HttpServer::DEFAULT_NAME);
             $byName[$name] = ($byName[$name] ?? 0) + 1;
         }
 

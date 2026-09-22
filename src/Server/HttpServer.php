@@ -49,6 +49,32 @@ final class HttpServer
      */
     public const DEFAULT_GRACEFUL_TIMEOUT = 3;
 
+    /** 进程标题默认前缀（config `server.name` 缺省值，也是 CLI 收尸的匹配依据）。 */
+    public const DEFAULT_NAME = 'kode-http';
+
+    /**
+     * 归一 config `server.name`：去空白，空值回退 {@see self::DEFAULT_NAME}。
+     */
+    public static function resolveName(mixed $configuredName): string
+    {
+        $name = trim((string) $configuredName);
+
+        return $name === '' ? self::DEFAULT_NAME : $name;
+    }
+
+    /**
+     * 归一 `server.name` 为「进程标题匹配串」。
+     *
+     * kode/process 的 Native 运行时把进程标题写成 `"{name}: {role}"`，CLI 的残留 worker
+     * 收尸（`kode stop|restart`）据此识别自家进程。此前那段匹配把 'kode-http:' 写死，
+     * 于是自定义 SERVER_NAME 的项目里收尸永远命中 0 个——孤儿 worker 占着端口，重启直接失败。
+     * 服务侧命名与 CLI 侧匹配都走本方法，两边不会分叉。
+     */
+    public static function processMatchToken(mixed $configuredName): string
+    {
+        return self::resolveName($configuredName) . ':';
+    }
+
     /**
      * 归一优雅停机宽限（秒）：缺省 / 0 / 负数一律回退 {@see self::DEFAULT_GRACEFUL_TIMEOUT}。
      *
@@ -144,7 +170,9 @@ final class HttpServer
         $workers = $configuredWorkers > 0 ? $configuredWorkers : $this->defaultWorkers();
         $maxRequest = max(0, (int) ($this->config['max_request'] ?? 0));
         $reusePort  = (bool) ($this->config['reuse_port'] ?? false);
-        $name    = (string) ($this->config['name'] ?? 'kode-http');
+        // 与 CLI 收尸同一口径（resolveName / processMatchToken）：去空白、空值回退默认名，
+        // 否则改名后进程标题与匹配串会分叉。
+        $name    = self::resolveName($this->config['name'] ?? null);
         // 0 / 负数 / 缺省都视为「未配置」→ 回退内置默认：把 0 直接递给 kode/process 会被
         // 夹成 0.1s 排空窗口，在途请求会被丢掉（配置注释承诺的是退回默认 3s）。
         $gracefulTimeout = self::resolveGracefulTimeout($this->config['graceful_shutdown_timeout'] ?? null);
