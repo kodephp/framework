@@ -30,6 +30,8 @@ use RuntimeException;
  *    看门狗重新 acquire」的竞态。
  *  - 事件：`LockWatchdogStarted` / `LockWatchdogRenewed` / `LockWatchdogStopped`，便于接入指标
  *    （续期次数 / 持有时长）/ 审计 / 告警（续期失败）。
+ *  - 开关：`lock.watchdog.enabled=false` 时 protect 仍照常加锁/执行/释放，只是不挂续期循环
+ *    （renewalEnabled() 反映该状态）——关的是「自动续期」这道保险，不是看门狗本身。
  *
  * 薄壳哲学：本类只负责「续期编排」，不重造分布式协调；真正跨主机锁由 {@see LockManager} 后端提供。
  */
@@ -51,6 +53,8 @@ final class LockWatchdog
      * @param string            $driver     'auto' | 'fiber' | 'tick'
      * @param ?\Closure         $dispatcher 事件派发闭包（由 Provider 注入，解耦事件系统启动顺序）
      * @param ?\Closure         $ticker     可注入的续期调度闭包（测试用；null 时用内置默认驱动）
+     * @param bool              $enabled    续期开关（config `lock.watchdog.enabled`）；
+     *                                      false 时 protect() 照常加锁/执行/释放，只是不起续期循环
      */
     public function __construct(
         private readonly LockManager $manager,
@@ -58,8 +62,17 @@ final class LockWatchdog
         private readonly string $driver = 'auto',
         private readonly ?\Closure $dispatcher = null,
         ?\Closure $ticker = null,
+        private readonly bool $enabled = true,
     ) {
         $this->ticker = $ticker ?? $this->defaultTicker();
+    }
+
+    /**
+     * 续期是否启用（false = protect 只加解锁、不续期，长任务超过 TTL 会被他人抢占）。
+     */
+    public function renewalEnabled(): bool
+    {
+        return $this->enabled;
     }
 
     /**
@@ -100,7 +113,8 @@ final class LockWatchdog
         };
 
         try {
-            return ($this->ticker)($work, $tick, $interval);
+            // enabled=false：完全不进续期调度，只做「加锁 → 执行 → 释放」。
+            return $this->enabled ? ($this->ticker)($work, $tick, $interval) : $work();
         } finally {
             // stop 标记已在 tick 闭包外控制，但这里释放本身即可；watchdog 醒来后会因锁已释放
             // 而不再续期（owner 不匹配）。显式释放确保任务结束即解锁。

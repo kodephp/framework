@@ -6,6 +6,7 @@ namespace Kode\Framework\Tests;
 
 use Kode\Framework\Application;
 use Kode\Framework\Server\GracefulShutdown;
+use Kode\Framework\Server\HttpServer;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -110,6 +111,22 @@ final class GracefulShutdownTest extends TestCase
 
         $this->assertSame(2, $ran);
         $this->assertTrue($m->isCleanedUp());
+    }
+
+    /**
+     * 停机宽限归一：缺省 / 0 / 负数一律回退内置默认。
+     *
+     * 0 直接递给 kode/process 会被夹成 0.1s 排空窗口（等于丢掉在途请求），
+     * 与 config/server.php 注释「设为 0 则退回内置默认」的口径相反。
+     */
+    public function testGracefulTimeoutNormalisesZeroToDefault(): void
+    {
+        $this->assertSame(HttpServer::DEFAULT_GRACEFUL_TIMEOUT, HttpServer::resolveGracefulTimeout(null));
+        $this->assertSame(HttpServer::DEFAULT_GRACEFUL_TIMEOUT, HttpServer::resolveGracefulTimeout(0));
+        $this->assertSame(HttpServer::DEFAULT_GRACEFUL_TIMEOUT, HttpServer::resolveGracefulTimeout('0'));
+        $this->assertSame(HttpServer::DEFAULT_GRACEFUL_TIMEOUT, HttpServer::resolveGracefulTimeout(-5));
+        $this->assertSame(30, HttpServer::resolveGracefulTimeout(30));
+        $this->assertSame(15, HttpServer::resolveGracefulTimeout('15'));
     }
 
     public function testProviderBindsSingletonAndAlias(): void

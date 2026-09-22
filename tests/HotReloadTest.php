@@ -78,6 +78,34 @@ final class HotReloadTest extends TestCase
         self::assertSame(['--port', '9599'], $prop->getValue($watcher));
     }
 
+    public function testFromConfigResolvesRelativeDirsAndKeepsAbsoluteOnes(): void
+    {
+        // config `server.watch.dirs` 的口径是「相对项目根」；此前 CLI 根本不读该键，
+        // 配了自定义监听集也仍按内置默认跑。
+        $watcher = HotReloadWatcher::fromConfig($this->root, ['--port', '9599'], [
+            'dirs' => ['app', ' config ', $this->root . '/src', ''],
+        ]);
+
+        self::assertSame(
+            [$this->root . '/app', $this->root . '/config', $this->root . '/src'],
+            $watcher->resolveWatchDirs()
+        );
+    }
+
+    public function testFromConfigEmptyExcludeFallsBackToDefaults(): void
+    {
+        // 空 exclude 不得覆盖内置排除表——否则 vendor/.git 进监听树，改动依赖会疯狂重启。
+        self::assertContains('vendor', HotReloadWatcher::fromConfig($this->root, [], [])->excludeDirs());
+        self::assertContains(
+            'vendor',
+            HotReloadWatcher::fromConfig($this->root, [], ['exclude' => ['vendor', '']])->excludeDirs()
+        );
+        self::assertSame(
+            ['node_modules'],
+            HotReloadWatcher::fromConfig($this->root, [], ['exclude' => ['node_modules']])->excludeDirs()
+        );
+    }
+
     public function testFastExitCounterTripsAfterConsecutiveCrashes(): void
     {
         // 连续秒崩累计，达到熔断阈值；中间跑稳一次即清零。

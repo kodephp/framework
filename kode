@@ -503,7 +503,7 @@ final class KodeServeCommand extends KodeServerCommand
                 $serveArgs[] = '--runtime';
                 $serveArgs[] = $runtime;
             } elseif ($args[$i] === '--graceful' && isset($args[$i + 1])) {
-                // 优雅停机宽限（秒）：Ctrl+C / stop 后留给在途请求排空的最长时间。
+                // 优雅停机宽限（秒）：Ctrl+C / stop 后留给在途请求排空的最长时间；0 = 用默认值。
                 $graceful = max(0, (int) $args[++$i]);
                 $serveArgs[] = '--graceful';
                 $serveArgs[] = (string) $graceful;
@@ -560,7 +560,7 @@ final class KodeServeCommand extends KodeServerCommand
             // 守护化与热重载互斥：-d 脱离终端后看门狗的输出无处可去，也没有意义。
             // 子进程必须带 --no-watch：否则子进程按默认规则再次进入看门狗，形成嵌套。
             $serveArgs[] = '--no-watch';
-            (new HotReloadWatcher($root, $serveArgs))->run();
+            HotReloadWatcher::fromConfig($root, $serveArgs, (array) ($config['watch'] ?? []))->run();
             exit(0);
         }
 
@@ -611,7 +611,8 @@ final class KodeStopCommand extends KodeServerCommand
             return 1;
         }
 
-        $graceful = max(0, (int) ($config['graceful_shutdown_timeout'] ?? 3));
+        // 与 HttpServer 同一口径：0/缺省都回退默认宽限，否则 stop 会在 5s 内升级强杀。
+        $graceful = HttpServer::resolveGracefulTimeout($config['graceful_shutdown_timeout'] ?? null);
 
         if ($force) {
             @posix_kill($pid, SIGKILL);

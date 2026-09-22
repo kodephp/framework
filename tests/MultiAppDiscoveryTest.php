@@ -57,11 +57,11 @@ final class MultiAppDiscoveryTest extends TestCase
         $this->rrmdir($this->tmp);
     }
 
-    private function makeProvider(): HttpServiceProvider
+    private function makeProvider(?array $sources = null): HttpServiceProvider
     {
         $config = new Config();
         $config->set('path.base', $this->tmp);
-        $config->set('routes.sources', ['extra' => $this->tmp . '/app/routes/extra.php']);
+        $config->set('routes.sources', $sources ?? ['extra' => $this->tmp . '/app/routes/extra.php']);
 
         $container = $this->createMock(ContainerInterface::class);
         $container->method('has')->willReturnCallback(
@@ -108,6 +108,17 @@ final class MultiAppDiscoveryTest extends TestCase
 
         // config 声明的额外来源仍在。
         self::assertSame($this->tmp . '/app/routes/extra.php', $sources['extra']);
+    }
+
+    public function testRouteSourceRelativeToProjectBaseIsResolved(): void
+    {
+        // 配置注释的示例写法 base_path('app/routes/x.php') 在引导期退化成 CWD 相对路径；
+        // 若不按 path.base 拼接，从别的工作目录启动会静默加载 0 条路由（无警告）。
+        $ref = new \ReflectionMethod(HttpServiceProvider::class, 'resolveRouteSources');
+        /** @var array<string, string> $sources */
+        $sources = $ref->invoke($this->makeProvider(['rel' => 'app/routes/extra.php']));
+
+        self::assertSame($this->tmp . '/app/routes/extra.php', $sources['rel']);
     }
 
     public function testWithApplicationControllerDirsAddsSubAppDirs(): void

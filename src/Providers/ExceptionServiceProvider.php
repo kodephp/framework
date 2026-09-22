@@ -20,6 +20,8 @@ use Psr\Log\LoggerInterface;
  * {@see ExceptionManager} + {@see UnifiedResponseFormatter} 完成；框架只负责：
  *  - 把框架的 Monolog 日志器接进管理器（日志落框架）；
  *  - 用 app.debug 决定生产模式（生产模式自动收敛绝对路径与系统异常细节）；
+ *  - 用 http.production_message 覆盖生产模式对外提示语（留空则用 kode/exception 自带默认，
+ *    以免在框架里复制一份可能漂移的文案）；
  *  - setSendHeaders(false)：HTTP 输出由框架的 ExceptionMiddleware 接管（自己拼 Response）。
  *
  * 不调用 ExceptionManager::register()：全局 set_exception_handler 会接管整个进程，
@@ -36,9 +38,15 @@ final class ExceptionServiceProvider extends ServiceProvider
             /** @var LoggerInterface $logger */
             $logger = $this->container->get(LoggerInterface::class);
 
+            // 空值 = 沿用 kode/exception 自带默认文案，避免在框架里复制一份会漂移的常量。
+            $productionMessage = trim((string) $this->config('http.production_message', ''));
+            $formatter = $productionMessage === ''
+                ? new UnifiedResponseFormatter($isProduction)
+                : new UnifiedResponseFormatter($isProduction, productionMessage: $productionMessage);
+
             $manager = new ExceptionManager(
                 logger: $logger,
-                formatter: new UnifiedResponseFormatter($isProduction),
+                formatter: $formatter,
                 isProduction: $isProduction,
             );
 

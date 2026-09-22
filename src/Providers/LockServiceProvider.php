@@ -61,6 +61,8 @@ final class LockServiceProvider extends ServiceProvider
                 renewRatio: (float) ($wd['renew_ratio'] ?? 0.34),
                 driver: (string) ($wd['driver'] ?? 'auto'),
                 dispatcher: $dispatcher,
+                // enabled=false：protect 照常加锁/执行/释放，只是不起续期循环（关的是续期本身）
+                enabled: ($wd['enabled'] ?? true) !== false,
             );
         });
         $this->container->alias('watchdog', LockWatchdog::class);

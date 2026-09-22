@@ -64,6 +64,47 @@ final class HotReloadWatcher
     }
 
     /**
+     * 按 config/server.php 的 `watch` 段构造（CLI 入口用）。
+     *
+     * dirs 按 config 注释的口径写成「相对项目根」的子路径（绝对路径原样保留）；
+     * exclude 为空时须回退内置默认表——空数组直接透传会让 vendor/.git 进入监听树。
+     *
+     * @param array<string, mixed> $watch
+     */
+    public static function fromConfig(string $root, array $serveArgs, array $watch): self
+    {
+        $dirs = [];
+        foreach ((array) ($watch['dirs'] ?? []) as $dir) {
+            $dir = trim((string) $dir);
+            if ($dir === '') {
+                continue;
+            }
+            $dirs[] = self::isAbsolute($dir) ? $dir : rtrim($root, '/') . '/' . ltrim($dir, '/');
+        }
+
+        $exclude = [];
+        foreach ((array) ($watch['exclude'] ?? []) as $name) {
+            $name = trim((string) $name);
+            if ($name !== '') {
+                $exclude[] = $name;
+            }
+        }
+
+        return new self($root, $serveArgs, $dirs, $exclude === [] ? self::DEFAULT_EXCLUDE : $exclude);
+    }
+
+    /** 实际生效的排除目录名（供 [watch] 提示与测试）。 */
+    public function excludeDirs(): array
+    {
+        return $this->excludeDirs;
+    }
+
+    private static function isAbsolute(string $path): bool
+    {
+        return $path[0] === '/' || preg_match('#^[A-Za-z]:[\\\\/]#', $path) === 1;
+    }
+
+    /**
      * 连续快速退出计数：本次存活不足阈值则 +1（疑似秒崩），否则清零（跑稳过）。
      *
      * 纯函数，便于单测锁定熔断语义。

@@ -692,7 +692,7 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 把配置中的「相对项目根」目录解析为绝对路径。
+     * 把配置中的「相对项目根」路径解析为绝对路径（目录与路由文件同规则）。
      *
      * 配置期 app() 可能尚未就绪，base_path() 会退化成相对 CWD 的路径；
      * 此处统一用真实的 path.base 拼接，保证从不同工作目录启动时路由发现一致。
@@ -851,7 +851,10 @@ final class HttpServiceProvider extends ServiceProvider
 
         /** @var array<string, string> $extra */
         $extra = (array) $this->config('routes.sources', []);
-        foreach ($extra as $key => $file) {
+        // 与 attributes.controllers 同一口径：配置里写「相对项目根」的路径，此处拼 path.base。
+        // 曾按原值直用，而配置注释示例是 base_path(...)（引导期退化成 CWD 相对），
+        // 于是从别的工作目录启动会静默加载 0 条路由。
+        foreach ($this->resolveAbsoluteDirs($extra, (string) $base) as $key => $file) {
             $sources[$key] = $file;
         }
 

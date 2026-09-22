@@ -164,6 +164,58 @@ final class LockWatchdogTest extends TestCase
     }
 
     /**
+     * enabled=false（config `lock.watchdog.enabled=false`）：protect 照常加锁→执行→释放，
+     * 但完全不进续期调度——注入的 ticker 一次都不应被调用。
+     */
+    public function testDisabledRenewalRunsWorkWithoutScheduler(): void
+    {
+        $manager = new StaticLockManager();
+        $schedulerCalls = 0;
+        $heldDuringWork = null;
+
+        $ticker = function (callable $work, callable $tick, int $interval) use (&$schedulerCalls, $manager, &$heldDuringWork): mixed {
+            unset($tick, $interval);
+            ++$schedulerCalls;
+
+            return $work();
+        };
+
+        $wd = new LockWatchdog($manager, ticker: $ticker, enabled: false);
+        $result = $wd->protect('k', function () use ($manager, &$heldDuringWork): string {
+            $heldDuringWork = $manager->isLocked('k');
+
+            return 'payload';
+        }, 30);
+
+        self::assertFalse($wd->renewalEnabled());
+        self::assertSame('payload', $result, '关闭续期不应影响业务返回值');
+        self::assertTrue($heldDuringWork, '关闭续期后锁仍须持有');
+        self::assertSame(0, $schedulerCalls, '关闭续期后不得进入续期调度');
+        self::assertFalse($manager->isLocked('k'), '工作结束后锁应释放');
+    }
+
+    /**
+     * 对照组：默认 enabled=true 时同一 ticker 被调用一次（证明上一条的 0 次来自开关而非 ticker 失效）。
+     */
+    public function testEnabledByDefaultEntersRenewalScheduler(): void
+    {
+        $manager = new StaticLockManager();
+        $schedulerCalls = 0;
+        $ticker = function (callable $work, callable $tick) use (&$schedulerCalls): mixed {
+            unset($tick);
+            ++$schedulerCalls;
+
+            return $work();
+        };
+
+        $wd = new LockWatchdog($manager, ticker: $ticker);
+
+        self::assertTrue($wd->renewalEnabled());
+        $wd->protect('k', static fn (): int => 1, 30);
+        self::assertSame(1, $schedulerCalls);
+    }
+
+    /**
      * 提供一个 passthrough ticker（直接执行 work，不续期），用于基础透传/释放测试。
      */
     private function passthroughTicker(): \Closure

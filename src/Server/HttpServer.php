@@ -49,6 +49,17 @@ final class HttpServer
      */
     public const DEFAULT_GRACEFUL_TIMEOUT = 3;
 
+    /**
+     * 归一优雅停机宽限（秒）：缺省 / 0 / 负数一律回退 {@see self::DEFAULT_GRACEFUL_TIMEOUT}。
+     *
+     * kode/process 侧把 0 夹成 0.1s，等于「不等在途请求」，与配置文件里「0 表示用默认」的
+     * 口径相反；故 0 值在框架层就换回默认，真要立刻断开用 `kode stop -g`（SIGKILL）。
+     */
+    public static function resolveGracefulTimeout(mixed $configured): int
+    {
+        return max(0, (int) $configured) ?: self::DEFAULT_GRACEFUL_TIMEOUT;
+    }
+
     /** worker 心跳周期（秒）：同时也是停机排空的检查粒度。 */
     private const HEARTBEAT_INTERVAL = 0.5;
 
@@ -134,7 +145,9 @@ final class HttpServer
         $maxRequest = max(0, (int) ($this->config['max_request'] ?? 0));
         $reusePort  = (bool) ($this->config['reuse_port'] ?? false);
         $name    = (string) ($this->config['name'] ?? 'kode-http');
-        $gracefulTimeout = max(0, (int) ($this->config['graceful_shutdown_timeout'] ?? self::DEFAULT_GRACEFUL_TIMEOUT));
+        // 0 / 负数 / 缺省都视为「未配置」→ 回退内置默认：把 0 直接递给 kode/process 会被
+        // 夹成 0.1s 排空窗口，在途请求会被丢掉（配置注释承诺的是退回默认 3s）。
+        $gracefulTimeout = self::resolveGracefulTimeout($this->config['graceful_shutdown_timeout'] ?? null);
         $k8sGrace = max(0, (int) ($_SERVER['K8S_TERMINATION_GRACE_PERIOD'] ?? getenv('K8S_TERMINATION_GRACE_PERIOD') ?: 30));
         if ($gracefulTimeout >= $k8sGrace - 5 && $k8sGrace > 0) {
             fwrite(STDERR, "[kode] 警告：graceful_shutdown_timeout({$gracefulTimeout}s) >= K8s terminationGracePeriodSeconds({$k8sGrace}s)-5s，留给 LB 摘流与进程退出的余量不足，滚动更新可能丢在途请求（建议 graceful < termination-5，且配置 preStop sleep 5s）。\n");
