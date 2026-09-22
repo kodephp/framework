@@ -6,6 +6,7 @@ namespace Kode\Framework\Console\Commands;
 
 use Kode\Console\Attribute\AsCommand;
 use Kode\Framework\Console\Command;
+use Kode\Framework\Tenant\Storage\StaticTenantStorageResolver;
 use Kode\Framework\Tenant\Storage\TenantStorageManager;
 
 /**
@@ -60,7 +61,10 @@ final class TenantStorageCommand extends Command
         $summary = [
             'enabled' => true,
             'strategy' => $storage['strategy'] ?? 'shared',
-            'template' => $storage['template'] ?? 'mysql',
+            'template' => StaticTenantStorageResolver::effectiveTemplate(
+                $storage['template'] ?? '',
+                (string) config('database.default', ''),
+            ),
             'prefix' => $storage['prefix'] ?? 'tnt_',
             'on_missing' => $storage['on_missing'] ?? 'fallback',
             'resolver' => class_exists((string) ($storage['strategy'] ?? ''))
@@ -77,7 +81,8 @@ final class TenantStorageCommand extends Command
 
         $this->line('<info>租户存储隔离</info>');
         $this->line('  策略     : ' . ($summary['strategy'] ?? '-'));
-        $this->line('  模板连接 : ' . ($summary['template'] ?? '-'));
+        $this->line('  模板连接 : ' . ($summary['template'] ?? '-')
+            . (trim((string) ($storage['template'] ?? '')) === '' ? '（template 留空，跟随 database.default）' : ''));
         $this->line('  库名前缀 : ' . ($summary['prefix'] ?? '-'));
         $this->line('  缺失行为 : ' . ($summary['on_missing'] ?? '-'));
         $this->line('  解析器   : ' . ($summary['resolver'] ?? '-'));

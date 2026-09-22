@@ -56,6 +56,19 @@ final class StaticTenantStorageResolver implements TenantConnectionResolver
     }
 
     /**
+     * template 配置的落定口径：留空（或纯空格）= 跟随 database.default。
+     *
+     * 装配（TenantStorageServiceProvider）与诊断（tenant:storage:list）共用，避免两处各写一遍
+     * 「默认值」而在改口径时漂移——诊断打印写死的 'mysql' 就是这样骗过运维的。
+     */
+    public static function effectiveTemplate(mixed $template, string $defaultConnection): string
+    {
+        $name = trim((string) ($template ?? ''));
+
+        return $name === '' ? $defaultConnection : $name;
+    }
+
+    /**
      * database/schema 策略：克隆模板连接，库名 = prefix + sanitize(租户标识)。
      *
      * @return array<string, mixed>

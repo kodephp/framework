@@ -44,14 +44,25 @@ final class TenantStorageServiceProvider extends ServiceProvider
         if ($strategy !== '' && class_exists($strategy) && is_a($strategy, TenantConnectionResolver::class, true)) {
             $resolver = $this->container->make($strategy);
         } else {
-            $templateName = (string) ($storage['template'] ?? 'mysql');
-            $templateConfig = (array) ($db['connections'][$templateName]
-                ?? $db['connections'][$defaultConnection]
-                ?? []);
+            // 模板连接必须「要么没配（跟随默认），要么配得对」：静默借用别的连接配置等于
+            // 让租户库拿着另一套凭证跑，隔离失效且无日志可查——所以配错一律启动即失败。
+            $connections = (array) ($db['connections'] ?? []);
+            $effective = StaticTenantStorageResolver::effectiveTemplate($storage['template'] ?? '', $defaultConnection);
+
+            if (!array_key_exists($effective, $connections)) {
+                throw new \RuntimeException(sprintf(
+                    '租户存储配置错误：连接 "%s" 不在 config/database.php 的 connections 中（可用：%s）。'
+                    . '它取自 tenant.storage.template，留空则跟随 database.default。',
+                    $effective,
+                    $connections === [] ? '无' : implode(', ', array_keys($connections)),
+                ));
+            }
+
+            $templateConfig = (array) $connections[$effective];
 
             $resolver = new StaticTenantStorageResolver(
                 $strategy === '' ? 'shared' : $strategy,
-                $templateName,
+                $effective,
                 $templateConfig,
                 $defaultConnection,
                 (string) ($storage['prefix'] ?? 'tnt_'),
