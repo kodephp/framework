@@ -22,7 +22,7 @@ use Kode\Database\Db\Db;
  *       }
  *   }
  *
- * 运行：php bin/kode db:seed（默认跑 DatabaseSeeder），或 db:seed --class=UsersTableSeeder。
+ * 运行：php kode db:seed（默认跑 DatabaseSeeder），或 db:seed --class=UsersTableSeeder。
  *
  * 说明：seeder 文件默认无命名空间（全局类），db:seed 会一次性 require 整个
  * seeders 目录，因此 call(OtherSeeder::class) 可正常解析；若你给 seeder 加了命名空间，

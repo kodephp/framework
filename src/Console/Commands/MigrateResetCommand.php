@@ -12,7 +12,7 @@ use Kode\Framework\Console\Command;
  * 回滚全部迁移。
  *
  * 用法：
- *   bin/kode migrate:reset
+ *   kode migrate:reset
  */
 #[AsCommand(
     name: 'migrate:reset',

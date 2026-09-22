@@ -11,9 +11,9 @@ use Kode\Framework\Console\Command;
 /**
  * 主动生成 OpenAPI 文档文件（开发者显式触发，而非仅运行时自动生成）。
  *
- *   bin/kode apidoc:generate                  # 写入 config('apidoc.output')（默认 storage/apidoc/openapi.json）
- *   bin/kode apidoc:generate --output=docs/openapi.json
- *   bin/kode apidoc:generate --check          # 仅校验完整性（缺 summary/200 响应则退出码 1，供 CI 强制补全）
+ *   kode apidoc:generate                  # 写入 config('apidoc.output')（默认 storage/apidoc/openapi.json）
+ *   kode apidoc:generate --output=docs/openapi.json
+ *   kode apidoc:generate --check          # 仅校验完整性（缺 summary/200 响应则退出码 1，供 CI 强制补全）
  *
  * 为什么需要「主动生成」命令？
  *   运行时自动生成只能覆盖 routes / methods / 路径参数，而查询参数、请求体、响应结构

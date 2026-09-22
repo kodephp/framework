@@ -11,7 +11,7 @@ use Kode\Framework\Scheduling\ScheduleDispatcher;
 /**
  * 列出全部已注册定时任务。
  *
- *   bin/kode console schedule:list
+ *   kode console schedule:list
  *
  * 展示每条任务的名称、cron 表达式、启用状态、处理器、来源（app / plugin:<name>）、
  * 租户、下次运行时刻与最近执行状态。

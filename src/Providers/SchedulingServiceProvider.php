@@ -62,7 +62,7 @@ final class SchedulingServiceProvider extends ServiceProvider
     /**
      * 计算任务目录（key=来源标签，value=绝对路径）。
      *
-     * 与 bin/kode 的 cron/schedule:list 命令共用同一约定，避免「命令看得到插件任务、
+     * 与 kode 的 cron/schedule:list 命令共用同一约定，避免「命令看得到插件任务、
      * schedule:list 却看不到」的发现口径漂移：两条路径都尊重 discover_plugins。
      *
      * @return array<string, string>
@@ -89,7 +89,7 @@ final class SchedulingServiceProvider extends ServiceProvider
     }
 
     /**
-     * 跨平台绝对路径判断（与 bin/kode 的 is_absolute_path() 同语义）。
+     * 跨平台绝对路径判断（与 kode 的 is_absolute_path() 同语义）。
      *
      * 不复用那个全局函数：它定义在 CLI 入口文件里，服务端/测试入口并不加载，
      * Provider 依赖它会在常驻进程中静默失败。

@@ -12,8 +12,8 @@ use Kode\Framework\Console\Command;
  * 回滚数据库迁移（默认回滚最近一个批次）。
  *
  * 用法：
- *   bin/kode migrate:rollback            # 回滚最近一批
- *   bin/kode migrate:rollback --step=2   # 回滚最近两个批次
+ *   kode migrate:rollback            # 回滚最近一批
+ *   kode migrate:rollback --step=2   # 回滚最近两个批次
  */
 #[AsCommand(
     name: 'migrate:rollback',

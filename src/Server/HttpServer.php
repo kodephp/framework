@@ -35,9 +35,9 @@ use function Kode\Process\cpu_count;
  *    {@see HttpBridge} 在 kode/process 的统一请求/响应与本内核之间互转。
  *  - **可观测性由框架补齐、不改 vendor**：kode/process 不暴露子进程退出码与逐进程计数，
  *    故本类在 worker 内以 1Hz 心跳写状态文件（{@see ServerStatusStore}），
- *    供 `bin/kode status` 渲染 workerman 风格的进程表。
+ *    供 `kode status` 渲染 workerman 风格的进程表。
  *
- * 工厂入口见 {@see serve()}；命令行由 bin/kode 调用。
+ * 工厂入口见 {@see serve()}；命令行由 kode 调用。
  */
 final class HttpServer
 {
@@ -447,7 +447,7 @@ final class HttpServer
      * 在 worker 内启动遥测心跳 + 快速排空看门狗。
      *
      * 心跳（1Hz 落盘）：把本进程的内存 / 连接数 / 累计请求 / QPS 写进状态文件，
-     * 这是 `bin/kode status` 唯一的真实数据来源——kode/process 不向外暴露逐进程计数，
+     * 这是 `kode status` 唯一的真实数据来源——kode/process 不向外暴露逐进程计数，
      * 与其在 CLI 侧猜，不如让每个进程自报。
      *
      * 快速排空（0.5s 粒度）：kode/process 收到停机信号后固定空等一整个宽限期，
@@ -586,6 +586,17 @@ final class HttpServer
     // ---------------------------------------------------------------- 横幅
 
     /**
+     * 守护模式下的停止提示。
+     *
+     * 命令必须与实际入口一致：CLI 是项目根目录的 kode（转发到本包同名脚本），本包不再分发
+     * bin 目录下的旧入口；多实例按端口分片，所以提示要带上本次监听的端口，否则 stop 作用到默认实例。
+     */
+    public static function stopHint(int $port): string
+    {
+        return sprintf('Input "php kode stop --port %d" to stop. Start success.', $port);
+    }
+
+    /**
      * 渲染启动横幅（对标 workerman 的 WORKERS 表：进程数 / 监听地址 / 状态一目了然）。
      *
      * @param array<string, mixed> $ctx listen/host/port/workers/root/name/daemon/debug
@@ -636,7 +647,7 @@ final class HttpServer
         // PID 文件用运行期解析出的真实路径（按端口分片），不用 config 原始值。
         $out .= !empty($ctx['daemon'])
             ? "守护模式已启动（PID 文件：" . (string) ($ctx['pid_file'] ?? 'storage/runtime/kode.pid') . "）。\n"
-              . "Input \"php bin/kode stop\" to stop. Start success.\n"
+              . self::stopHint((int) $ctx['port']) . "\n"
             : "Press Ctrl+C to stop. Start success.\n";
 
         return $out;

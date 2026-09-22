@@ -11,7 +11,7 @@ use Kode\Framework\Observability\Trace\Tracer;
 /**
  * 强制导出当前执行单元缓冲的 span，并打印追踪配置状态。
  *
- *   bin/kode console tracing:flush
+ *   kode console tracing:flush
  *
  * 主要用于 CLI / 常驻 worker 场景（无 HTTP 请求结束自动 flush 时机）；
  * HTTP 场景由 TraceMiddleware 在根 span 结束时自动 flush。导出器未就绪时仅告警返回 0。

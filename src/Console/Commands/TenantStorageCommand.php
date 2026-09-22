@@ -11,8 +11,8 @@ use Kode\Framework\Tenant\Storage\TenantStorageManager;
 /**
  * 租户存储隔离诊断命令（薄壳层运维抓手）。
  *
- *   bin/kode console tenant:storage:list                列出当前 storage 策略与显式映射
- *   bin/kode console tenant:storage:list --tenant=acme   解析并打印某租户将使用的连接名
+ *   kode console tenant:storage:list                列出当前 storage 策略与显式映射
+ *   kode console tenant:storage:list --tenant=acme   解析并打印某租户将使用的连接名
  *
  * 仅展示「会注册到 kode/database 的连接名」，不真正连库、不切换默认连接（dry-run）。
  */

@@ -7,7 +7,7 @@ namespace Kode\Framework\Console\Commands\Concerns;
 /**
  * 脚手架命令公共能力：路径解析、目录创建、文件写入、命名转换。
  *
- * 命令以「项目根目录」为基准写文件；项目根默认取当前工作目录（bin/kode 始终
+ * 命令以「项目根目录」为基准写文件；项目根默认取当前工作目录（kode 始终
  * 在项目根执行），测试可注入 $basePath 覆盖。
  */
 trait GeneratesFiles

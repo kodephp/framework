@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Server;
 
 /**
- * 单个 worker 进程的运行计数器（`bin/kode status` 的逐进程数据来源）。
+ * 单个 worker 进程的运行计数器（`kode status` 的逐进程数据来源）。
  *
  * 为什么自己数，而不是读 kode/process 的 `stats()`：
  *  - `RuntimeInterface::stats()` 在本框架支持的最低 kode/process（5.2.x）上会触碰

@@ -15,13 +15,13 @@ use Kode\Http\Routing\Route;
  * 大项目或插件化开发也能一眼看清每条路由的归属。
  *
  * 用法：
- *   bin/kode console route:list                 # 全量，按分组展示
- *   bin/kode console route:list --compact       # 仅看「分组 → 数量」摘要
- *   bin/kode console route:list --group=api     # 只看某分组
- *   bin/kode console route:list --method=POST   # 按 HTTP 方法过滤
- *   bin/kode console route:list --source=app    # 按来源标签过滤（app / plugin:blog）
- *   bin/kode console route:list --rate-limit    # 额外显示每条路由的 #[RateLimit] 规则
- *   bin/kode console route:list --columns=method,uri,name  # 自定义显示的列
+ *   kode console route:list                 # 全量，按分组展示
+ *   kode console route:list --compact       # 仅看「分组 → 数量」摘要
+ *   kode console route:list --group=api     # 只看某分组
+ *   kode console route:list --method=POST   # 按 HTTP 方法过滤
+ *   kode console route:list --source=app    # 按来源标签过滤（app / plugin:blog）
+ *   kode console route:list --rate-limit    # 额外显示每条路由的 #[RateLimit] 规则
+ *   kode console route:list --columns=method,uri,name  # 自定义显示的列
  */
 #[AsCommand(
     name: 'route:list',

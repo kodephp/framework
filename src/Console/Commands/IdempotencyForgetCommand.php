@@ -11,7 +11,7 @@ use Kode\Framework\Idempotency\IdempotencyManager;
 /**
  * 删除指定幂等键（重试放行 / 运维清理）。
  *
- *   bin/kode console idempotency:forget order:abc123   删除该 key，使相同请求可重新处理
+ *   kode console idempotency:forget order:abc123   删除该 key，使相同请求可重新处理
  *
  * 退出码：删除成功 / key 本就不存在均为 0。
  */

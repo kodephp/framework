@@ -15,9 +15,9 @@ use Kode\Framework\Console\Command;
  * 即时验证「审计是否按预期记录」「敏感字段是否已被脱敏」。
  *
  * 用法：
- *   bin/kode audit:recent                 # 最近 20 条审计
- *   bin/kode audit:recent --limit=50      # 最近 50 条
- *   bin/kode audit:recent --action=user.login   # 仅含该事件名的记录
+ *   kode audit:recent                 # 最近 20 条审计
+ *   kode audit:recent --limit=50      # 最近 50 条
+ *   kode audit:recent --action=user.login   # 仅含该事件名的记录
  */
 #[AsCommand(
     name: 'audit:recent',

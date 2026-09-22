@@ -11,8 +11,8 @@ use Kode\Framework\Lock\LockManager;
 /**
  * 列出当前持有的锁（运维排查 / 死锁巡检）。
  *
- *   bin/kode console lock:list           表格展示：键 / owner / 剩余 TTL（秒）
- *   bin/kode console lock:list --json     以 JSON 输出（便于被监控 / 编排系统解析）
+ *   kode console lock:list           表格展示：键 / owner / 剩余 TTL（秒）
+ *   kode console lock:list --json     以 JSON 输出（便于被监控 / 编排系统解析）
  *
  * memory 后端仅反映当前进程持有的锁；file 后端反映同主机多进程持有的锁。
  * 退出码恒为 0（仅展示，不影响部署）。

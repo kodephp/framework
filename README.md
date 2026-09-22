@@ -75,7 +75,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.6.2          PHP version:8.3.33
+Kode Framework version:1.7.5          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -88,7 +88,7 @@ Press Ctrl+C to stop. Start success.
 | 命令 | 作用 |
 | --- | --- |
 | `php kode start` | 前台启动（非 production 默认热重载，`--no-watch` 关闭；`serve` 为别名） |
-| `php kode start -d` | **守护进程模式**（脱离终端，写 PID 文件，用 `stop` 停止） |
+| `php kode start -d` | **守护进程模式**（脱离终端，写 PID 文件；横幅给出 `php kode stop --port <端口>`，多实例按端口分片，不带端口会作用到默认实例） |
 | `php kode status` | workerman 风格状态表：GLOBAL STATUS + 逐进程 PROCESS STATUS |
 | `php kode status [--port P] [--pid=N]` | 查看服务状态（`--port` 定位多实例，`--pid` 看单进程） |
 
@@ -184,7 +184,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.7.4](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.7.5](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

@@ -11,7 +11,7 @@ use Kode\Framework\Process\ProcessManager;
 /**
  * 不 fork，同步跑一遍所有 worker 的 handle() 验证逻辑（CI / 无 pcntl 环境友好）。
  *
- *   bin/kode console process:check
+ *   kode console process:check
  */
 #[AsCommand(
     name: 'process:check',

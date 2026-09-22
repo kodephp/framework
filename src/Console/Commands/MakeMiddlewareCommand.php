@@ -11,8 +11,8 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 /**
  * 生成 HTTP 中间件。
  *
- *   bin/kode make:middleware Auth
- *   bin/kode make:middleware Cors --force
+ *   kode make:middleware Auth
+ *   kode make:middleware Cors --force
  */
 #[AsCommand(
     name: 'make:middleware',

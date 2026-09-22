@@ -404,11 +404,6 @@ final class HttpServiceProvider extends ServiceProvider
     }
 
     /**
-     * 将框架 config/security.php 映射为 kode/http 原生 SecurityHeaders 的构造参数。
-     *
-     * @return array{0: array<string, string>, 1: bool}
-     */
-    /**
      * 是否信任客户端自带的 X-Request-Id（config `security.request_id_allow_client`）。
      *
      * 默认 true 保持历史行为（跨服务透传链路 ID）；对外入口应置 false，改为服务端生成。
@@ -418,6 +413,11 @@ final class HttpServiceProvider extends ServiceProvider
         return (bool) $this->config('security.request_id_allow_client', true);
     }
 
+    /**
+     * 将框架 config/security.php 映射为 kode/http 原生 SecurityHeaders 的构造参数。
+     *
+     * @return array{0: array<string, string>, 1: bool}
+     */
     private function securityHeadersConfig(): array
     {
         $sec = (array) $this->config('security', []);

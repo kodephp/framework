@@ -11,8 +11,8 @@ use Kode\Framework\Database\Seeder;
 /**
  * 运行数据库填充。
  *
- *   bin/kode db:seed                       # 运行 DatabaseSeeder
- *   bin/kode db:seed --class=UsersTableSeeder
+ *   kode db:seed                       # 运行 DatabaseSeeder
+ *   kode db:seed --class=UsersTableSeeder
  */
 #[AsCommand(
     name: 'db:seed',

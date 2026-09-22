@@ -11,7 +11,7 @@ use Kode\Framework\Process\ProcessManager;
 /**
  * 启动常驻进程（真正 fork 各 worker 实例，需 CLI + ext-pcntl + ext-posix）。
  *
- *   bin/kode console process:start
+ *   kode console process:start
  */
 #[AsCommand(
     name: 'process:start',
@@ -27,7 +27,7 @@ final class ProcessStartCommand extends Command
 
         if (!$manager->supportsForking()) {
             $this->error('当前环境不支持常驻进程：需 CLI SAPI + ext-pcntl + ext-posix。');
-            $this->line('可用 `bin/kode console process:check` 在不 fork 的情况下验证 worker 逻辑。');
+            $this->line('可用 `kode console process:check` 在不 fork 的情况下验证 worker 逻辑。');
 
             return 1;
         }

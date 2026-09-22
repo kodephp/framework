@@ -12,8 +12,8 @@ use Kode\Framework\Console\Command;
  * 执行数据库迁移（运行 database/migrations 下待执行的迁移文件）。
  *
  * 用法：
- *   bin/kode migrate              # 执行全部待运行迁移
- *   bin/kode migrate --step=1     # 仅执行下一批（一步）
+ *   kode migrate              # 执行全部待运行迁移
+ *   kode migrate --step=1     # 仅执行下一批（一步）
  */
 #[AsCommand(
     name: 'migrate',

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Server;
 
 /**
- * 运行状态快照与渲染（对标 `workerman status`，由 `bin/kode status` 消费）。
+ * 运行状态快照与渲染（对标 `workerman status`，由 `kode status` 消费）。
  *
  * 输出两段：
  *  1. **GLOBAL STATUS**：版本、启动时间、运行时长、master pid、事件循环驱动、
@@ -180,7 +180,7 @@ final class ServerStatus
     }
 
     /**
-     * 单进程详情块（`bin/kode status --pid=N`）。
+     * 单进程详情块（`kode status --pid=N`）。
      *
      * @param array{running: bool, master: array<string, mixed>|null, workers: list<array<string, mixed>>} $snap
      */

@@ -11,8 +11,8 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 /**
  * 生成自定义控制台命令。
  *
- *   bin/kode make:command SendNewsletter
- *   bin/kode make:command SendNewsletter --force
+ *   kode make:command SendNewsletter
+ *   kode make:command SendNewsletter --force
  */
 #[AsCommand(
     name: 'make:command',
@@ -91,7 +91,7 @@ PHP;
             return 0;
         }
 
-        $this->success("已生成命令：{$path}（运行：bin/kode {$cmdName}）");
+        $this->success("已生成命令：{$path}（运行：kode {$cmdName}）");
 
         return 0;
     }

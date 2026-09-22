@@ -11,8 +11,8 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 /**
  * 生成数据库迁移。
  *
- *   bin/kode make:migration create_posts_table
- *   bin/kode make:migration add_price_to_products --force
+ *   kode make:migration create_posts_table
+ *   kode make:migration add_price_to_products --force
  */
 #[AsCommand(
     name: 'make:migration',
@@ -54,8 +54,8 @@ use Kode\Framework\Database\Schema;
 /**
  * {$class}（由 make:migration 生成）
  *
- * 运行：php bin/kode migrate
- * 回滚：php bin/kode migrate:rollback
+ * 运行：php kode migrate
+ * 回滚：php kode migrate:rollback
  */
 final class {$class} extends Migration
 {

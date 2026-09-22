@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Server;
 
 /**
- * 运行状态文件仓库：`bin/kode status` 的数据源。
+ * 运行状态文件仓库：`kode status` 的数据源。
  *
  * 设计立场（为什么不是「共享内存 / UDP 状态端口 / 单一 JSON 文件」）：
  *
@@ -275,7 +275,7 @@ final class ServerStatusStore
     }
 
     /**
-     * 跨平台绝对路径判断（与 bin/kode 的 is_absolute_path() 同语义，此处不复用以免依赖全局函数）。
+     * 跨平台绝对路径判断（与 kode 的 is_absolute_path() 同语义，此处不复用以免依赖全局函数）。
      */
     private static function isAbsolute(string $path): bool
     {

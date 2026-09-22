@@ -30,7 +30,7 @@ use Kode\Database\Database\Migrations\Migration as BaseMigration;
  *       }
  *   }
  *
- * 运行：php bin/kode migrate / migrate:rollback / migrate:reset
+ * 运行：php kode migrate / migrate:rollback / migrate:reset
  *
  * 本类重写了 create/table/drop，使其回调接收 {@see Schema} 实例（与门面一致），
  * 并把 DDL 生成即执行，业务侧写法统一。

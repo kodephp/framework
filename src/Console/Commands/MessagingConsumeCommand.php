@@ -15,9 +15,9 @@ use Psr\Container\ContainerInterface;
  * 生产者 Messenger，ConsoleServiceProvider 也没有任何消费命令，导致订阅型消息
  * （事件总线 / 跨进程通知）在生产环境无法被消费）。
  *
- *   bin/kode console messaging:consume                       # 消费 messaging.consumers 全部频道
- *   bin/kode console messaging:consume --channel=orders:created
- *   bin/kode console messaging:consume --driver=redis        # 跨进程消费（需 redis 总线）
+ *   kode console messaging:consume                       # 消费 messaging.consumers 全部频道
+ *   kode console messaging:consume --channel=orders:created
+ *   kode console messaging:consume --driver=redis        # 跨进程消费（需 redis 总线）
  *
  * 多频道且支持 pcntl 时，会为每个频道 fork 一个子进程；否则仅消费首个频道并提示。
  * 处理器类约定：提供 handle(array $payload) / __invoke / run / execute 之一即可。

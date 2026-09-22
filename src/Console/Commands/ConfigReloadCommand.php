@@ -11,7 +11,7 @@ use Kode\Framework\Console\Command;
 /**
  * 触发配置中心热重载。
  *
- *   bin/kode console config:center:reload
+ *   kode console config:center:reload
  *
  * 重新拉取各「可重载」配置源并合并进 Config，打印变化的顶层键。
  * 配合远程中心使用时：应用侧 watch 中心变更 → 写本地镜像文件 → 调本命令（或每 worker 触发）生效。

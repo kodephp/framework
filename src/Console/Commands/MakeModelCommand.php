@@ -11,8 +11,8 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 /**
  * 生成数据模型。
  *
- *   bin/kode make:model User
- *   bin/kode make:model Post --force
+ *   kode make:model User
+ *   kode make:model Post --force
  */
 #[AsCommand(
     name: 'make:model',

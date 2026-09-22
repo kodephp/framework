@@ -11,7 +11,7 @@ use Kode\Framework\Process\ProcessManager;
 /**
  * 列出已注册的常驻 worker。
  *
- *   bin/kode console process:list
+ *   kode console process:list
  */
 #[AsCommand(
     name: 'process:list',

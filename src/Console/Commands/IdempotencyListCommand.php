@@ -11,8 +11,8 @@ use Kode\Framework\Idempotency\IdempotencyManager;
 /**
  * 列出当前记录的幂等键（运维排查 / 去重巡检）。
  *
- *   bin/kode console idempotency:list           表格展示：键 / 剩余 TTL（秒）
- *   bin/kode console idempotency:list --json     以 JSON 输出（便于被监控 / 编排系统解析）
+ *   kode console idempotency:list           表格展示：键 / 剩余 TTL（秒）
+ *   kode console idempotency:list --json     以 JSON 输出（便于被监控 / 编排系统解析）
  *
  * memory 后端仅反映当前进程；file 后端反映同主机多进程。退出码恒为 0。
  */

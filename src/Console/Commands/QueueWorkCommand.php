@@ -21,9 +21,9 @@ use Psr\Container\ContainerInterface;
  * 启动队列消费进程（修复「框架最大坑」：此前只有生产者 QueueManager/Queue 被绑定，
  * ConsoleServiceProvider 也未注册任何消费命令，导致异步任务/事件在生产环境根本无法消费）。
  *
- *   bin/kode console queue:work                 # 常驻守护，监听默认队列
- *   bin/kode console queue:work --queue=mail,default --tries=3
- *   bin/kode console queue:work --once          # 把队列跑空就退出（CI / 一次性补数）
+ *   kode console queue:work                 # 常驻守护，监听默认队列
+ *   kode console queue:work --queue=mail,default --tries=3
+ *   kode console queue:work --once          # 把队列跑空就退出（CI / 一次性补数）
  *
  * 处理器来源（三者合并，前者优先）：
  *   1. QueueServiceProvider 绑定、自动扫描 #[AsJob] 得到的 HandlerResolver 单例；

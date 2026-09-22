@@ -11,9 +11,9 @@ use Kode\Framework\Health\HealthChecker;
 /**
  * 健康检查命令（k8s exec 探针 / CI 门禁 / 本地巡检）。
  *
- *   bin/kode console health:check              聚合巡检，打印各组件状态，degraded 以非零码退出
- *   bin/kode console health:check --ready      仅就绪语义（与 /health/ready 一致）
- *   bin/kode console health:check --json        以 JSON 输出（便于被监控/编排系统解析）
+ *   kode console health:check              聚合巡检，打印各组件状态，degraded 以非零码退出
+ *   kode console health:check --ready      仅就绪语义（与 /health/ready 一致）
+ *   kode console health:check --json        以 JSON 输出（便于被监控/编排系统解析）
  *
  * 退出码：健康 = 0，degraded（任一 error）= 1，便于 k8s exec / CI 直接感知失败。
  */

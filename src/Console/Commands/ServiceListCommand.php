@@ -11,7 +11,7 @@ use Kode\Framework\ServiceDiscovery\ServiceDiscovery;
 /**
  * 列出已注册的上游服务及其实例（服务发现）。
  *
- *   bin/kode console service:list
+ *   kode console service:list
  *
  * 展示每个服务的实例地址、健康状态与权重，便于排障与核对发现结果。
  */

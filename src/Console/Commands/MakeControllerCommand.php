@@ -11,8 +11,8 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 /**
  * 生成 HTTP 控制器。
  *
- *   bin/kode make:controller User
- *   bin/kode make:controller UserController --force
+ *   kode make:controller User
+ *   kode make:controller UserController --force
  */
 #[AsCommand(
     name: 'make:controller',
