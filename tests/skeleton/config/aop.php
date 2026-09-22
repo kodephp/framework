@@ -35,6 +35,7 @@ return [
         'path' => env('AOP_CACHE_PATH', ''),
     ],
 
-    // 严格模式：切面/切点非法时抛异常（默认关，宽松模式仅告警）。
-    'strict' => env('AOP_STRICT', false),
+    // 通知属性严格模式：无法实例化的通知属性立即抛异常（true），还是静默跳过（false）。
+    // 默认与 kode/aop 内核缺省一致取 true，改这里才真能放宽。
+    'strict' => env('AOP_STRICT', true),
 ];

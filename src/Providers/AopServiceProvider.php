@@ -51,7 +51,7 @@ final class AopServiceProvider extends ServiceProvider
             }
         } catch (\Throwable $e) {
             // 扫描失败（app/aspects 尚未初始化等）不应阻断启动。
-            logger()->warning('[aop] 切面扫描失败：' . $e->getMessage());
+            $this->warn('[aop] 切面扫描失败：' . $e->getMessage());
         }
 
         // 3) 织入缓存目录（提升二次启动性能；默认 storage/aop）。
@@ -66,18 +66,36 @@ final class AopServiceProvider extends ServiceProvider
             'cache' => ['path' => $cachePath],
         ];
 
+        // 严格模式是 Aop 的静态开关（落到 MetadataReader），且必须在 boot 之前落定：
+        // boot 阶段会读取切面属性，编译完成后再改开关对本期内核无效。
+        // 用 array_key_exists 而非 !empty，配置 false 才真能表达"回退宽容模式"。
+        if (array_key_exists('strict', $config)) {
+            Aop::strict((bool) $config['strict']);
+        }
+
         try {
             $kernel = Aop::bootFromConfig($bootConfig);
-            if (!empty($config['strict'])) {
-                $kernel->strict(true);
-            }
         } catch (\Throwable $e) {
             // 内核启动失败不应阻断启动；记录告警并保留未启动的内核（切面不生效）。
-            logger()->warning('[aop] 内核启动失败：' . $e->getMessage());
+            $this->warn('[aop] 内核启动失败：' . $e->getMessage());
             $kernel = Aop::kernel();
         }
 
         $this->container->instance(AspectKernelInterface::class, $kernel);
         $this->container->alias('aop', AspectKernelInterface::class);
+    }
+
+    /**
+     * register() 跑在 Bootstrap 的注册阶段，此时 App 单例尚未创建，
+     * logger() 助手会直接抛 RuntimeException——告警绝不能反过来掐死引导，
+     * 故失败时降级到 error_log。
+     */
+    private function warn(string $message): void
+    {
+        try {
+            logger()->warning($message);
+        } catch (\Throwable) {
+            \error_log($message);
+        }
     }
 }

@@ -9,6 +9,7 @@ use Kode\Framework\Plugin\PluginManager;
 use Kode\Http\App;
 use Kode\Http\Routing\Route;
 use Kode\Framework\Tests\Fixtures\Plugin\DemoPlugin;
+use Kode\Framework\Tests\Fixtures\Plugin\DemoService;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -47,5 +48,21 @@ final class PluginTest extends TestCase
 
         // 插件已登记。
         self::assertArrayHasKey('demo', $manager->all());
+    }
+
+    /**
+     * alias() 的实参顺序与 kode/di 的 Container::alias(alias, id) 相反，
+     * 委派时必须交换：否则友好名解析不到服务，真实 id 反而被当成别名。
+     */
+    public function testAliasMapsFriendlyNameToBoundService(): void
+    {
+        Application::make(\Kode\Framework\Tests\TestCase::SKELETON_ROOT);
+
+        /** @var PluginManager $manager */
+        $manager = resolve(PluginManager::class);
+        $manager->bind(DemoService::class, static fn (): DemoService => new DemoService());
+        $manager->alias(DemoService::class, 'demo.friendly');
+
+        self::assertInstanceOf(DemoService::class, $manager->make('demo.friendly'));
     }
 }

@@ -91,10 +91,14 @@ final class PluginManager
 
     /**
      * 为已绑定服务注册别名（助手/门面友好名）。
+     *
+     * 参数顺序与本类的 bind() 一致（真实 id 在前），而 kode/di 的
+     * Container::alias() 是 (alias, id)——委派时必须交换实参，否则别名与
+     * 目标服务对调，$this->container->get($alias) 直接 ServiceNotFound。
      */
     public function alias(string $abstract, string $alias): void
     {
-        $this->container->alias($abstract, $alias);
+        $this->container->alias($alias, $abstract);
     }
 
     /**
