@@ -41,16 +41,8 @@ return [
     'connection_cleanup' => (bool) env('HTTP_CONNECTION_CLEANUP', true),
 
     /*
-     * HTTP 错误响应配置（非信封模式，由 Resp::error 使用）。
-     */
-    'error_keys' => [
-        'message' => 'message',
-        'errors'  => 'errors',
-    ],
-
-    /*
      * kode/exception 生产模式收敛后的对外提示语（production 下系统异常不泄露内部细节）。
-     * 如需自定义覆盖，可在此设置后由 ExceptionServiceProvider 注入格式化器。
+     * 由 ExceptionServiceProvider 注入 UnifiedResponseFormatter；留空沿用包内默认文案。
      */
     'production_message' => env('HTTP_PRODUCTION_MESSAGE', '系统繁忙，请稍后重试'),
 ];

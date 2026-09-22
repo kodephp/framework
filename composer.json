@@ -19,7 +19,7 @@
         "psr"
     ],
     "license": "MIT",
-    "version": "1.7.1",
+    "version": "1.7.2",
     "repositories": [
         {
             "type": "git",
@@ -52,7 +52,7 @@
         "kode/exception": "*",
         "kode/facade": "*",
         "kode/fibers": "*",
-        "kode/http": "*",
+        "kode/http": "^3.5.2",
         "kode/http-client": "^2.5",
         "kode/jwt": "*",
         "kode/limiting": "^2.0",

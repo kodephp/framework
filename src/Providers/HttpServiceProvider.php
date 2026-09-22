@@ -111,7 +111,12 @@ final class HttpServiceProvider extends ServiceProvider
         // 这些是企业级 API 基础设施，默认开启、配置驱动，可按需关闭。
         // 实现全部委托 kode/http 原生中间件，框架只做「配置映射 + 开关」胶水。
         if (!empty($this->config('security.request_id', true))) {
-            $app->use(new RequestId(header: 'X-Request-Id'));
+            // trustClient 必须由 config 决定：入站 X-Request-Id 会原样进访问日志与审计，
+            // 对外入口若允许调用方自带，等于把链路关联键交给攻击者。
+            $app->use(new RequestId(
+                header: 'X-Request-Id',
+                trustClient: $this->trustsClientRequestId(),
+            ));
         }
 
         // 访问日志：紧跟 RequestId 之后，确保能记录链路 ID；记录 method/uri/status/延迟。
@@ -403,6 +408,16 @@ final class HttpServiceProvider extends ServiceProvider
      *
      * @return array{0: array<string, string>, 1: bool}
      */
+    /**
+     * 是否信任客户端自带的 X-Request-Id（config `security.request_id_allow_client`）。
+     *
+     * 默认 true 保持历史行为（跨服务透传链路 ID）；对外入口应置 false，改为服务端生成。
+     */
+    private function trustsClientRequestId(): bool
+    {
+        return (bool) $this->config('security.request_id_allow_client', true);
+    }
+
     private function securityHeadersConfig(): array
     {
         $sec = (array) $this->config('security', []);

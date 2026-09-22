@@ -11,9 +11,10 @@ use Psr\Log\LoggerInterface;
  * 配置服务提供者
  *
  * 配置加载由 Application::loadConfig() 完成并绑定为 'config' 服务；
- * 此处做两件企业级启动保障：
- *  1) fail-fast：校验 config/app.required 列出的必填配置是否齐全，缺失即启动失败；
- *  2) 生产环境告警：debug 开启且 env=production 时记录告警（避免泄露调试信息）。
+ * 此处做三件事：
+ *  1) 应用 config/app.timezone（PHP 侧默认时区，此前无人读取）；
+ *  2) fail-fast：校验 config/app.required 列出的必填配置是否齐全，缺失即启动失败；
+ *  3) 生产环境告警：debug 开启且 env=production 时记录告警（避免泄露调试信息）。
  */
 final class ConfigServiceProvider extends ServiceProvider
 {
@@ -24,8 +25,34 @@ final class ConfigServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->applyTimezone();
         $this->assertRequiredConfig();
         $this->warnDebugInProduction();
+    }
+
+    /**
+     * 把 config/app.timezone 落成 PHP 默认时区。
+     *
+     * 未接线前 date()/日志时间戳/无显式时区的 DateTimeImmutable 恒按 PHP 内置时区
+     * （CLI 通常 UTC），而配置里写着 Asia/Shanghai——「配置说东八区、日志是 UTC」即由此而来。
+     * 非法时区只告警不阻断启动（保留原时区），避免一个拼写错误让整站起不来。
+     */
+    private function applyTimezone(): void
+    {
+        $timezone = trim((string) $this->config('app.timezone', ''));
+        if ($timezone === '') {
+            return;
+        }
+
+        try {
+            new \DateTimeZone($timezone);
+        } catch (\Throwable) {
+            error_log('[kode] app.timezone 不是合法时区，已忽略：' . $timezone);
+
+            return;
+        }
+
+        date_default_timezone_set($timezone);
     }
 
     /**

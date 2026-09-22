@@ -861,7 +861,9 @@ final class ScheduleDispatcher
     }
 
     /**
-     * 选择协调器：配置了集群存储才用 ClusterCoordinator，否则本地恒派发。
+     * 选择协调器：schedule.cluster.store 非空即启用集群锁协调，否则本地恒派发。
+     *
+     * 注意该键只作开关：锁落在哪个后端由进程级 Cluster::store() 决定（见 {@see ClusterCoordinator}）。
      */
     private function coordinator(): CoordinatorInterface
     {

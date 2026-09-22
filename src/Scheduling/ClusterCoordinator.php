@@ -27,9 +27,11 @@ final class ClusterCoordinator implements CoordinatorInterface
     private mixed $held = null;
 
     /**
-     * @param string $store 协调存储后端名（与 Cluster::make() 一致，如 'redis'/'file'）。
-     * @param float  $ttl  派发锁 TTL（秒），应 >= 单轮任务最大耗时。
-     * @param string $key  锁键名。
+     * @param string $store 集群协调开关的取值留档：非空即启用本协调器（由调度器判定），
+     *                      锁实际落在哪个后端由进程级 {@see Cluster::store()} 决定——
+     *                      调度器不改写全局存储，以免串改同进程其他子系统（队列/锁/WS）的后端选择。
+     * @param float  $ttl   派发锁 TTL（秒），应 >= 单轮任务最大耗时。
+     * @param string $key   锁键名。
      */
     public function __construct(
         private readonly string $store,

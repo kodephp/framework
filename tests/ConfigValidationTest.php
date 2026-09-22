@@ -44,6 +44,47 @@ final class ConfigValidationTest extends TestCase
         Application::make($this->tmp);
     }
 
+    #[RunInSeparateProcess]
+    public function testAppTimezoneIsAppliedOnBoot(): void
+    {
+        // config/app.timezone 曾无人读取：date()/日志时间戳恒按 PHP 内置时区（CLI 多为 UTC）。
+        // 选一个与常见默认都不重合的时区，避免「碰巧相等」的假绿。
+        $this->overrideAppConfig(['timezone' => 'America/New_York']);
+
+        Application::make($this->tmp);
+
+        $this->assertSame('America/New_York', date_default_timezone_get());
+    }
+
+    #[RunInSeparateProcess]
+    public function testInvalidTimezoneIsIgnoredWithoutBreakingBoot(): void
+    {
+        $before = date_default_timezone_get();
+        // 非法值只告警：把 error_log 落到文件，既验证告警确实发出，也不污染测试输出。
+        $log = $this->tmp . '/php_error.log';
+        \ini_set('error_log', $log);
+        $this->overrideAppConfig(['timezone' => 'Not/AZone']);
+
+        Application::make($this->tmp);
+
+        $this->assertSame($before, date_default_timezone_get(), '非法时区应被忽略而不是改写成空时区');
+        $this->assertStringContainsString('Not/AZone', (string) file_get_contents($log));
+    }
+
+    private function overrideAppConfig(array $overrides): void
+    {
+        $this->copyConfig();
+        copy($this->tmp . '/config/app.php', $this->tmp . '/config/app.base.php');
+        $lines = '';
+        foreach ($overrides as $key => $value) {
+            $lines .= "    " . var_export((string) $key, true) . ' => ' . var_export($value, true) . ",\n";
+        }
+        file_put_contents(
+            $this->tmp . '/config/app.php',
+            "<?php\nreturn array_replace(require __DIR__ . '/app.base.php', [\n" . $lines . "]);\n"
+        );
+    }
+
     private function copyConfig(): void
     {
         // 骨架夹具的 config/（仓库根自 v1.0.0 起收敛为纯内核，不再携带 config/）。
