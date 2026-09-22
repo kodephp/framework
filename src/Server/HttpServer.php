@@ -224,8 +224,12 @@ final class HttpServer
         ): void {
             $bootWorker($workerId);
             // worker 级启动钩子：应用已就绪，可建立独立连接池 / 启动周期任务。
+            // 把周期定时器注册器一并交给监听方：此刻事件循环确实在跑，注册才安全。
             try {
-                event(new \Kode\Framework\Lifecycle\WorkerStarting($workerId));
+                $addTimer = static function (float $interval, callable $callback) use (&$runtime): int {
+                    return $runtime === null ? 0 : $runtime->addTimer($interval, $callback);
+                };
+                event(new \Kode\Framework\Lifecycle\WorkerStarting($workerId, $addTimer));
             } catch (\Throwable) {
                 // 事件系统未就绪：不阻断启动。
             }

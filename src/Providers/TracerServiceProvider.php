@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Providers;
 
+use Kode\Event\Dispatcher;
 use Kode\Framework\Application;
+use Kode\Framework\Lifecycle\WorkerStarting;
 use Kode\Framework\Observability\Trace\Contracts\SpanExporter;
 use Kode\Framework\Observability\Trace\Exporters\FileSpanExporter;
 use Kode\Framework\Observability\Trace\Exporters\OtlpHttpExporter;
@@ -67,8 +69,9 @@ final class TracerServiceProvider extends ServiceProvider
         }
 
         // 离请求路径导出：把进程级 outbox 批量发送，绝不阻塞客户端响应。
-        //  - Swoole / Workerman：注册周期性 tick 定时器（常驻进程最优，请求路径零网络开销）。
+        //  - 常驻 worker：worker 事件循环内注册周期性 tick（flush_interval_ms）。
         //  - FPM / CLI：注册 shutdown 钩子，响应发出后再 drain（客户端已收到响应）。
+        $this->registerPeriodicDrain($cfg);
         $this->registerOffPathDrain();
 
         // worker 优雅停机时 drain 待导出 span（避免链路在退出时丢失）
@@ -77,12 +80,61 @@ final class TracerServiceProvider extends ServiceProvider
             $graceful = $this->container->get(GracefulShutdown::class);
             $graceful->registerCleanup(static function (): void {
                 try {
-                    resolve(Tracer::class)->drain();
+                    // force：停机前最后一次机会，退避窗口不该让整批 span 白白丢弃。
+                    resolve(Tracer::class)->drain(true);
                 } catch (\Throwable) {
                     // drain 失败不影响停机
                 }
             });
         }
+    }
+
+    /**
+     * 常驻 worker 的周期性导出：让 async=true 的 outbox 在进程存活期内就发出去。
+     *
+     * 没有它，异步 outbox 只能等 shutdown / 停机钩子才导出——常驻 worker 长跑期间
+     * 永不触发，span 堆到 max_outbox 后开始丢最旧的（配置里的 flush_interval_ms
+     * 此前是一枚没人读的哑键）。
+     *
+     * 定时器只在 {@see WorkerStarting} 里注册：那才是「事件循环确实在跑」的时机
+     * （Swoole 扩展在纯 CLI 下亦加载，按扩展判断会盲注册、shutdown 时挂死）。
+     * FPM / CLI 收不到该事件，自然退回 shutdown 钩子。
+     *
+     * @param array<string, mixed> $cfg
+     */
+    private function registerPeriodicDrain(array $cfg): void
+    {
+        // 与文档口径一致：默认 2s 一轮；设 0 关闭周期导出（只靠 shutdown / 停机钩子）。
+        $intervalMs = (int) ($cfg['flush_interval_ms'] ?? 2000);
+        // 同步模式已在请求结束导出，注册周期任务只会重复劳动。
+        if ($intervalMs <= 0 || empty($cfg['async'] ?? true)) {
+            return;
+        }
+
+        try {
+            /** @var Dispatcher $dispatcher */
+            $dispatcher = $this->container->get(Dispatcher::class);
+        } catch (\Throwable) {
+            // 事件系统未就绪：靠 shutdown 钩子兜底。
+            return;
+        }
+
+        $dispatcher->listen(WorkerStarting::class, static function (WorkerStarting $event) use ($intervalMs): void {
+            if ($event->addTimer === null) {
+                return;
+            }
+            try {
+                ($event->addTimer)($intervalMs / 1000, static function (): void {
+                    try {
+                        resolve(Tracer::class)->drain();
+                    } catch (\Throwable) {
+                        // 导出失败已在 Tracer 内告警 + 退避，绝不打断事件循环
+                    }
+                });
+            } catch (\Throwable) {
+                // 注册失败：退化为 shutdown 钩子导出。
+            }
+        });
     }
 
     /**

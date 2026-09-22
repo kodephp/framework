@@ -164,7 +164,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 | 国际化 | `lang()` / `LocaleMiddleware` | Symfony Translation |
 | 分布式 ID | `snowflake()` | kode/process |
 | 配置 / 日志 / 门面 / DI | `config()` / `logger()` / 门面 / `resolve()` | kode/core · Monolog · kode/di |
-| 可观测性 | `/metrics`(Prometheus) + W3C 链路追踪 + `Metrics` 门面 | kode/context + 框架本地薄实现 |
+| 可观测性 | `/metrics`(Prometheus) + W3C 链路追踪 + `Metrics` 门面；span 导出离请求路径（worker 周期 tick / shutdown / 停机钩子），OTLP/HTTP JSON 与文件导出器，Collector 不可达时指数退避 + 告警去重 | kode/context + 框架本地薄实现 |
 | 运维与生命周期 | `/health` `/health/ready` `/ping` 探针 + 启动/停机事件 | kode/event + 框架本地薄实现 |
 | 安全与合规 | 安全响应头(CSP/COOP/CORP) + 审计日志(脱敏/业务事件/取证) + CSRF 防护(按需挂载·csrf.failed 安全事件·csrf_token_rotate 会话固定防护) + API 版本化 | 框架本地薄实现 |
 | API 文档自动化 | `/docs/openapi.json` + Swagger UI + `#[OpenApi]` | 框架本地薄实现 |
@@ -184,7 +184,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.6.2](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.7.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

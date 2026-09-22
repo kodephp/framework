@@ -49,6 +49,23 @@ final class Tracer
     private ?SpanExporter $exporter = null;
 
     /**
+     * 导出失败退避状态（进程级，与 {@see self::$outbox} 同生命周期）。
+     *
+     * 必须是静态：FPM / 每请求重建容器的场景下，实例级状态会随请求一起消失，
+     * 退避形同虚设（每请求现场再付一次 curl 超时 + 一条告警）。
+     */
+    private static int $exportFailures = 0;
+
+    private static int $suppressedFailures = 0;
+
+    /** 累计真正写出的失败告警条数（退避策略压掉了多少条，看这个）。 */
+    private static int $exportWarnings = 0;
+
+    private static int $backoffWindow = 0;
+
+    private static float $retryAfter = 0.0;
+
+    /**
      * 是否异步导出：true = 请求路径仅内存入队，export 离请求路径执行。
      * @var bool
      */
@@ -203,7 +220,9 @@ final class Tracer
         }
 
         if (!$this->async) {
-            return $this->flush();
+            // 同步模式：请求结束即导出，但仍受退避保护——否则 Collector 不可达时
+            // 每个请求都要在现场付满一次 curl 超时（默认 2s），吞吐直接塌方。
+            return $this->drain();
         }
 
         // 异步：当前执行单元的 span 合并进进程级 outbox，清空本单元缓冲。
@@ -211,7 +230,23 @@ final class Tracer
         // O(N) 全量复制；cap 裁剪改走 outboxHead 头指针「逻辑丢弃」（零复制），
         // 彻底消除压测/高流量且无 drain 定时器时 outbox 增长引发的数组乒乓
         // （outbox 4095 时旧实现单次 end 高达 ~20µs，是 L4/L5 梯度断层的主因）。
-        foreach ($buffer as $span) {
+        $this->pushToOutbox($buffer);
+        Context::set(self::CTX_BUFFER, []);
+
+        return count($buffer);
+    }
+
+    /**
+     * 把 span 追加进进程级 outbox，并按 max_outbox 丢最旧。
+     *
+     * 入队（{@see enqueueFlush()}）与导出失败回灌（{@see drain()}）共用，
+     * 保证两条路径的裁剪语义完全一致。
+     *
+     * @param array<int, Span> $spans
+     */
+    private function pushToOutbox(array $spans): void
+    {
+        foreach ($spans as $span) {
             self::$outbox[] = $span;
         }
         $cap = $this->maxOutbox();
@@ -226,24 +261,33 @@ final class Tracer
             self::$outbox = array_slice(self::$outbox, self::$outboxHead);
             self::$outboxHead = 0;
         }
-        Context::set(self::CTX_BUFFER, []);
-
-        return count($buffer);
     }
 
     /**
      * 离请求路径导出：把进程级 outbox（及当前缓冲）批量发送到导出器。
      *
      * 由以下时机调用（均不阻塞客户端响应）：
-     *  - Swoole / Workerman 的周期性 tick 定时器；
+     *  - 常驻 worker 的周期性 tick 定时器（见 flush_interval_ms）；
      *  - FPM / CLI 的 register_shutdown_function（响应已发出之后）；
-     *  - worker 优雅停机钩子（GracefulShutdown）。
+     *  - worker 优雅停机钩子（GracefulShutdown，force=true 作最后一次性尝试）。
      *
-     * @return int 成功导出的 span 数（0 = 无数据或失败）
+     * 失败退避：导出器不可达时（Collector 挂了 / 端点配错），每次尝试都要付满
+     * curl 超时（默认 2s）。无节流时 tick 每 2s 一次 = 每个 worker 常年每秒阻塞近 1s，
+     * 且同一异常刷屏日志。故失败后按 export_backoff_ms 指数退避（翻倍至
+     * export_backoff_max_ms 封顶），退避窗口内直接返回 0（不碰网络、不打日志），
+     * span 留在 outbox 等恢复；日志只在首次失败与每 10 次失败时打一条。
+     *
+     * @param bool $force 忽略退避窗口立即尝试（停机前的最后机会、手动命令）
+     *
+     * @return int 成功导出的 span 数（0 = 无数据 / 失败 / 处于退避窗口）
      */
-    public function drain(): int
+    public function drain(bool $force = false): int
     {
         if (!$this->enabled) {
+            return 0;
+        }
+
+        if (!$force && microtime(true) < self::$retryAfter) {
             return 0;
         }
 
@@ -271,20 +315,30 @@ final class Tracer
             self::$outbox = [];
             self::$outboxHead = 0;
             Context::set(self::CTX_BUFFER, []);
+            $this->noteExportSuccess($name, $count);
             $this->dispatch(new SpansFlushed($count, $name, true));
 
             return $count;
         } catch (\Throwable $e) {
-            // 导出失败：保留 outbox 以待下次 drain 重试；仅告警，不阻断业务。
+            // 导出失败：本批 span 回灌 outbox 等下次 drain 重试（清空执行单元缓冲即可，
+            // 直接丢弃会让同步路径 / FPM 下每次失败都静默丢掉整条链路），仅告警、不阻断业务。
+            $this->pushToOutbox($pending);
             Context::set(self::CTX_BUFFER, []);
-            try {
-                logger()->warning('span 导出失败，已保留待重试', [
-                    'exporter' => $name,
-                    'count' => $count,
-                    'exception' => $e,
-                ]);
-            } catch (\Throwable) {
-                // logger 不可用时忽略
+            $suppressed = $this->noteExportFailure();
+            if ($suppressed !== null) {
+                try {
+                    logger()->warning('span 导出失败，已保留待重试', [
+                        'exporter' => $name,
+                        'count' => $count,
+                        'failures' => self::$exportFailures,
+                        // 本次告警之前被退避策略压掉的失败次数（防刷屏，不代表没重试）
+                        'suppressed' => $suppressed,
+                        'retry_after_ms' => self::$backoffWindow,
+                        'exception' => $e,
+                    ]);
+                } catch (\Throwable) {
+                    // logger 不可用时忽略
+                }
             }
             $this->dispatch(new SpansFlushed($count, $name, false, $e->getMessage()));
 
@@ -293,14 +347,116 @@ final class Tracer
     }
 
     /**
-     * 同步导出（兼容测试、显式调用、以及关闭 async 时的请求结束路径）。
-     * 等价于 {@see drain()} 的同步版本，便于在单测中断言导出行为。
+     * 记录一次失败并推进退避窗口。
+     *
+     * @return int|null 应打日志时返回「本次告警前被压掉的失败次数」，应静默时返回 null
+     */
+    private function noteExportFailure(): ?int
+    {
+        ++self::$exportFailures;
+        $base = max(0, (int) ($this->config['export_backoff_ms'] ?? 1000));
+        $max = max($base, (int) ($this->config['export_backoff_max_ms'] ?? 60000));
+        // 指数退避：base × 2^(n-1)，封顶 max（1s→2s→4s…→60s 后每分钟最多再试一次）。
+        self::$backoffWindow = $base === 0
+            ? 0
+            : min($max, (int) ($base * (2 ** min(16, self::$exportFailures - 1))));
+        self::$retryAfter = self::$backoffWindow === 0
+            ? 0.0
+            : microtime(true) + (self::$backoffWindow / 1000);
+
+        // 只在第 1、11、21… 次失败时打日志：Collector 长时间不可达时，
+        // 「60s 窗口 × N worker」也能刷出上万条同一条告警，运维真正要看的是
+        // 「仍在失败 + 已失败多久 + 压掉了多少条」，故其余次数只计数。
+        if (self::$exportFailures > 1 && (self::$exportFailures - 1) % 10 !== 0) {
+            ++self::$suppressedFailures;
+
+            return null;
+        }
+
+        $suppressed = self::$suppressedFailures;
+        self::$suppressedFailures = 0;
+        ++self::$exportWarnings;
+
+        return $suppressed;
+    }
+
+    /** 导出恢复：清零退避状态，曾在失败时才提示一次。 */
+    private function noteExportSuccess(string $exporter, int $count): void
+    {
+        if (self::$exportFailures === 0) {
+            return;
+        }
+
+        $failures = self::$exportFailures;
+        self::$exportFailures = 0;
+        self::$suppressedFailures = 0;
+        self::$backoffWindow = 0;
+        self::$retryAfter = 0.0;
+
+        try {
+            logger()->info('span 导出已恢复', [
+                'exporter' => $exporter,
+                'count' => $count,
+                'failed_attempts' => $failures,
+            ]);
+        } catch (\Throwable) {
+            // logger 不可用时忽略
+        }
+    }
+
+    /**
+     * 连续导出失败次数（0 = 无失败）。用于健康探针与单测断言退避是否生效。
+     */
+    public function exportFailures(): int
+    {
+        return self::$exportFailures;
+    }
+
+    /**
+     * 累计写出的「导出失败」告警条数（远小于 {@see exportFailures()} 即说明退避在压刷屏）。
+     */
+    public function exportWarnings(): int
+    {
+        return self::$exportWarnings;
+    }
+
+    /**
+     * 剩余退避时间（毫秒）；0 表示下一次 drain 会真正尝试导出。
+     */
+    public function exportRetryInMs(): int
+    {
+        $left = self::$retryAfter - microtime(true);
+        if ($left <= 0) {
+            return 0;
+        }
+        // 先 round 再 ceil：retryAfter 是 microtime + 窗口秒数，浮点累加会带 1e-9 级的
+        // 零头，直接 ceil 会把 400ms 窗口报成 401ms（断言/探针都嫌脏）。
+        return (int) ceil(round($left * 1000, 3));
+    }
+
+    /**
+     * 清空退避状态（测试隔离 / 手动强制重试前调用）。与退避状态同为进程级。
+     */
+    public static function resetExportBackoff(): void
+    {
+        self::$exportFailures = 0;
+        self::$suppressedFailures = 0;
+        self::$exportWarnings = 0;
+        self::$backoffWindow = 0;
+        self::$retryAfter = 0.0;
+    }
+
+    /**
+     * 同步导出（兼容测试、显式调用）。
+     * 等价于 {@see drain(force: true)}：显式要求导出时不吃退避窗口的亏，
+     * 便于单测断言导出行为。请求结束路径上的自动导出走 enqueueFlush()，
+     * 那条路才受退避保护。
      *
      * @return int 成功导出的 span 数（0 = 无数据或失败）
      */
     public function flush(): int
     {
-        return $this->drain();
+        return $this->drain(true);
     }
 
     /**
@@ -309,6 +465,16 @@ final class Tracer
     public function buffered(): int
     {
         return count($this->buffer());
+    }
+
+    /**
+     * 待导出总数（当前执行单元缓冲 + 进程级 outbox）。
+     *
+     * 运维口径：Collector 恢复前该数只会涨；涨到 max_outbox 即开始丢最旧的链路。
+     */
+    public function pendingCount(): int
+    {
+        return count($this->buffer()) + max(0, count(self::$outbox) - self::$outboxHead);
     }
 
     /**
@@ -326,6 +492,7 @@ final class Tracer
     {
         self::$outbox = [];
         self::$outboxHead = 0;
+        self::resetExportBackoff();
     }
 
     // ------------------------------------------------------------------

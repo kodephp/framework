@@ -48,7 +48,12 @@ final class TracingFlushCommand extends Command
                 ['service_name', (string) config('observability.tracing.service_name', 'kode-app')],
                 ['sample_ratio', number_format($ratio, 2)],
                 ['flush_on_request_end', config('observability.tracing.flush_on_request_end', true) ? 'true' : 'false'],
+                ['async', config('observability.tracing.async', true) ? 'true' : 'false'],
+                ['flush_interval_ms', (string) config('observability.tracing.flush_interval_ms', 2000)],
                 ['buffered (flush 前)', (string) $bufferedBefore],
+                ['待导出 outbox', (string) $tracer->pendingCount()],
+                ['导出失败（连续/告警）', $tracer->exportFailures() . ' / ' . $tracer->exportWarnings()
+                    . ($tracer->exportRetryInMs() > 0 ? '，退避剩余 ' . $tracer->exportRetryInMs() . 'ms' : '')],
             ],
         );
 
