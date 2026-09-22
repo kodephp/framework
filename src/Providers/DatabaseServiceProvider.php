@@ -6,8 +6,12 @@ namespace Kode\Framework\Providers;
 
 use Kode\Database\Db\Db;
 use Kode\Database\Database\Migrations\Migrator;
+use Kode\Database\Event\EventManager;
+use Kode\Database\Event\SqlEvent;
 use Kode\Framework\Database\Schema;
+use Kode\Framework\Database\SlowQueryLogger;
 use Kode\Framework\Providers\ServiceProvider;
+use Psr\Log\LoggerInterface;
 
 /**
  * 数据库服务提供者（kode/database）
@@ -16,9 +20,13 @@ use Kode\Framework\Providers\ServiceProvider;
  * 启动期按连接名逐一 addConnection()、把 default 设为默认连接，连接懒加载到首次查询。
  * 同时把 Db::class 绑入容器，供 DB 门面 / db() 助手以实例方式代理静态调用；
  * 并注册 Schema 门面与迁移运行器（Migrator）。
+ * database.slow_log.enabled 打开时另挂 {@see SlowQueryLogger} 到 kode/database 的事件总线。
  */
 final class DatabaseServiceProvider extends ServiceProvider
 {
+    /** @var bool 慢查询监听是否已挂上（EventManager 是进程级单例） */
+    private static bool $slowQueryListenerRegistered = false;
+
     public function register(): void
     {
         /** @var array<string, mixed> $config */
@@ -45,6 +53,38 @@ final class DatabaseServiceProvider extends ServiceProvider
         // 迁移运行器：扫描 database/migrations 目录，按文件名时间戳排序执行。
         $this->container->singleton(Migrator::class, fn(): Migrator => new Migrator(
             $this->basePath('database/migrations')
+        ));
+
+        $this->registerSlowQueryLog($config);
+    }
+
+    /**
+     * 慢查询 / 失败查询日志：把 {@see SlowQueryLogger} 挂进 kode/database 的事件总线。
+     *
+     * 只挂一次：EventManager 是进程级单例，同进程二次引导（测试、热重载）会重复注册，
+     * 一条慢查询就被记两遍。
+     *
+     * @param array<string, mixed> $config database 配置
+     */
+    private function registerSlowQueryLog(array $config): void
+    {
+        $slowLog = (array) ($config['slow_log'] ?? []);
+
+        if (!filter_var($slowLog['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            return;
+        }
+
+        if (self::$slowQueryListenerRegistered) {
+            return;
+        }
+        self::$slowQueryListenerRegistered = true;
+
+        $container = $this->container;
+        EventManager::getInstance()->listen(SqlEvent::class, new SlowQueryLogger(
+            static fn (): ?LoggerInterface => $container->has(LoggerInterface::class)
+                ? $container->get(LoggerInterface::class)
+                : null,
+            (float) ($slowLog['threshold'] ?? SlowQueryLogger::DEFAULT_THRESHOLD)
         ));
     }
 }
