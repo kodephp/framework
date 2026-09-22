@@ -34,6 +34,7 @@ return [
     'mqtt' => ['host' => '127.0.0.1', 'port' => 1883],
 
     // 发布订阅总线驱动配置（messaging:consume 通过 pubsub($driver, $config) 读取）。
+    // 消费端驱动取值口径（框架 >= 1.7.7）：--driver > 顶层 default > pubsub.default > memory。
     'pubsub' => [
         'default' => env('MESSAGING_DEFAULT', 'memory'),
         'memory' => ['enabled' => true],

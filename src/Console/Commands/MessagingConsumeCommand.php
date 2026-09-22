@@ -57,10 +57,10 @@ final class MessagingConsumeCommand extends Command
             ? [$channel => $consumers[$channel]]
             : $consumers;
 
-        $driver = (string) ($this->opt('driver') ?? $config['default'] ?? 'memory');
+        $driver = self::busDriver($config, $this->opt('driver'));
 
         if (count($picked) > 1 && $this->canFork()) {
-            return $this->runForked($picked, $driver, $config);
+            return $this->runForked($picked, $driver);
         }
 
         if (count($picked) > 1) {
@@ -72,21 +72,47 @@ final class MessagingConsumeCommand extends Command
                 $first,
             ));
 
-            return $this->consumeOne($first, $picked[$first], $driver, $config);
+            return $this->consumeOne($first, $picked[$first], $driver);
         }
 
         $onlyChannel = array_key_first($picked);
 
-        return $this->consumeOne($onlyChannel, $picked[$onlyChannel], $driver, $config);
+        return $this->consumeOne($onlyChannel, $picked[$onlyChannel], $driver);
+    }
+
+    /**
+     * 消费进程连哪条总线：--driver > messaging.default > messaging.pubsub.default > memory。
+     *
+     * pubsub.default 是生产端 messaging()->pubsub() 实际使用的缺省驱动；此前消费端只认
+     * 顶层 default 再落 'memory'，于是「生产在 redis、消费在 memory」——两边都不报错，
+     * 消息永远收不到。空串一律按「未配」处理（env('MESSAGING_DEFAULT', '') 很常见），
+     * 否则会把 '' 当成驱动名交给 Messaging::pubsub() 去建实例。
+     *
+     * @param array<string, mixed> $config
+     */
+    public static function busDriver(array $config, ?string $option = null): string
+    {
+        $pubsub = (array) ($config['pubsub'] ?? []);
+
+        foreach ([$option, $config['default'] ?? null, $pubsub['default'] ?? null] as $candidate) {
+            $candidate = is_string($candidate) ? trim($candidate) : '';
+
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        return 'memory';
     }
 
     /**
      * 单进程消费一个频道。
      */
-    private function consumeOne(string $channel, string $handlerClass, string $driver, array $config): int
+    private function consumeOne(string $channel, string $handlerClass, string $driver): int
     {
-        $driverConfig = (array) ($config[$driver] ?? []);
-        $bus = Messaging::pubsub($driver === 'memory' ? null : $driver, $driverConfig);
+        // 驱动参数由 Messaging::pubsub() 自己按 pubsub.<driver> 取；此前传的是顶层
+        // $config[$driver]（那是 ws/sse/cluster 的协议段），等于拿集群配置去覆盖总线配置。
+        $bus = Messaging::pubsub($driver);
 
         $handler = $this->resolveHandler($handlerClass);
         $method = $this->pickMethod($handler);
@@ -136,7 +162,7 @@ final class MessagingConsumeCommand extends Command
      *
      * @param array<string, class-string> $picked
      */
-    private function runForked(array $picked, string $driver, array $config): int
+    private function runForked(array $picked, string $driver): int
     {
         $pids = [];
         foreach ($picked as $channel => $handlerClass) {
@@ -147,7 +173,7 @@ final class MessagingConsumeCommand extends Command
                 return 1;
             }
             if ($pid === 0) {
-                exit($this->consumeOne($channel, $handlerClass, $driver, $config));
+                exit($this->consumeOne($channel, $handlerClass, $driver));
             }
             $pids[$pid] = $channel;
         }
