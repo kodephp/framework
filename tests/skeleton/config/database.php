@@ -39,12 +39,6 @@ return [
         ],
     ],
 
-    // 慢查询日志（写入 Monolog）
-    'slow_log' => [
-        'enabled' => true,
-        'threshold' => 0.5,
-    ],
-
     /*
      * 请求级数据库事务（原子化写请求）。
      * 开启后，框架对 POST/PUT/PATCH/DELETE 自动开事务，成功提交、异常回滚，

@@ -18,7 +18,8 @@ use Kode\Http\Routing\Route;
  *  - servers：可选；
  *  - paths：按路由路径聚合，方法 → operation；
  *  - operationId：命名路由优先，否则 `{method}_{slug}`；
- *  - parameters：路径参数（kode/http 的 `{id}` 语法与 OpenAPI 兼容）。
+ *  - parameters：路径参数（kode/http 的 `{id}` 语法与 OpenAPI 兼容）；
+ *  - ignore_paths：命中的路径前缀整条剔除（探针 / 指标等运维端点不算业务 API）。
  *
  * 控制器方法上的 {@see OpenApi} 属性用于补充 summary / description / tags /
  * requestBody / responses / deprecated（由 RouteRegistry 在扫描期登记）。
@@ -59,8 +60,12 @@ final class OpenApiGenerator
         }
 
         $paths = [];
+        $ignored = $this->ignoredPrefixes();
 
         foreach ($this->app->getRouter()->getRoutes() as $route) {
+            if ($this->isIgnored($route->getPattern(), $ignored)) {
+                continue;
+            }
             $this->appendRoute($paths, $route);
         }
 
@@ -138,6 +143,46 @@ final class OpenApiGenerator
         }
 
         return $issues;
+    }
+
+    /**
+     * 读取 config/apidoc.php 的 ignore_paths，归一为「以 / 开头」的前缀列表。
+     *
+     * @return list<string>
+     */
+    private function ignoredPrefixes(): array
+    {
+        $prefixes = [];
+        foreach ((array) ($this->config['ignore_paths'] ?? []) as $prefix) {
+            if (!is_string($prefix)) {
+                continue;
+            }
+            // 先剥尾斜杠再补前导斜杠：'/metrics/' 与 'metrics' 都归一为 '/metrics'；
+            // 归一后为空（'' 或 '/'）的条目跳过，否则会变成「屏蔽全部路由」。
+            $trimmed = rtrim(trim($prefix), '/');
+            if ($trimmed !== '') {
+                $prefixes[] = '/' . ltrim($trimmed, '/');
+            }
+        }
+
+        return $prefixes;
+    }
+
+    /**
+     * 路由是否落在忽略前缀内。按整段匹配：/metrics 屏蔽 /metrics/x，但不屏蔽 /metricstore。
+     *
+     * @param list<string> $prefixes
+     */
+    private function isIgnored(string $pattern, array $prefixes): bool
+    {
+        $path = '/' . ltrim($this->normalizePath($pattern), '/');
+        foreach ($prefixes as $prefix) {
+            if ($path === $prefix || str_starts_with($path, $prefix . '/')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

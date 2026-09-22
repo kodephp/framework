@@ -112,6 +112,29 @@ final class ApiDocTest extends TestCase
         self::assertSame(['get'], $methods);
     }
 
+    public function testIgnorePathsSkipsPrefixedRoutes(): void
+    {
+        // 每项各考一条归一规则：'/metrics/' 去尾斜杠、'health' 补前导斜杠、空串/纯空白不得屏蔽根路由。
+        [$app, , $gen] = $this->makeGenerator(['ignore_paths' => ['/metrics/', '', '   ', 'health']]);
+        $app->route(['GET'], '/', fn() => null);
+        $app->route(['GET'], '/health', fn() => null);
+        $app->route(['GET'], '/health/deep', fn() => null);
+        $app->route(['GET'], '/metrics', fn() => null);
+        $app->route(['GET'], '/metricstore', fn() => null);
+
+        $spec = $gen->generate();
+
+        self::assertSame(['/', '/metricstore'], array_keys($spec['paths']));
+    }
+
+    public function testEmptyIgnorePathsKeepsEveryRoute(): void
+    {
+        [$app, , $gen] = $this->makeGenerator(['ignore_paths' => []]);
+        $app->route(['GET'], '/health', fn() => null);
+
+        self::assertArrayHasKey('/health', $gen->generate()['paths']);
+    }
+
     public function testToJsonIsValidJson(): void
     {
         [, , $gen] = $this->makeGenerator();
@@ -197,8 +220,19 @@ final class ApiDocTest extends TestCase
         self::assertArrayHasKey('paths', $decoded);
     }
 
-    public function testSwaggerUiEndpoint(): void
+    public function testOpenApiJsonHonoursConfiguredIgnorePaths(): void
     {
+        $body = $this->get('/docs/openapi.json')->body();
+        $decoded = json_decode($body, true);
+
+        // tests/skeleton/config/apidoc.php 声明 ignore_paths = ['/health', '/metrics', '/ping']：
+        // 端点照常服务（见 HealthEndpointTest），但不再淹没业务 API。
+        self::assertArrayNotHasKey('/health', $decoded['paths']);
+        self::assertArrayNotHasKey('/ping', $decoded['paths']);
+        self::assertArrayHasKey('/users', $decoded['paths']);
+    }
+
+    public function testSwaggerUiEndpoint(): void    {
         $res = $this->get('/docs');
         $res->assertStatus(200);
 

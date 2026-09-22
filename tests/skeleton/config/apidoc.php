@@ -28,14 +28,12 @@ return [
     'json_path' => '/docs/openapi.json', // spec JSON
     'ui_path' => '/docs',               // Swagger UI 浏览页
 
-    // Swagger UI 渲染方式：'cdn'（默认，引用 unpkg 静态资源）
-    'ui' => 'cdn',
-
     // 是否对 UI 与 JSON 端点做基础保护：'none' | 'token' | 'local'
     'protect' => 'none',
     'token' => env('API_DOC_TOKEN', ''),
 
-    // 排除的路径前缀（如健康检查、指标），不计入文档
+    // 忽略的路径前缀（如探针 / 指标端点），整段匹配：屏蔽 /metrics 与 /metrics/x，不伤 /metricstore。
+    // 端点本身照常服务，只是不进文档（框架 >= 1.7.4）。
     'ignore_paths' => ['/health', '/metrics', '/ping'],
 
     // apidoc:generate 命令默认写出路径（相对项目根；可用 --output 覆盖）

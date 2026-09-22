@@ -23,9 +23,6 @@ return [
     // 是否强制所有 API 路径带版本前缀（缺省返回 400 提示）
     'prefix_required' => (bool) env('API_VERSIONING_REQUIRED', true),
 
-    // 当前版本（用于文档 / 默认路由组标注）
-    'current_version' => env('API_VERSION', 'v1'),
-
     // 受支持的版本列表（不在列表的版本前缀返回 404）
     'supported_versions' => array_filter(array_map(
         'trim',
