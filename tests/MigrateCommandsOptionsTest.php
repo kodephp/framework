@@ -278,7 +278,11 @@ final class MigrateCommandsOptionsTest extends TestCase
             'migrate 零' => [MigrateCommand::class, ['--step=0']],
             'migrate 负数' => [MigrateCommand::class, ['--step=-1']],
             'migrate 只写标志没给值' => [MigrateCommand::class, ['--step']],
+            // 实测踩过：'numeric' 放过小数值，(int) 再把它截成 1 —— 撤的不是说好的那几个批次
+            'migrate 小数' => [MigrateCommand::class, ['--step=1.5']],
+            'migrate 科学计数' => [MigrateCommand::class, ['--step=1e3']],
             'rollback 非数字' => [MigrateRollbackCommand::class, ['--step=abc']],
+            'rollback 小数' => [MigrateRollbackCommand::class, ['--step=2.5']],
             'rollback 只写标志没给值' => [MigrateRollbackCommand::class, ['--step']],
         ];
     }

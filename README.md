@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.8.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.8.1`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.8.0          PHP version:8.3.33
+Kode Framework version:1.8.1          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -166,11 +166,12 @@ final class MigrateCommand extends Command
   名单取自 `Kernel::globalFlagNames()`（kode/console ≥ 4.1），命令侧不抄表。
 - `--help` / `-h` 出帮助页并返回 0：问「怎么写」的词绝不该被执行（内核只在命令名那个位置认它们）。
 - 需要自己判断时用 `unknownOptions(self::OPTS)`，返回形如 `['--dry-run']` 的未知项。
+- 取值规则要写 `'integer'`，不能只写 `'numeric'`：`--step=1.5` 过得了 `'numeric'`，
+  再被 `(int)` 截成 1，动的就不是用户说的那几个批次（v1.8.1 修正，实测踩到）。
 
 `migrate` / `migrate:rollback` / `migrate:reset` 已挂上门禁，`--step` 的取值也先校验再动库
 （判据是 `Input::provided('step')`：没写就是不限步数，写了就必须是 ≥1 的整数——
-`(int) 'abc'` 是 0 步、光秃秃的 `--step` 会落回默认值，两者都跟字面意思相反）。
-
+`(int) 'abc'` 是 0 步，跟字面意思相反；光秃秃的 `--step` 由 console 自己报「需要一个值」并退 2）。
 
 ---
 
@@ -227,7 +228,7 @@ final class MigrateCommand extends Command
 
 ## 版本
 
-- 当前版本：**[v1.8.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.8.1](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

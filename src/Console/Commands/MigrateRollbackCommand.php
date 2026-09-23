@@ -34,11 +34,11 @@ final class MigrateRollbackCommand extends Command
         }
 
         // 默认回滚最近一批；显式写了 --step 就必须是个 ≥1 的整数。
-        // 不能拿 opt() 的默认值兜底：`--step=abc` 强转是 0、光秃秃的 `--step` 落回 1，
-        // 都不是用户写下的那个意思。
+        // 不能拿 opt() 的默认值兜底，也不能只判 'numeric'：
+        // `(int) 'abc'` 是 0、`--step=1.5` 截成 1，撤掉的都不是用户说的那几个批次。
         if ($this->input->provided('step')) {
             $given = $this->opt('step');
-            if (!$this->input->validate('step', $given, ['numeric', 'min:1'])) {
+            if (!$this->input->validate('step', $given, ['integer', 'min:1'])) {
                 $this->error('--step 需要 ≥1 的整数，收到: ' . var_export($given, true));
 
                 return 1;
