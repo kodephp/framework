@@ -58,7 +58,15 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '1.7.8';
+    public const VERSION = '1.7.9';
+
+    /**
+     * 获取本包版本号（与 composer.json 的 version 交叉核对，漏改由 VersionGuardTest 拦下）。
+     */
+    public static function version(): string
+    {
+        return self::VERSION;
+    }
 
     /**
      * 能力 → 期望 ServiceProvider 映射（用于启动自检）。

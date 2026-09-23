@@ -28,5 +28,6 @@ final class VersionGuardTest extends TestCase
             Application::VERSION,
             'src/Application.php 的 VERSION 与 composer.json 的 version 已漂移，发版时两处要一起改'
         );
+        self::assertSame(Application::VERSION, Application::version(), 'version() 必须回读同一常量');
     }
 }
