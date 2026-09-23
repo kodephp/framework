@@ -18,16 +18,36 @@ use Kode\Framework\Console\Command;
 #[AsCommand(
     name: 'migrate:rollback',
     description: '回滚最近一批（或指定批次）迁移',
-    usage: 'migrate:rollback [--step=N]',
+    usage: 'migrate:rollback {--step=}',
 )]
 final class MigrateRollbackCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['step'];
+
     protected function handle(): int
     {
+        // 回滚是这批命令里最贵的写操作：`migrate:rollback --pretend` 被静默忽略
+        // 就是「以为在看回放、实际把表撤了」
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
+        // 默认回滚最近一批；显式写了 --step 就必须是个 ≥1 的整数。
+        // 不能拿 opt() 的默认值兜底：`--step=abc` 强转是 0、光秃秃的 `--step` 落回 1，
+        // 都不是用户写下的那个意思。
+        if ($this->input->provided('step')) {
+            $given = $this->opt('step');
+            if (!$this->input->validate('step', $given, ['numeric', 'min:1'])) {
+                $this->error('--step 需要 ≥1 的整数，收到: ' . var_export($given, true));
+
+                return 1;
+            }
+        }
+        $step = (int) $this->opt('step', 1);
+
         /** @var Migrator $migrator */
         $migrator = resolve(Migrator::class);
-
-        $step = (int) $this->opt('step', 1);
 
         $rolled = $migrator->rollback($step);
 

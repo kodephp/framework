@@ -19,7 +19,7 @@
         "psr"
     ],
     "license": "MIT",
-    "version": "1.7.9",
+    "version": "1.8.0",
     "repositories": [
         {
             "type": "git",
@@ -43,10 +43,10 @@
         "kode/aop": "*",
         "kode/attributes": "*",
         "kode/cache": "*",
-        "kode/console": "*",
+        "kode/console": "^4.1",
         "kode/context": "*",
         "kode/core": "*",
-        "kode/database": "^1.20",
+        "kode/database": "^1.23",
         "kode/di": "*",
         "kode/event": "*",
         "kode/exception": "*",

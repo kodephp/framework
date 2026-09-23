@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.7.9`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.8.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.7.9          PHP version:8.3.33
+Kode Framework version:1.8.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -133,6 +133,44 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 > `graceful_shutdown_timeout`（骨架默认 30s）——空闲服务按 Ctrl+C 也要等满 30s。
 > 框架在 v1.2.0 补了「快速排空」看门狗：收到信号后一旦在途请求归零就立即结束事件循环，
 > 空闲退出从「等满宽限」压到 ≤0.5s；真有在途请求时仍走完整宽限，不丢请求。
+
+---
+
+## 写命令：未知选项不再静默忽略（v1.8.0）
+
+kode/console 对不认识的名字一律照收（记进 `flags()`/`options()`）却不执行，
+于是 `php kode migrate:reset --pretend` 会「以为传了 dry-run、实际把全库回滚了」，退出码还是 0。
+写库/破坏性命令的基类自查门禁：
+
+```php
+#[AsCommand(name: 'migrate', description: '执行待运行的数据库迁移', usage: 'migrate {--step=} {--pretend}')]
+final class MigrateCommand extends Command
+{
+    private const OPTS = ['step', 'pretend'];
+
+    protected function handle(): int
+    {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;                       // 未识别的选项 → 打印用法行 + 退出 1
+        }
+        // ...
+    }
+}
+```
+
+- `usage` 要写成 console 的签名 DSL（`{--step=}`），不是 `[--step=N]`：方括号形式解析不出任何选项，
+  `--step 2` 的空格写法会把 `2` 泄成位置参数，`kode help migrate` 也列不出选项。
+- 名单**逐字**比对：console 只把短别名归一成长名，`--dry_run` 与 `--dry-run` 是两个键，
+  命令读不到前者，所以它算未知（替用户「顺手容错」等于把同一类误会再放行一次）。
+- 内核自己消费的全局标志（`-q` / `-v` / `-vvv` / `--no-ansi` / `--ansi`）自动放行，
+  名单取自 `Kernel::globalFlagNames()`（kode/console ≥ 4.1），命令侧不抄表。
+- `--help` / `-h` 出帮助页并返回 0：问「怎么写」的词绝不该被执行（内核只在命令名那个位置认它们）。
+- 需要自己判断时用 `unknownOptions(self::OPTS)`，返回形如 `['--dry-run']` 的未知项。
+
+`migrate` / `migrate:rollback` / `migrate:reset` 已挂上门禁，`--step` 的取值也先校验再动库
+（判据是 `Input::provided('step')`：没写就是不限步数，写了就必须是 ≥1 的整数——
+`(int) 'abc'` 是 0 步、光秃秃的 `--step` 会落回默认值，两者都跟字面意思相反）。
+
 
 ---
 
@@ -189,7 +227,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ## 版本
 
-- 当前版本：**[v1.7.9](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.8.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
