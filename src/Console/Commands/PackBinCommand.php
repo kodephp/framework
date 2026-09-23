@@ -25,7 +25,7 @@ use Kode\Framework\Packaging\Packager;
 #[AsCommand(
     name: 'pack:bin',
     description: '把 PHAR 与静态 PHP 运行时拼成独立可执行二进制（仅 x86_64 Linux）',
-    usage: 'pack:bin {--json:bool} {--sfx= : 直接指定 micro.sfx 文件（跳过下载与平台门禁）} {--php= : 覆盖内嵌 PHP 版本}',
+    usage: 'pack:bin {--json:bool : 输出 JSON，便于脚本消费} {--sfx= : 直接指定 micro.sfx 文件（跳过下载与平台门禁）} {--php= : 覆盖内嵌 PHP 版本}',
 )]
 class PackBinCommand extends Command
 {

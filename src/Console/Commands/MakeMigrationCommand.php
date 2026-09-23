@@ -17,7 +17,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 #[AsCommand(
     name: 'make:migration',
     description: '生成数据库迁移（database/migrations）',
-    usage: 'make:migration {name} {--force}',
+    usage: 'make:migration {name : 迁移名，如 create_users_table} {--force : 覆盖已存在的文件}',
 )]
 final class MakeMigrationCommand extends Command
 {

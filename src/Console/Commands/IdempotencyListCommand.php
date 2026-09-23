@@ -19,7 +19,7 @@ use Kode\Framework\Idempotency\IdempotencyManager;
 #[AsCommand(
     name: 'idempotency:list',
     description: '列出当前记录的幂等键（键 / 剩余 TTL）',
-    usage: 'idempotency:list {--json}',
+    usage: 'idempotency:list {--json : 输出 JSON，便于脚本消费}',
 )]
 final class IdempotencyListCommand extends Command
 {

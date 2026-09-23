@@ -20,7 +20,7 @@ use Kode\Framework\Health\HealthChecker;
 #[AsCommand(
     name: 'health:check',
     description: '运行健康检查并打印各组件状态（degraded 时以非零码退出）',
-    usage: 'health:check {--ready} {--json}',
+    usage: 'health:check {--ready : 只跑就绪探针那组检查（含外部依赖）} {--json : 输出 JSON，便于脚本消费}',
 )]
 final class HealthCheckCommand extends Command
 {

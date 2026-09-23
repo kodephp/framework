@@ -38,7 +38,7 @@ use Kode\Framework\Plugin\PluginDiscoverer;
 #[AsCommand(
     name: 'make:plugin',
     description: '生成插件骨架（plugins/<Name>Plugin.php + plugin.json）',
-    usage: 'make:plugin {name} {--force} {--register:bool} {--json:bool}',
+    usage: 'make:plugin {name : 插件名，同时就是 /api/<name> 的前缀} {--force : 覆盖已存在的文件} {--register:bool : 顺带登记进 config/plugins.php} {--json:bool : 输出 JSON，便于脚本消费}',
 )]
 final class MakePluginCommand extends Command
 {

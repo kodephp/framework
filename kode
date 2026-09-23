@@ -95,7 +95,7 @@ match ($command) {
     'reload'       => (new KodeReloadCommand())->run($args),
     'restart'      => (new KodeRestartCommand())->run($args),
     'cron'         => (new KodeCronCommand())->run($args),
-    'schedule:list' => (new KodeScheduleListCommand())->run($args),
+    'schedule:list' => (new KodeConsoleCommand())->run(array_merge(['schedule:list'], $args)),
     'route:list'   => (new KodeConsoleCommand())->run(array_merge(['route:list'], $args)),
     'process:list' => (new KodeConsoleCommand())->run(array_merge(['process:list'], $args)),
     'process:check' => (new KodeConsoleCommand())->run(array_merge(['process:check'], $args)),
@@ -905,44 +905,6 @@ final class KodeCronCommand extends KodeScheduleCommand
     }
 }
 
-final class KodeScheduleListCommand extends KodeScheduleCommand
-{
-    public function run(array $args): void
-    {
-        try {
-            $root = getcwd();
-            $app = Application::make($root);
-        } catch (\Throwable $e) {
-            KodeCli::fail($e);
-        }
-
-        $tasks = $this->scanner()->scan($this->taskDirs($app));
-
-        if ($tasks === []) {
-            echo "未发现任何 #[Cron] 任务。\n";
-            exit(0);
-        }
-
-        $enabled = count(array_filter($tasks, static fn ($t) => $t->enabled));
-        printf("共 %d 条任务（启用 %d）：\n\n", count($tasks), $enabled);
-        printf("  %-22s %-16s %-10s %-12s %s\n", 'NAME', 'EXPRESSION', 'SOURCE', 'MODE', 'TARGET');
-        printf("  %s\n", str_repeat('-', 78));
-
-        foreach ($tasks as $t) {
-            printf(
-                "  %-22s %-16s %-10s %-12s %s\n",
-                $t->name,
-                $t->expression,
-                $t->source,
-                $t->cluster ? 'cluster' : 'local',
-                ($t->enabled ? '' : '(disabled) ') . $t->target(),
-            );
-        }
-
-        exit(0);
-    }
-}
-
 // ============================================================
 // 状态检查：对标 workerman status
 // ============================================================
@@ -1021,7 +983,7 @@ final class KodeCli
         echo "                                  （默认前台显示启动界面，-d 进守护；--rolling 则零停机滚动 worker）\n";
         echo "  kode status [--port P] [--pid=N] 查看服务状态（--port 定位多实例，--pid 看单进程）\n";
         echo "  kode cron                     常驻运行 #[Cron] 定时任务（Ctrl+C 优雅退出）\n";
-        echo "  kode schedule:list            列出所有已发现的 #[Cron] 定时任务\n";
+        echo "  kode schedule:list [--tenant=ID]  列出已发现的 #[Cron] 任务（含下次运行/最近执行）\n";
         echo "  kode console <args...>         透传执行控制台命令\n";
         echo "  kode migrate                   执行待运行的数据库迁移\n";
         echo "  kode migrate:rollback          回滚最近一批迁移\n";

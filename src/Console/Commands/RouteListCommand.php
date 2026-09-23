@@ -26,7 +26,7 @@ use Kode\Http\Routing\Route;
 #[AsCommand(
     name: 'route:list',
     description: '列出全部路由（按分组/来源聚合，支持过滤与字段选择）',
-    usage: 'route:list {--compact} {--group=} {--method=} {--source=} {--rate-limit} {--columns=}',
+    usage: 'route:list {--compact : 只出「分组 → 数量」摘要} {--group= : 只看该分组} {--method= : 只看该 HTTP 方法} {--source= : 只看该来源标签，如 app:admin、plugin:<name>} {--rate-limit : 只看挂了限流的路由} {--columns= : 逗号分隔的列，取 method/uri/name/middleware/source/action/ratelimit}',
 )]
 final class RouteListCommand extends Command
 {

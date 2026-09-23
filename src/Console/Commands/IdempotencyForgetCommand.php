@@ -18,7 +18,7 @@ use Kode\Framework\Idempotency\IdempotencyManager;
 #[AsCommand(
     name: 'idempotency:forget',
     description: '删除指定幂等键（重试放行 / 运维清理）',
-    usage: 'idempotency:forget {key}',
+    usage: 'idempotency:forget {key : 要作废的幂等键}',
 )]
 final class IdempotencyForgetCommand extends Command
 {

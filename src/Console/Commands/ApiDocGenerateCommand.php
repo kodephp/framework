@@ -23,7 +23,7 @@ use Kode\Framework\Console\Command;
 #[AsCommand(
     name: 'apidoc:generate',
     description: '扫描路由与 #[OpenApi] 属性，生成 openapi.json 文档文件',
-    usage: 'apidoc:generate {--output=} {--check} {--no-write}',
+    usage: 'apidoc:generate {--output= : 产物路径，默认取 config(apidoc.output)} {--check : 只校验完整性，不写文件} {--no-write : 把 spec 打到标准输出，不落盘}',
 )]
 final class ApiDocGenerateCommand extends Command
 {

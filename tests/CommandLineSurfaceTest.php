@@ -247,6 +247,83 @@ final class CommandLineSurfaceTest extends TestCase
         self::assertGreaterThan(0, $checked, "{$class} 碰了容器却一处校验都没有");
     }
 
+    /**
+     * 每个选项/参数都要带说明。
+     *
+     * `kode help <cmd>` 能列出一排空描述等于没说：用户还是得回源码看 `opt('x')` 拿去干什么。
+     * 说明同时是 OPTS 一致性的第二道保险 —— 描述写歪了会让签名解析出别的名，那边的断言立刻红。
+     */
+    #[DataProvider('commandClasses')]
+    public function test_every_token_is_documented(string $class): void
+    {
+        $signature = $this->signatureOf($class);
+        $blank = [];
+
+        foreach ($signature->getOptions() as $option) {
+            if (trim($option->description) === '') {
+                $blank[] = '--' . $option->name;
+            }
+        }
+
+        foreach ($signature->getArguments() as $argument) {
+            if (trim($argument->description) === '') {
+                $blank[] = '{' . $argument->name . '}';
+            }
+        }
+
+        self::assertSame([], $blank, "{$class} 有选项没写说明：" . implode(', ', $blank));
+    }
+
+    /**
+     * 启动器（`kode` 脚本）不得给控制台命令留第二份实现。
+     *
+     * 实测踩到：`kode schedule:list --tenant=abc` 退出 0、照样列出全部租户 —— 启动器里那份
+     * KodeScheduleListCommand 连 `$args` 都不读，选项与门禁全在控制台那份里。
+     * 一个命令名两份实现必然漂移，而且漂的永远是「没有门禁」的那份。
+     */
+    public function test_the_launcher_does_not_shadow_console_commands(): void
+    {
+        $cli = (string) file_get_contents(\dirname(__DIR__) . '/kode');
+        self::assertMatchesRegularExpression('/match \(\$command\) \{/', $cli,
+            '启动器的分发结构变了，这条守卫要跟着改');
+
+        $names = [];
+
+        foreach (glob(__DIR__ . '/../src/Console/Commands/*.php') ?: [] as $file) {
+            $class = 'Kode\\Framework\\Console\\Commands\\' . basename($file, '.php');
+
+            if (!class_exists($class)) {
+                continue;
+            }
+
+            $attrs = (new ReflectionClass($class))->getAttributes(AsCommand::class);
+
+            if ($attrs !== []) {
+                $names[] = $attrs[0]->newInstance()->name;
+            }
+        }
+
+        self::assertGreaterThan(20, count($names), '命令名清单本身漏了');
+
+        preg_match_all("/^ +'([a-zA-Z0-9:._-]+)'.*=>(.*)$/m", $cli, $arms);
+        self::assertNotEmpty($arms[1], '分发表一条分支都没抓到，正则该跟着结构改');
+
+        $local = [];
+
+        foreach ($arms[1] as $i => $arm) {
+            if (!str_contains($arms[2][$i], 'KodeConsoleCommand')) {
+                $local[] = $arm;
+            }
+        }
+
+        $shadow = array_values(array_intersect($local, $names));
+
+        self::assertSame([], $shadow,
+            '启动器自己实现了这些与控制台命令同名的分支：' . implode(', ', $shadow)
+            . '；改成转发 (new KodeConsoleCommand())->run(array_merge([\'<名>\'], $args))，'
+            . '否则选项面与门禁只存在于被影子盖住的那份里');
+    }
+
     // ---- 2. 三种书写形式都要落到选项上 --------------------------------------
 
     #[DataProvider('commandClasses')]

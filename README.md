@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.9.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.10.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.9.0          PHP version:8.3.33
+Kode Framework version:1.10.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.9.0        PHP version:8.3.33
+Kode Framework version:1.10.0        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -136,7 +136,7 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ---
 
-## 命令的「选项面」：未知选项、错取值、空格写法（v1.8.0 → v1.9.0）
+## 命令的「选项面」：未知选项、错取值、空格写法（v1.8.0 → v1.10.0）
 
 kode/console 对不认识的名字一律照收（记进 `flags()`/`options()`）却不执行，
 于是 `php kode migrate:reset --pretend` 会「以为传了 dry-run、实际把全库回滚了」，退出码还是 0。
@@ -191,6 +191,18 @@ final class MigrateCommand extends Command
 2. `OPTS` ≡ 签名解析出的选项 ≡ 代码里 `opt()/flag()/provided()/checkXOptions()` 真正读到的名字；
 3. 每个带值选项的 `--x value`、`--x=value`、`--flag` 三种写法都必须落到值上；
 4. 守卫是 `handle()` 的第一条语句，且所有数值校验排在 `resolve()`（命令开始连库/拉起 worker 的分界）之前。
+
+**v1.10.0：`kode schedule:list` 不再是第二条实现。** 启动器 `kode` 脚本里另有一份
+`KodeScheduleListCommand`，`run(array $args)` 从头到尾没读过 `$args` —— 于是
+`kode schedule:list --tenant=abc` 退 0、照样列出全部租户，而控制台那份（有门禁、会报错）被同名分支挡在外面。
+现在快捷入口一律转发给控制台，那条重复实现删掉了；不变量由 `test_the_launcher_does_not_shadow_console_commands()`
+盯着：启动器分发表里凡是不走 `KodeConsoleCommand` 的分支，命令名都不许与控制台命令重名。
+
+同一版把每条 usage 的选项都补上了说明：`kode help route:list` 此前列得出 `--group=GROUP` 却全是空描述，
+等于把「这个选项干什么」推回源码。现在 `--compact`、`--columns=`、`queue:work` 的十个数值项都有口径，
+并由 `test_every_token_is_documented()` 保证不再退化成空白。
+
+自己加命令时照着抄那一段就够了；漏掉的形态由上面四条替你兜住。
 
 `migrate` / `migrate:rollback` / `migrate:reset` 的 `--step` 现在先校验再动库：没写就是不限步数，
 写了就必须是 ≥1 的整数（`(int) 'abc'` 是 0 步，跟字面意思相反；
@@ -254,7 +266,7 @@ final class MigrateCommand extends Command
 
 ## 版本
 
-- 当前版本：**[v1.9.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.10.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

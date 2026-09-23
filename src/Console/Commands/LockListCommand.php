@@ -20,7 +20,7 @@ use Kode\Framework\Lock\LockManager;
 #[AsCommand(
     name: 'lock:list',
     description: '列出当前持有的锁（键 / owner / 剩余 TTL）',
-    usage: 'lock:list {--json}',
+    usage: 'lock:list {--json : 输出 JSON，便于脚本消费}',
 )]
 final class LockListCommand extends Command
 {

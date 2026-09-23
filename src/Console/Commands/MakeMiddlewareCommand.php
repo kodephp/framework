@@ -17,7 +17,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 #[AsCommand(
     name: 'make:middleware',
     description: '生成 HTTP 中间件（app/http/middleware）',
-    usage: 'make:middleware {name} {--force}',
+    usage: 'make:middleware {name : 生成的类名} {--force : 覆盖已存在的文件}',
 )]
 final class MakeMiddlewareCommand extends Command
 {

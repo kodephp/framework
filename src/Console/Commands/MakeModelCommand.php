@@ -17,7 +17,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 #[AsCommand(
     name: 'make:model',
     description: '生成数据模型（app/models）',
-    usage: 'make:model {name} {--force}',
+    usage: 'make:model {name : 生成的类名} {--force : 覆盖已存在的文件}',
 )]
 final class MakeModelCommand extends Command
 {

@@ -17,7 +17,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 #[AsCommand(
     name: 'make:command',
     description: '生成控制台命令（app/console）',
-    usage: 'make:command {name} {--force}',
+    usage: 'make:command {name : 生成的类名} {--force : 覆盖已存在的文件}',
 )]
 final class MakeCommandCommand extends Command
 {

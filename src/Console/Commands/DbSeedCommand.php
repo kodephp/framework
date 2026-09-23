@@ -17,7 +17,7 @@ use Kode\Framework\Database\Seeder;
 #[AsCommand(
     name: 'db:seed',
     description: '运行数据库填充（database/seeders）',
-    usage: 'db:seed {name? : 种子器类名，默认 DatabaseSeeder} {--class=}',
+    usage: 'db:seed {name? : 种子器类名，默认 DatabaseSeeder} {--class= : 同上，两者都给时以 --class 为准}',
 )]
 final class DbSeedCommand extends Command
 {

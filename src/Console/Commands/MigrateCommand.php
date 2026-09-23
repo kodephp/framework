@@ -19,7 +19,7 @@ use Kode\Framework\Console\Command;
 #[AsCommand(
     name: 'migrate',
     description: '执行待运行的数据库迁移',
-    usage: 'migrate {--step=} {--pretend}',
+    usage: 'migrate {--step= : 本次最多跑几个迁移，默认全部} {--pretend : 预演，真跑一遍后整体回滚（MySQL 的 DDL 隐式提交，别用它预演）}',
 )]
 final class MigrateCommand extends Command
 {

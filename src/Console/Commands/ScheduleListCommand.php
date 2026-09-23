@@ -22,7 +22,7 @@ use Kode\Framework\Scheduling\ScheduleDispatcher;
 #[AsCommand(
     name: 'schedule:list',
     description: '列出全部已注册定时任务（含下次运行与最近执行状态）',
-    usage: 'schedule:list {--tenant= : 仅列该租户的任务}',
+    usage: 'schedule:list {--tenant= : 仅列该租户的任务（租户 id，整数）}',
 )]
 final class ScheduleListCommand extends Command
 {

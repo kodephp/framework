@@ -28,7 +28,7 @@ use Kode\Framework\Packaging\Packager;
 #[AsCommand(
     name: 'pack:info',
     description: '展示打包配置与平台就绪状态（只读）',
-    usage: 'pack:info {--json:bool}',
+    usage: 'pack:info {--json:bool : 输出 JSON，便于脚本消费}',
 )]
 final class PackInfoCommand extends Command
 {

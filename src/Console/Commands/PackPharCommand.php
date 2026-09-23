@@ -27,7 +27,7 @@ use Kode\Framework\Packaging\Packager;
 #[AsCommand(
     name: 'pack:phar',
     description: '把整个系统打成 PHAR 单文件（需 php -d phar.readonly=0）',
-    usage: 'pack:phar {--json:bool} {--list:bool} {--name= : 产物文件名，默认取 config/packaging.php 的 phar_filename}',
+    usage: 'pack:phar {--json:bool : 输出 JSON，便于脚本消费} {--list:bool : 干跑，只列进包清单不构建} {--name= : 产物文件名，默认取 config/packaging.php 的 phar_filename}',
 )]
 class PackPharCommand extends Command
 {

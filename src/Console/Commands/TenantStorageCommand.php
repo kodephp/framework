@@ -20,7 +20,7 @@ use Kode\Framework\Tenant\Storage\TenantStorageManager;
 #[AsCommand(
     name: 'tenant:storage:list',
     description: '列出多租户存储隔离策略与租户连接映射',
-    usage: 'tenant:storage:list {--tenant= : 仅看该租户} {--json}',
+    usage: 'tenant:storage:list {--tenant= : 仅看该租户} {--json : 输出 JSON，便于脚本消费}',
 )]
 final class TenantStorageCommand extends Command
 {

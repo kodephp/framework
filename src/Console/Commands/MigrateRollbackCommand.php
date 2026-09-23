@@ -18,7 +18,7 @@ use Kode\Framework\Console\Command;
 #[AsCommand(
     name: 'migrate:rollback',
     description: '回滚最近一批（或指定批次）迁移',
-    usage: 'migrate:rollback {--step=}',
+    usage: 'migrate:rollback {--step= : 回滚最近几个批次，默认 1}',
 )]
 final class MigrateRollbackCommand extends Command
 {

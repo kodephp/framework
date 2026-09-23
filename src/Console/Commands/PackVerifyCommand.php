@@ -24,7 +24,7 @@ use Kode\Framework\Packaging\Packager;
 #[AsCommand(
     name: 'pack:verify',
     description: '校验打包产物完整性与入口链（发版前门禁）',
-    usage: 'pack:verify {file? : 产物路径，默认 build/kode.phar} {--json:bool}',
+    usage: 'pack:verify {file? : 产物路径，默认 build/kode.phar} {--json:bool : 输出 JSON，便于脚本消费}',
 )]
 class PackVerifyCommand extends Command
 {

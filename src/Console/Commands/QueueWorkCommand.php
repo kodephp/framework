@@ -33,7 +33,7 @@ use Psr\Container\ContainerInterface;
 #[AsCommand(
     name: 'queue:work',
     description: '启动队列消费进程（常驻；--once 跑空即退）',
-    usage: 'queue:work {--connection=} {--queue=} {--name=} {--tries=} {--timeout=} {--sleep=} {--max-jobs=} {--max-time=} {--memory=} {--once}',
+    usage: 'queue:work {--connection= : 队列连接名，默认取 config(queue.default)} {--queue= : 逗号分隔的队列名，靠前的优先消费} {--name= : worker 名称，写进进程标题与状态表} {--tries= : 单个任务最多尝试次数，0 为不限} {--timeout= : 单次取任务的阻塞秒数} {--sleep= : 队列跑空时的睡眠秒数} {--max-jobs= : 处理满多少个任务后退出，0 为不限} {--max-time= : 运行满多少秒后退出，0 为不限} {--memory= : 进程内存上限 MB，-1 为不限} {--once : 把队列跑空就退出，用于 CI 与一次性补数}',
 )]
 final class QueueWorkCommand extends Command
 {

@@ -17,7 +17,7 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
 #[AsCommand(
     name: 'make:controller',
     description: '生成 HTTP 控制器（app/http/controllers）',
-    usage: 'make:controller {name} {--force}',
+    usage: 'make:controller {name : 生成的类名} {--force : 覆盖已存在的文件}',
 )]
 final class MakeControllerCommand extends Command
 {
