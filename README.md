@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.10.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.10.1`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.10.0          PHP version:8.3.33
+Kode Framework version:1.10.1          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.10.0        PHP version:8.3.33
+Kode Framework version:1.10.1        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -210,6 +210,25 @@ final class MigrateCommand extends Command
 `queue:work` 同理先验完 `--tries/--max-jobs/--max-time/--memory/--sleep/--timeout` 再进消费循环
 （`--tries=abc` 强转是 0 = 不限制重试，`--sleep=abc` 强转是 0 = 空转打满 CPU；`--memory` 允许 `-1` 表示不限）。
 
+---
+
+## 测试基类 `Testing\TestCase`：`independentApp` 现在真的重建（v1.10.1）
+
+`bootApp()` 把「已启动的应用」缓存在 `private static $app`，`tearDown()` 负责清空——
+所以 `protected bool $independentApp = true` 的语义是「我要一个按我自己的 `configOverrides`
+重新引导的实例」。v1.10.1 之前它只重建 `kode/core` 单例，随后撞上实例缓存就直接把**陈应用**
+返回，开关等于没读；更糟的是那份陈应用的地基刚被自己抽掉，下一次 `resolve()` 直接抛
+「服务容器尚未启动」。踩中它的条件是跨类顺序（前一个类覆盖了 `tearDown()` 却没回父类），
+所以症状是随机的、单跑永远绿——消费方项目真实踩过一次，见其
+`tests/TestCaseHygieneGateTest.php` 静态门禁。
+
+现在 `independentApp=true` 会同时丢掉缓存并重建核心单例，两者不再只做一半；
+不变量由 `tests/TestingTestCaseIsolationTest.php` 盯住：默认复用、置位必换实例、
+且重建后的实例发一次真实请求能解析控制器。
+
+下游写法不变：覆盖 `setUp()/tearDown()` 时**必须调用父类实现**，配置互斥的测试类照旧置
+`independentApp = true`。用法详见文档站 `docs/testing.md`。
+
 
 ---
 
@@ -266,7 +285,7 @@ final class MigrateCommand extends Command
 
 ## 版本
 
-- 当前版本：**[v1.10.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.10.1](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

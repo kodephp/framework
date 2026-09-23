@@ -58,7 +58,8 @@ abstract class TestCase extends BaseTestCase
      * 是否要求「独立的进程级应用实例」（默认 false：跨测试复用首次 boot 的应用，
      * 保留 static 注册型路由惯例——如 FrameworkSmoke 用 static 标记只注册一次路由）。
      *
-     * 需要不同于既有实例的配置时置 true（如 apidoc 显式开/关），boot 前会重建 kode/core 单例。
+     * 需要不同于既有实例的配置时置 true（如 apidoc 显式开/关）：boot 前既重建
+     * kode/core 单例、也丢掉本类的实例缓存，两者缺一都会把陈应用交回去。
      */
     protected bool $independentApp = false;
 
@@ -70,6 +71,11 @@ abstract class TestCase extends BaseTestCase
     protected function bootApp(string $basePath = ''): Application
     {
         if ($this->independentApp) {
+            // 缓存和 kode/core 单例必须一起处理：只清单例、再把缓存里那个由旧单例引导的
+            // Application 交回去，等于把还在使用中的地基抽掉——下一次 resolve() 直接抛
+            // 「服务容器尚未启动」。而这件事只在跨类的执行顺序里发生（前一个类没清缓存），
+            // 单跑那个类永远复现不了。开关认了就要真认。
+            self::$app = null;
             $this->resetCoreAppSingleton();
         }
 
