@@ -20,12 +20,19 @@ use Kode\Framework\Tenant\Storage\TenantStorageManager;
 #[AsCommand(
     name: 'tenant:storage:list',
     description: '列出多租户存储隔离策略与租户连接映射',
-    usage: 'tenant:storage:list [--tenant=NAME] [--json]',
+    usage: 'tenant:storage:list {--tenant= : 仅看该租户} {--json}',
 )]
 final class TenantStorageCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['tenant', 'json'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         /** @var array<string, mixed> $tenant */
         $tenant = (array) config('tenant', []);
         /** @var array<string, mixed> $storage */

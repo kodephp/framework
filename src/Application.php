@@ -58,7 +58,7 @@ final class Application
     /**
      * 框架版本（与 composer.json 保持一致；用于 /health 探针与日志）。
      */
-    public const VERSION = '1.8.1';
+    public const VERSION = '1.9.0';
 
     /**
      * 获取本包版本号（与 composer.json 的 version 交叉核对，漏改由 VersionGuardTest 拦下）。

@@ -25,15 +25,22 @@ use Psr\Container\ContainerInterface;
 #[AsCommand(
     name: 'messaging:consume',
     description: '启动消息消费进程（订阅 messaging.consumers 配置的频道）',
-    usage: 'messaging:consume [--channel=] [--driver=]',
+    usage: 'messaging:consume {--channel= : 仅订阅该频道} {--driver= : 覆盖 messaging 总线驱动}',
 )]
 final class MessagingConsumeCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['channel', 'driver'];
+
     /** @var list<string> 处理器约定方法（按优先级） */
     private const array HANDLER_METHODS = ['handle', '__invoke', 'run', 'execute'];
 
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         /** @var array<string, mixed> $config */
         $config = (array) config('messaging', []);
         Messaging::configure($config);

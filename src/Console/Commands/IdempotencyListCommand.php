@@ -19,12 +19,19 @@ use Kode\Framework\Idempotency\IdempotencyManager;
 #[AsCommand(
     name: 'idempotency:list',
     description: '列出当前记录的幂等键（键 / 剩余 TTL）',
-    usage: 'idempotency:list [--json]',
+    usage: 'idempotency:list {--json}',
 )]
 final class IdempotencyListCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['json'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         if (!app()->container->bound(IdempotencyManager::class)) {
             $this->warn('幂等子系统未接线（IdempotencyServiceProvider 缺失）。');
 

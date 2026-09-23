@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.8.1`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.9.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.8.1          PHP version:8.3.33
+Kode Framework version:1.9.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.6.2        PHP version:8.3.33
+Kode Framework version:1.9.0        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -136,11 +136,11 @@ workerman 在 master 里收割子进程并记录退出码，而本框架 master 
 
 ---
 
-## 写命令：未知选项不再静默忽略（v1.8.0）
+## 命令的「选项面」：未知选项、错取值、空格写法（v1.8.0 → v1.9.0）
 
 kode/console 对不认识的名字一律照收（记进 `flags()`/`options()`）却不执行，
 于是 `php kode migrate:reset --pretend` 会「以为传了 dry-run、实际把全库回滚了」，退出码还是 0。
-写库/破坏性命令的基类自查门禁：
+基类给了自查门禁：
 
 ```php
 #[AsCommand(name: 'migrate', description: '执行待运行的数据库迁移', usage: 'migrate {--step=} {--pretend}')]
@@ -153,6 +153,11 @@ final class MigrateCommand extends Command
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
             return $bad;                       // 未识别的选项 → 打印用法行 + 退出 1
         }
+
+        // 整数用 checkIntOptions，允许小数的秒数用 checkNumOptions
+        if (($bad = $this->checkIntOptions(['step'], 1)) !== null) {
+            return $bad;                       // --step=abc / 1.5 / 0 / -2 → 报错退出 1
+        }
         // ...
     }
 }
@@ -164,14 +169,35 @@ final class MigrateCommand extends Command
   命令读不到前者，所以它算未知（替用户「顺手容错」等于把同一类误会再放行一次）。
 - 内核自己消费的全局标志（`-q` / `-v` / `-vvv` / `--no-ansi` / `--ansi`）自动放行，
   名单取自 `Kernel::globalFlagNames()`（kode/console ≥ 4.1），命令侧不抄表。
-- `--help` / `-h` 出帮助页并返回 0：问「怎么写」的词绝不该被执行（内核只在命令名那个位置认它们）。
+- `--help` / `-h` 出帮助页并返回 0：问「怎么写」的词绝不该被执行。走 `Kode\Console\Kernel` 时
+  内核在 `fire()` **之前**就按 `flags('help')` 打了帮助页（命令体根本不运行），基类这条分支
+  只服务直接调 `fire()` 的嵌入方（单测、进程内调用）。
 - 需要自己判断时用 `unknownOptions(self::OPTS)`，返回形如 `['--dry-run']` 的未知项。
 - 取值规则要写 `'integer'`，不能只写 `'numeric'`：`--step=1.5` 过得了 `'numeric'`，
   再被 `(int)` 截成 1，动的就不是用户说的那几个批次（v1.8.1 修正，实测踩到）。
+- 判据是 `Input::provided()` 而不是「取到的值是否为 null」：签名里带了默认值的选项
+  （`{--limit=20}`）没传也躺在 `options()` 里，两种情况混为一谈就等于永不校验。
 
-`migrate` / `migrate:rollback` / `migrate:reset` 已挂上门禁，`--step` 的取值也先校验再动库
-（判据是 `Input::provided('step')`：没写就是不限步数，写了就必须是 ≥1 的整数——
-`(int) 'abc'` 是 0 步，跟字面意思相反；光秃秃的 `--step` 由 console 自己报「需要一个值」并退 2）。
+**v1.9.0：这条门禁铺满全部内置命令。** 起因是实测 `kode route:list --group api` 只列出 0 条路由
+（`--group=api` 才对）——根因不是某个命令写漏了，而是 `usage` 大面积停在惰性的方括号形式：
+签名解不出选项 → 守卫无从比对 → 空格写法的值泄成位置参数 → `opt('group')` 读到布尔 `true`。
+`src/Console/Commands/` 下 30 个命令逐个补齐 `OPTS` + 守卫，`usage` 全部改写为签名 DSL，
+顺带补上一直读却从未声明的 `queue:work --timeout`。
+
+覆盖方式不是给每个命令写一份用例，而是 `tests/CommandLineSurfaceTest.php` 用 glob 自动发现命令类，
+把四条不变量钉在所有命令上（新加的命令自动进表）：
+
+1. `usage` 里禁止出现 `[--`；
+2. `OPTS` ≡ 签名解析出的选项 ≡ 代码里 `opt()/flag()/provided()/checkXOptions()` 真正读到的名字；
+3. 每个带值选项的 `--x value`、`--x=value`、`--flag` 三种写法都必须落到值上；
+4. 守卫是 `handle()` 的第一条语句，且所有数值校验排在 `resolve()`（命令开始连库/拉起 worker 的分界）之前。
+
+`migrate` / `migrate:rollback` / `migrate:reset` 的 `--step` 现在先校验再动库：没写就是不限步数，
+写了就必须是 ≥1 的整数（`(int) 'abc'` 是 0 步，跟字面意思相反；
+光秃秃的 `--step` 由 console 自己报「需要一个值」并退 2）。
+`queue:work` 同理先验完 `--tries/--max-jobs/--max-time/--memory/--sleep/--timeout` 再进消费循环
+（`--tries=abc` 强转是 0 = 不限制重试，`--sleep=abc` 强转是 0 = 空转打满 CPU；`--memory` 允许 `-1` 表示不限）。
+
 
 ---
 
@@ -228,7 +254,7 @@ final class MigrateCommand extends Command
 
 ## 版本
 
-- 当前版本：**[v1.8.1](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.9.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

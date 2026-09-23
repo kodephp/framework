@@ -33,19 +33,12 @@ final class MigrateCommand extends Command
             return $bad;
         }
 
-        $step = null;
-        if ($this->input->provided('step')) {
-            // 没写 --step 才是「不限步数」；写了就必须是个 ≥1 的整数。
-            // 靠强转兜底会反向：`(int) 'abc'` 是 0（一步都不跑），`--step=1.5` 过 'numeric'
-            // 再被截成 1 —— 跑掉的都不是用户说的那一步数。
-            $given = $this->opt('step');
-            if (!$this->input->validate('step', $given, ['integer', 'min:1'])) {
-                $this->error('--step 需要 ≥1 的整数，收到: ' . var_export($given, true));
-
-                return 1;
-            }
-            $step = (int) $given;
+        // 没写 --step 才是「不限步数」；写了就必须是个 ≥1 的整数
+        if (($bad = $this->checkIntOptions(['step'], 1)) !== null) {
+            return $bad;
         }
+
+        $step = $this->input->provided('step') ? (int) $this->opt('step') : null;
         $pretend = $this->flag('pretend');
 
         /** @var Migrator $migrator */

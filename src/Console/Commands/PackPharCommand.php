@@ -31,8 +31,15 @@ use Kode\Framework\Packaging\Packager;
 )]
 class PackPharCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['json', 'list', 'name'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         $packer = Packager::driver();
 
         if ($this->flag('list')) {

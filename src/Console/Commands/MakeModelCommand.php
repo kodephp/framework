@@ -23,6 +23,9 @@ final class MakeModelCommand extends Command
 {
     use GeneratesFiles;
 
+    /** 本命令认识的选项 */
+    private const OPTS = ['force'];
+
     public function __construct(string $basePath = '')
     {
         parent::__construct();
@@ -31,6 +34,10 @@ final class MakeModelCommand extends Command
 
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         $raw = (string) $this->arg(0, '');
         if ($raw === '') {
             $this->error('请提供模型名：make:model User');

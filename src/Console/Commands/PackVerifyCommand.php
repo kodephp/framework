@@ -28,8 +28,15 @@ use Kode\Framework\Packaging\Packager;
 )]
 class PackVerifyCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['json'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         $packer = Packager::driver();
 
         $target = $this->arg('file');

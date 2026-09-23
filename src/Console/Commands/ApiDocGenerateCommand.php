@@ -27,6 +27,9 @@ use Kode\Framework\Console\Command;
 )]
 final class ApiDocGenerateCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['output', 'check', 'no-write'];
+
     /** 项目根（测试可注入）。 */
     protected string $basePath = '';
 
@@ -38,6 +41,10 @@ final class ApiDocGenerateCommand extends Command
 
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         /** @var OpenApiGenerator $generator */
         $generator = resolve(OpenApiGenerator::class);
         $spec = $generator->generate();

@@ -20,12 +20,19 @@ use Kode\Framework\Lock\LockManager;
 #[AsCommand(
     name: 'lock:list',
     description: '列出当前持有的锁（键 / owner / 剩余 TTL）',
-    usage: 'lock:list [--json]',
+    usage: 'lock:list {--json}',
 )]
 final class LockListCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['json'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         if (!app()->container->bound(LockManager::class)) {
             $this->warn('锁子系统未接线（LockServiceProvider 缺失）。');
 

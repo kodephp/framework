@@ -22,16 +22,28 @@ use Kode\Framework\Scheduling\ScheduleDispatcher;
 #[AsCommand(
     name: 'schedule:list',
     description: '列出全部已注册定时任务（含下次运行与最近执行状态）',
-    usage: 'schedule:list [--tenant=0]',
+    usage: 'schedule:list {--tenant= : 仅列该租户的任务}',
 )]
 final class ScheduleListCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['tenant'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
+        // 在建调度器之前先验参：--tenant=abc 静默变成「看全部租户」是最难发现的那种错
+        if (($bad = $this->checkIntOptions(['tenant'], 0)) !== null) {
+            return $bad;
+        }
+
         /** @var ScheduleDispatcher $dispatcher */
         $dispatcher = resolve(ScheduleDispatcher::class);
 
-        $tenantId = (int) ($this->opt('tenant') ?? 0);
+        $tenantId = $this->input->provided('tenant') ? (int) $this->opt('tenant') : 0;
         $tasks = $tenantId > 0 ? $dispatcher->byTenant($tenantId) : $dispatcher->registered();
 
         if ($tasks === []) {

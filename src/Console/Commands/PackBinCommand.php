@@ -29,8 +29,15 @@ use Kode\Framework\Packaging\Packager;
 )]
 class PackBinCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['json', 'sfx', 'php'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         $packer = Packager::driver();
 
         // 前置检查（不阻断）：先把平台不支持的原因打印出来，再让 toBin() 判定，

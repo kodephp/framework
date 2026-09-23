@@ -18,12 +18,19 @@ use Kode\Framework\Idempotency\IdempotencyManager;
 #[AsCommand(
     name: 'idempotency:forget',
     description: '删除指定幂等键（重试放行 / 运维清理）',
-    usage: 'idempotency:forget <key>',
+    usage: 'idempotency:forget {key}',
 )]
 final class IdempotencyForgetCommand extends Command
 {
+    /** 本命令不接选项；传任何选项都当误用报掉 */
+    private const OPTS = [];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         if (!app()->container->bound(IdempotencyManager::class)) {
             $this->warn('幂等子系统未接线（IdempotencyServiceProvider 缺失）。');
 

@@ -20,12 +20,19 @@ use Kode\Framework\Health\HealthChecker;
 #[AsCommand(
     name: 'health:check',
     description: '运行健康检查并打印各组件状态（degraded 时以非零码退出）',
-    usage: 'health:check [--ready] [--json]',
+    usage: 'health:check {--ready} {--json}',
 )]
 final class HealthCheckCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['ready', 'json'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         if (!app()->container->bound(HealthChecker::class)) {
             $this->warn('健康子系统未接线（HealthServiceProvider 缺失）。');
 

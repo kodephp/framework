@@ -115,9 +115,10 @@ abstract class Command extends BaseCommand
      * }
      * ```
      *
-     * 唯一的例外是 `--help` / `-h`：按惯例它们是「问怎么写」，绝不该被执行，
-     * 而 console 的内核只在命令名那个位置认这两个 token（`kode -h migrate`），
-     * 落到命令里就会变成「未知选项 → 静默忽略 → 迁移照跑」。这里就地出帮助页并返回 0。
+     * 唯一的例外是 `--help` / `-h`：按惯例它们是「问怎么写」，绝不该被执行。
+     * 经 Kode\Console\Kernel::boot() 进来的调用已经在 fire() 之前按 flags('help') 出帮助页并退 0
+     * （实测：命令体根本不执行），所以这条分支只服务直接调 fire() 的嵌入方（单测、进程内调用）——
+     * 对它们来说「未知选项 → 报错退出」会把一次正常的求助变成失败。
      *
      * @param list<string> $known 本命令认识的选项名
      */
@@ -139,6 +140,54 @@ abstract class Command extends BaseCommand
         $this->line('  本命令支持的用法: ' . $this->usage);
 
         return 1;
+    }
+
+    /**
+     * 校验用户显式传进来的整数选项：任一不合法就报错并返回退出码 1，全合法返回 null。
+     *
+     * 判据是 `Input::provided()`，不是「取到的值是否为 null」：签名里写了默认值的选项
+     * （`{--limit=20}`）没传也会躺进 options()，两种情况得区分开 —— 没传就走默认，传了就必须合法。
+     *
+     * 规则用 `'integer'` 而非 `'numeric'`：后者放过 `1.5` 与 `1e3`，再被 `(int)` 截成别的数，
+     * 执行的就不是用户说的那个值（v1.8.1 在 `migrate:rollback --step=1.5` 上真的撤错了一个批次）。
+     *
+     * @param list<string> $names
+     */
+    protected function checkIntOptions(array $names, int $min = 0): ?int
+    {
+        return $this->checkNumbers($names, $min, 'integer', '整数');
+    }
+
+    /**
+     * 同 {@see checkIntOptions()}，但允许小数（睡眠秒数、超时秒数这类）。
+     *
+     * @param list<string> $names
+     */
+    protected function checkNumOptions(array $names, int|float $min = 0): ?int
+    {
+        return $this->checkNumbers($names, $min, 'numeric', '数值');
+    }
+
+    /**
+     * @param list<string> $names
+     */
+    private function checkNumbers(array $names, int|float $min, string $rule, string $label): ?int
+    {
+        foreach ($names as $name) {
+            if (!$this->input->provided($name)) {
+                continue;
+            }
+
+            $given = $this->opt($name);
+
+            if (!$this->input->validate($name, $given, [$rule, 'min:' . $min])) {
+                $this->error("--{$name} 需要 ≥{$min} 的{$label}，收到: " . var_export($given, true));
+
+                return 1;
+            }
+        }
+
+        return null;
     }
 
     // ---- 输出快捷 ----

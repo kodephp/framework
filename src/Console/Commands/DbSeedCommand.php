@@ -17,10 +17,13 @@ use Kode\Framework\Database\Seeder;
 #[AsCommand(
     name: 'db:seed',
     description: '运行数据库填充（database/seeders）',
-    usage: 'db:seed {--class=}',
+    usage: 'db:seed {name? : 种子器类名，默认 DatabaseSeeder} {--class=}',
 )]
 final class DbSeedCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['class'];
+
     /** 项目根（测试可注入）。 */
     protected string $basePath = '';
 
@@ -32,6 +35,10 @@ final class DbSeedCommand extends Command
 
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         $root = $this->basePath !== '' ? rtrim($this->basePath, '/') : getcwd();
         $seedersDir = $root . '/database/seeders';
 

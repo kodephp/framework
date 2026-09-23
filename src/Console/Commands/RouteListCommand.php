@@ -26,10 +26,13 @@ use Kode\Http\Routing\Route;
 #[AsCommand(
     name: 'route:list',
     description: '列出全部路由（按分组/来源聚合，支持过滤与字段选择）',
-    usage: 'route:list [--compact] [--group=NAME] [--method=METHOD] [--source=LABEL] [--rate-limit] [--columns=method,uri,name]',
+    usage: 'route:list {--compact} {--group=} {--method=} {--source=} {--rate-limit} {--columns=}',
 )]
 final class RouteListCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['compact', 'group', 'method', 'source', 'rate-limit', 'columns'];
+
     /** 可用列及其取值回调。 */
     private const COLUMNS = [
         'method'     => '方法',
@@ -43,6 +46,10 @@ final class RouteListCommand extends Command
 
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         /** @var App $app */
         $app = resolve(App::class);
         /** @var RouteRegistry $registry */

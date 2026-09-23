@@ -22,16 +22,25 @@ use Kode\Framework\Console\Command;
 #[AsCommand(
     name: 'audit:recent',
     description: '查看最近的审计记录（开发期排查）',
-    usage: 'audit:recent [--limit=N] [--action=事件名]',
+    usage: 'audit:recent {--limit= : 条数，默认 20} {--action= : 仅含该事件名的记录}',
 )]
 final class AuditRecentCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['limit', 'action'];
+
     protected function handle(): int
     {
-        $limit = (int) ($this->opt('limit') ?? 20);
-        if ($limit <= 0) {
-            $limit = 20;
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
         }
+
+        // --limit 一旦写了就必须是 ≥1 的整数：静默把 `abc` 变成 20 是在猜用户的意思
+        if (($bad = $this->checkIntOptions(['limit'], 1)) !== null) {
+            return $bad;
+        }
+
+        $limit = $this->input->provided('limit') ? (int) $this->opt('limit') : 20;
         $action = $this->opt('action');
 
         $path = (string) (config('logging.path') ?? storage_path('logs/app.log'));

@@ -23,8 +23,15 @@ use Kode\Framework\Observability\Trace\Tracer;
 )]
 final class TracingFlushCommand extends Command
 {
+    /** 本命令不接选项；传任何选项都当误用报掉 */
+    private const OPTS = [];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         if (!app()->container->bound(Tracer::class)) {
             $this->warn('分布式追踪未启用（config/observability.php 的 tracing.enabled = true 才会接线）。');
 

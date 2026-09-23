@@ -22,8 +22,15 @@ use Kode\Framework\ServiceDiscovery\ServiceDiscovery;
 )]
 final class ServiceListCommand extends Command
 {
+    /** 本命令不接选项；传任何选项都当误用报掉 */
+    private const OPTS = [];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         if (!app()->container->bound(ServiceDiscovery::class)) {
             $this->warn('服务发现未启用（config/services.php 的 services.enabled = true 才会接线）。');
 

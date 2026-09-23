@@ -33,16 +33,9 @@ final class MigrateRollbackCommand extends Command
             return $bad;
         }
 
-        // 默认回滚最近一批；显式写了 --step 就必须是个 ≥1 的整数。
-        // 不能拿 opt() 的默认值兜底，也不能只判 'numeric'：
-        // `(int) 'abc'` 是 0、`--step=1.5` 截成 1，撤掉的都不是用户说的那几个批次。
-        if ($this->input->provided('step')) {
-            $given = $this->opt('step');
-            if (!$this->input->validate('step', $given, ['integer', 'min:1'])) {
-                $this->error('--step 需要 ≥1 的整数，收到: ' . var_export($given, true));
-
-                return 1;
-            }
+        // 默认回滚最近一批；显式写了 --step 就必须是个 ≥1 的整数
+        if (($bad = $this->checkIntOptions(['step'], 1)) !== null) {
+            return $bad;
         }
         $step = (int) $this->opt('step', 1);
 

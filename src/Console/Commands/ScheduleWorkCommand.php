@@ -20,16 +20,28 @@ use Kode\Framework\Scheduling\ScheduleDispatcher;
 #[AsCommand(
     name: 'schedule:work',
     description: '常驻调度守护（持续轮询，SIGTERM 优雅退出）',
-    usage: 'schedule:work [--interval=60]',
+    usage: 'schedule:work {--interval= : 轮询秒数，默认 60}',
 )]
 final class ScheduleWorkCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['interval'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
+        // keepAlive 自身拒绝 <1 秒，但那是抛在守护循环里的异常；在这里拦住，报错才说得上话
+        if (($bad = $this->checkIntOptions(['interval'], 1)) !== null) {
+            return $bad;
+        }
+
         /** @var ScheduleDispatcher $dispatcher */
         $dispatcher = resolve(ScheduleDispatcher::class);
 
-        $interval = (int) ($this->opt('interval') ?? 60);
+        $interval = $this->input->provided('interval') ? (int) $this->opt('interval') : 60;
 
         $this->info(sprintf('调度守护启动（间隔 %ds；Ctrl+C / SIGTERM 优雅退出）', $interval));
 

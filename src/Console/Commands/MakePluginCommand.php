@@ -42,6 +42,9 @@ use Kode\Framework\Plugin\PluginDiscoverer;
 )]
 final class MakePluginCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['force', 'register', 'json'];
+
     use GeneratesFiles;
 
     public function __construct(string $basePath = '')
@@ -52,6 +55,10 @@ final class MakePluginCommand extends Command
 
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         $raw = (string) $this->arg('name', '');
         if ($raw === '') {
             $this->error('请提供插件名：make:plugin Blog');

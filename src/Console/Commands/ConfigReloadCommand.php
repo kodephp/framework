@@ -23,8 +23,15 @@ use Kode\Framework\Console\Command;
 )]
 final class ConfigReloadCommand extends Command
 {
+    /** 本命令不接选项；传任何选项都当误用报掉 */
+    private const OPTS = [];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
         if (!app()->container->bound(ConfigCenter::class)) {
             $this->warn('配置中心未启用（config/center.php 的 center.enabled = true 才会接线）。');
 

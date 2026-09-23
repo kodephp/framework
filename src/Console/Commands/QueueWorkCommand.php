@@ -33,12 +33,34 @@ use Psr\Container\ContainerInterface;
 #[AsCommand(
     name: 'queue:work',
     description: '启动队列消费进程（常驻；--once 跑空即退）',
-    usage: 'queue:work [--connection=] [--queue=default] [--name=worker] [--tries=0] [--sleep=1] [--max-jobs=0] [--max-time=0] [--memory=128] [--once]',
+    usage: 'queue:work {--connection=} {--queue=} {--name=} {--tries=} {--timeout=} {--sleep=} {--max-jobs=} {--max-time=} {--memory=} {--once}',
 )]
 final class QueueWorkCommand extends Command
 {
+    /** 本命令认识的选项 */
+    private const OPTS = ['connection', 'queue', 'name', 'tries', 'timeout', 'sleep', 'max-jobs', 'max-time', 'memory', 'once'];
+
     protected function handle(): int
     {
+        if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
+            return $bad;
+        }
+
+        // 数值项先全部验完再启动消费循环：`--tries=abc` 强转是 0（=不限制重试），
+        // `--sleep=abc` 强转是 0（=不睡眠、空转打满 CPU），跑起来的都不是用户说的那个参数。
+        // --memory 允许 -1（不限），--sleep/--timeout 是秒数、可以带小数。
+        if (($bad = $this->checkIntOptions(['tries', 'max-jobs', 'max-time'], 0)) !== null) {
+            return $bad;
+        }
+
+        if (($bad = $this->checkIntOptions(['memory'], -1)) !== null) {
+            return $bad;
+        }
+
+        if (($bad = $this->checkNumOptions(['sleep', 'timeout'], 0)) !== null) {
+            return $bad;
+        }
+
         /** @var QueueManager $manager */
         $manager = resolve(QueueManager::class);
 
