@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.10.1`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.10.2`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,8 +26,8 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.6.2","php":"8.3.33","env":"local","time":0.52}
-# time = health check 方法执行耗时（毫秒）
+# {"status":"ok","service":"kode-app","version":"1.10.2","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
+# time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
 > **为什么多了 `--repository`**：`kode/skeleton` 与 `kode/framework` 目前都**未提交到 Packagist**，
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.10.1          PHP version:8.3.33
+Kode Framework version:1.10.2          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.10.1        PHP version:8.3.33
+Kode Framework version:1.10.2        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -229,6 +229,26 @@ final class MigrateCommand extends Command
 下游写法不变：覆盖 `setUp()/tearDown()` 时**必须调用父类实现**，配置互斥的测试类照旧置
 `independentApp = true`。用法详见文档站 `docs/testing.md`。
 
+---
+
+## `/health` 的 `status` 现在随探针（v1.10.2）
+
+同一次探测，框架此前给出三个答案：`/health/ready` 在有依赖 `error` 时返回 503、
+`kode console health:check` 以退出码 1 结束、`/health` 的 `status` 却**硬写着 `ok`**——
+而它恰是巡检面板与人工 `curl` 读的那一条。于是一个 DB 已经断线的实例，明细里写着
+`"db":"error"`，顶层仍然是一片绿。
+
+现在 `status` 与 `HealthChecker::check()['healthy']` 同源（任一 `error` 即 `degraded`）。
+HTTP 状态码**刻意保持 200**：`/health` 是报表不是闸门——摘流量看 `/health/ready`，
+重启判定看 `/health/live`；把聚合视图也做成 503，会让「拿 `/health` 当 `livenessProbe`」的
+应用在一个外部依赖抖动时开始无意义重启，而重启修不好对端的数据库。
+
+消费方需要注意的只有一件事：如果此前有代码 `if ($health['status'] === 'ok')` 当成「永远成立」
+在写（例如启动自检脚本以此判断「端点活着」），改成看 HTTP 码或 `/health/live`。
+不变量由 `tests/HealthExposureTest.php` 盯住：探针红 → `status:degraded` 且仍 200，
+探针绿 → `status:ok`（正对照，防止把 `degraded` 写死）。用法详见文档站 `docs/lifecycle.md`、
+`docs/robustness.md`。
+
 
 ---
 
@@ -285,7 +305,7 @@ final class MigrateCommand extends Command
 
 ## 版本
 
-- 当前版本：**[v1.10.1](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.10.2](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

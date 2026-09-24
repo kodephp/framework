@@ -918,6 +918,10 @@ final class HttpServiceProvider extends ServiceProvider
      *  - /health/ready：readiness（就绪）。经 {@see HealthChecker} 探测所有启用组件（db/cache/queue/
      *    自定义）；任一 error 即 503，使流量在依赖未就绪时被摘除（k8s readinessProbe）。
      *  - /health：聚合视图，返回版本/PHP/环境/时间 + components 明细，便于人工巡检。
+     *    `status` 与探针同源（任一 error 即 `degraded`），但 HTTP **恒为 200**：这条是给人和
+     *    监控面板读的报表，不是闸门。摘流看 /health/ready（503），重启判定看 /health/live；
+     *    把它也做成 503 会让「把 /health 当 livenessProbe」的老应用在一个外部依赖抖动时
+     *    开始无意义重启（重启修不好对端的 DB）。
      *  - /ping：极简 pong，轻量探活。
      */
     private function registerHealthEndpoints(App $app): void
@@ -952,7 +956,10 @@ final class HttpServiceProvider extends ServiceProvider
             $result = $this->healthChecker()->check();
 
             return Resp::json([
-                'status'      => 'ok',
+                // 状态必须反映探针：此前恒为 ok，DB 断了 components 里写着 error 而顶层仍是 ok，
+                // 巡检面板读 status 的那只眼睛永远绿着。HTTP 码保持 200 —— 摘流量看 /health/ready，
+                // 这里翻红只用于「让人知道」，不参与编排判定（详见方法注释）。
+                'status'      => $result['healthy'] ? 'ok' : 'degraded',
                 'service'     => Application::getInstance()?->config()->get('app.name', 'kode-app'),
                 'version'     => Application::VERSION,
                 'php'         => PHP_VERSION,
