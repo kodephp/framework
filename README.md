@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.11.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.11.1`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,7 +26,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.11.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
+# {"status":"ok","service":"kode-app","version":"1.11.1","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
 # time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.11.0          PHP version:8.3.33
+Kode Framework version:1.11.1          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.11.0        PHP version:8.3.33
+Kode Framework version:1.11.1        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -277,6 +277,34 @@ HTTP 状态码**刻意保持 200**：`/health` 是报表不是闸门——摘流
 
 ---
 
+## `pruneRunHistory()`：删失败不再回 0，越界天数不再被夹（v1.11.1）
+
+`ScheduleDispatcher::pruneRunHistory($days)` 是「按天数删 `kode_schedule_runs` 行」的破坏性入口
+（后台的清理按钮与定时清理任务都落在它上面）。旧实现有两处会把坏消息说成好消息：
+
+- `catch (\Throwable) { return 0; }`：删失败与「没有过期数据」压成同一个 `0`。调用方印的是
+  「已清理 0 条（超过 N 天）」并记一条 info 日志——于是保留期早已不工作，而所有人都以为在工作。
+  更糟的是这个 `catch` 里还要调 `logger()`，容器未启动的进程（清理任务常在容器之外跑）会先抛
+  「服务容器尚未启动」，把真正的数据库原因顶掉，排障方向整个错一位。
+- 天数直接拼进 SQL：`NOW() - INTERVAL '-5 days'` 就是 `NOW() + 5 天`，也就是一次「把整张执行
+  历史删光」的无告警批量删除，而返回值看着完全正常。
+
+现在的口径：`$days` 必须是 `1..3650` 的整数，越界抛 `InvalidArgumentException`（消息里带着收到的值），
+判定在**碰到数据库之前**完成；cutoff 仍由数据库算（`make_interval(days => ?)`，绑定参数），
+删除失败原样上抛 `\RuntimeException` 并把数据库异常挂在 `previous` 上。
+
+消费方注意：以前「拿 0 当成功」的调用要显式接异常——清理失败要么让任务失败去报警，要么自己
+catch 后记下真实原因，别再退回「已清理 0 条」。可接受区间写死在 `ScheduleDispatcher::MAX_RETENTION_DAYS`
+（上限）与 `1`（下限）；应用侧若要更严的用户口径（比如最少 7 天）应在自己那层判完再传进来，
+本包不会替你夹。
+不变量由 `tests/SchedulePruneRunsTest.php` 盯住：越界值一律在任何摸库之前拒（连接被刻意指向
+死地址，摸了就是另一种异常）；删除失败必须带着数据库的原始原因抛出，且异常链里不许出现
+「服务容器尚未启动」；正向对照在一次性临时库（`kode_zz_prune_*`，跑完即删）里真建表、真插一行
+40 天前的记录，断言「只删超期那一行、返回条数是真的」。
+
+
+---
+
 ## 为什么选它
 
 | 痛点 | 本框架的做法 |
@@ -330,7 +358,7 @@ HTTP 状态码**刻意保持 200**：`/health` 是报表不是闸门——摘流
 
 ## 版本
 
-- 当前版本：**[v1.11.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.11.1](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

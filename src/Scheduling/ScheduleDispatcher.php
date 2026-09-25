@@ -46,6 +46,9 @@ final class ScheduleDispatcher
     /** 任务级互斥锁（单节点内防并发）。 */
     private array $locks = [];
 
+    /** 执行历史保留天数上限（超过它就不再是「保留期」而是一次误传把历史留成几十年）。 */
+    public const MAX_RETENTION_DAYS = 3650;
+
     /**
      * @param \Closure(string):object|null $resolver 解析任务类实例的回调；
      *        默认用全局 resolve()（走框架容器，支持构造/属性注入）。测试可注入闭包。
@@ -558,22 +561,39 @@ final class ScheduleDispatcher
     /**
      * 清理过期执行历史（保留最近 N 天，防止表膨胀）。
      *
-     * @param int $retentionDays 保留天数
-     * @return int 清理的记录数
+     * 这是一次按天数删行的**破坏性**操作，所以两条口径都写死在这里：
+     *  - 天数越界一律抛，绝不静默夹取：旧写法把 0/负数拼进 SQL，
+     *    `NOW() - INTERVAL '-5 days'` 就是 `NOW() + 5 天`，一次手误清空整张执行历史；
+     *  - 删除失败原样上抛（带原始原因）：旧写法 `catch (Throwable) { return 0; }`
+     *    把「一条都没删成」和「没有过期数据」压成同一个 0，而调用方印的是「已清理 0 条」，
+     *    保留期是否真的在生效从此无人知晓。失败也不在此处写日志器——
+     *    清理常在容器之外跑，`logger()` 自己抛的「服务容器尚未启动」会把真因顶掉。
+     *
+     * 天数改为绑定参数（cutoff 仍由数据库算，避免应用与库的时区/时钟各说一遍）。
+     *
+     * @param int $retentionDays 保留天数（1..3650）
+     * @return int 实际删除的记录数
+     * @throws InvalidArgumentException 天数越界
+     * @throws \RuntimeException 删除失败（previous 为数据库原始异常）
      */
     public function pruneRunHistory(int $retentionDays = 30): int
     {
+        if ($retentionDays < 1 || $retentionDays > self::MAX_RETENTION_DAYS) {
+            throw new \InvalidArgumentException(
+                '调度执行历史的保留天数必须是 1..' . self::MAX_RETENTION_DAYS
+                . " 之间的整数，收到的是 {$retentionDays} 天"
+            );
+        }
+
         try {
             $db = \Kode\Database\Db\Db::class;
-            $deleted = $db::delete(
-                "DELETE FROM kode_schedule_runs WHERE started_at < NOW() - INTERVAL '{$retentionDays} days'"
+
+            return (int) $db::delete(
+                'DELETE FROM kode_schedule_runs WHERE started_at < NOW() - make_interval(days => ?)',
+                [$retentionDays]
             );
-
-            return (int) $deleted;
         } catch (\Throwable $e) {
-            logger()->warning("清理调度执行历史失败：" . $e->getMessage());
-
-            return 0;
+            throw new \RuntimeException('清理调度执行历史失败：' . $e->getMessage(), 0, $e);
         }
     }
 
