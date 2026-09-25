@@ -403,7 +403,7 @@ final class ProcessManager
      *  - 多个常驻槽位：fork 一个监督子进程各自跑一个 Daemon，主进程监督这些监督子进程。
      *
      * @param array<string, mixed> $options 预留（已不再自行管理 pid_file，交由 Daemon）
-     * @throws \RuntimeException 当前环境不支持 fork / 没有注册 worker
+     * @throws \RuntimeException 当前环境不支持 fork / 没有注册 worker / 已有常驻槽位在跑
      */
     public function start(array $options = []): void
     {
@@ -415,6 +415,25 @@ final class ProcessManager
         }
         if ($this->workers === []) {
             throw new \RuntimeException('没有注册任何 worker，无法启动。');
+        }
+
+        // 重复启动在**派发之前**拦，而且要在这里：pid 文件的互斥属于 kode/process
+        // （v5.5.0 起），但那一份判定跑在每个守护进程自己的子进程里 —— 多槽位时
+        // 父进程只是 fork 完就 wait()，子进程抛的异常没有任何人接，命令行照样回
+        // 「启动成功」，而系统里已经躺着两套互相看不见的守护进程。
+        $running = [];
+
+        foreach ($this->slotStates() as $slot) {
+            if ($slot['alive']) {
+                $running[] = $slot['name'] . ':' . $slot['slot'] . '(pid ' . $slot['pid'] . ')';
+            }
+        }
+
+        if ($running !== []) {
+            throw new \RuntimeException(
+                '常驻进程已在运行，拒绝重复启动：' . implode('、', $running) . '。'
+                . '需要换 worker 注册表请先 stop 再 start；只想重载代码请发 USR1（reload）。'
+            );
         }
 
         // 一次性 worker 先同步执行（启动即完成），再展开常驻槽位。

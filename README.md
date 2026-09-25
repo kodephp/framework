@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.12.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.13.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,7 +26,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.12.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
+# {"status":"ok","service":"kode-app","version":"1.13.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
 # time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.12.0          PHP version:8.3.33
+Kode Framework version:1.13.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.12.0        PHP version:8.3.33
+Kode Framework version:1.13.0        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -355,7 +355,9 @@ $pm->signalSlots(\Kode\Process\Signal::USR1);
 「一路在跑、一路早就没了」是常态：只回 `true` 会让面板把部分成功报成全成功。标识串与
 `slotStates()` 的 `name . ':' . slot` 同源，所以「刚才发给了谁」一定能和状态表逐行对上。
 另外 PID 会被操作系统复用，「文件在 + 进程在」理论上是别人的进程；这里不做二次归属判定
-（没有跨平台手段），对生产做停机操作前请核对 pid。
+（没有跨平台手段），对生产做停机操作前请核对 pid。写侧的归属判定在 `kode/process` >= 5.5.0：
+`Daemon` 只认领「不存在 / 空 / 非数字 / 已死 / 是自己」的 pid 文件，且退出时只删写着**自己 pid**
+的那一份，所以别人占着的文件不会被覆盖成下一代的。
 
 回归见 `tests/ProcessSlotStateTest.php`：槽位枚举（含 `once()` 被排除、多实例逐槽位独立文件）、
 活 pid（用测试自己的 pid 验，`alive` 为真且 `started_at` 等于文件 mtime）、缺文件、
@@ -363,6 +365,53 @@ $pm->signalSlots(\Kode\Process\Signal::USR1);
 空注册表是 no-op、以及「状态表的标识 == 发信号结果的标识」这条对账。
 `start()` 的改动只有一处结构性的（改用 `residentSlotPlan()`），语义不变：所有 `once()` worker
 仍在任何 fork 之前同步执行完。
+
+
+---
+
+## 重复 start() 在派发前就被拒（v1.13.0）
+
+v1.12.0 把状态做成了可读回来的，但「已在跑还再点一次启动」这一条只写在面板的按钮文案里，
+`ProcessManager::start()` 自己照样会把第二套守护进程 fork 出来。理由并不充分：pid 文件的互斥
+确实存在，可它是 `kode/process` 的 `Daemon::run()` 在**每个守护进程自己的子进程**里判的
+（v5.5.0 起会抛异常拒绝启动）。而 `start()` 对多槽位的编排是「fork 完就 `wait()`」——
+子进程抛的异常没有任何人接，父进程只是等它退出，命令行照样回「启动成功」。
+于是真实的坏法是：一次 `kode start` 之后系统里躺着两套互相看不见的守护进程，
+第一套的 pid 文件被第二套覆盖（v5.5.0 之前的行为），而状态表只认得后写的那一份。
+
+现在的口径：**`start()` 在派发之前先问自家 `slotStates()`**，有存活槽位就抛
+`\RuntimeException` 并在消息里逐路点名（`name:slot(pid N)`）：
+
+```php
+$pm->start();
+// RuntimeException: 常驻进程已在运行，拒绝重复启动：heartbeat:0(pid 4812)、
+//                   queue:0(pid 4813)、queue:1(pid 4814)。
+//                   需要换 worker 注册表请先 stop 再 start；只想重载代码请发 USR1（reload）。
+```
+
+三条口径：
+
+- **拦在 `once()` worker 之前。** 一次性 worker 是 `start()` 里唯一同步执行的部分，
+  放在它后面就等于「拒绝启动」之前先把定时任务真跑了一遍——有副作用的拒绝不是拒绝。
+- **判据只有一份，用 `slotStates()`。** 这里不许再出现第二份「读 pid 文件 + `posix_kill`」，
+  那是 `kode/process` 与 `slotStates()` 已经各写一遍的东西；第三份的意思只会和状态表分叉，
+  而分叉的表现是「状态页说在跑、启动说没在跑」。这条由源码门禁盯着。
+- **失效的 pid 文件不拦启动。** 「文件在」和「在跑」是两件事：上一代被 `kill -9` 之后
+  文件原地留着，此时 `slotStates()` 回 `alive: false`，启动照走。把残留文件当成「在跑」
+  等于把机器永久锁死在一次失败启动上，而唯一出路是让人手工去 `/tmp` 删文件。
+
+`kode/process` 那一侧的互斥仍然是最后一道（它管的是「同一个 pid 文件被两个进程写」，
+比如两个不同的 `ProcessManager` 实例并发启动），本包的这道管「同一个注册表被重复 start」。
+两道判据的分工不同，所以要一起留着。
+
+回归见 `tests/ProcessStartGuardTest.php`。`start()` 与 `Daemon::run()` 都会阻塞，
+所以用例一律 fork 子进程 + 有界轮询（200×10ms）拿判决，再 `SIGTERM` + `wait()` 收尸：
+「被拦时 `once()` worker 没被执行」（flag 文件不存在）、什么都没跑时照走、
+残留 pid 文件不拦（正向证据 = `once()` worker 的 flag 文件真出现了）、
+以及「不得在框架里重写一份 pid 判定」的源码门禁。
+`testStalePidFileDoesNotBlockStart` 是这轮补的第二条腿：只有前两条时，
+「无视 `alive` 一律拦」的变异体能全绿——因为「全部不跑」的用例只注册了一个 `once()` worker，
+`slotStates()` 天生是空的，那个循环根本没执行。
 
 
 ---
@@ -420,7 +469,7 @@ $pm->signalSlots(\Kode\Process\Signal::USR1);
 
 ## 版本
 
-- 当前版本：**[v1.12.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.13.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
