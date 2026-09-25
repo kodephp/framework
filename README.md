@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.14.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.15.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,7 +26,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.14.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
+# {"status":"ok","service":"kode-app","version":"1.15.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
 # time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.14.0          PHP version:8.3.33
+Kode Framework version:1.15.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.14.0        PHP version:8.3.33
+Kode Framework version:1.15.0        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -495,6 +495,46 @@ v1.13.0 发版当天，这个分工被活体复现推翻：`kode/process` v5.5.0
 
 ---
 
+## 执行历史那两条读腿同病同治（v1.15.0）
+
+v1.14.0 只收了汇总腿。`runHistory()` 与 `tenantRunHistory()` 是同一张 `kode_schedule_runs` 上
+另外两条读腿（后台 `GET /api/schedules/{name}/history` 与「执行历史」抽屉的数据源），
+catch 长得一模一样：
+
+```php
+} catch (\Throwable $e) {
+    logger()->warning("查询调度执行历史失败（{$taskName}）：" . $e->getMessage());
+
+    return [];
+}
+```
+
+这里的后果比 `stats()` 更直接：抽屉是**有人来查故障时才点开**的那个界面，而断链 / 缺列 /
+无权限被压成一个空数组后，页面渲染的是「暂无数据」—— 一张干净的空白表格，看不出任何事发生过。
+（`error_message` 也在它的 SELECT 列表里，所以一次没跑完的迁移同样落在这条腿上。）
+
+现在的口径与 `stats()` 逐字一致（同一张表、同一个豁免、同一种抛法）：
+
+- **只有历史表还没建**算「没有历史」，回 `[]`；其余读失败抛 `\RuntimeException`，
+  数据库原始异常挂在 `previous` 上，且**这条腿也不调 `logger()`**（未引导的进程里它自己就抛，
+  会把真因顶掉）。
+- 消息里带任务名 / 租户号（`读取调度执行历史失败（{$taskName}）：…`），因为这两条腿是按归属键
+  收窄的，定位故障时那串键就是坐标。
+
+消费方注意（**破坏性**，同上一条）：以前把这两个方法当「恒不抛」的调用要显式接异常。
+管理端的正确接法不是再吞一次，而是把「读不到」如实说出去（HTTP 仍 200 +
+`available:false` + 结论性 `reason`），否则这条修就在下一层又被抹平了。
+
+三条读腿现在共用一份夹具（`tests/Support/ScheduleRunDbFixture.php`）：伪造「这座库读不到」
+在本仓库有一个不小的坑 —— 只把默认连接换成拒连配置是不够的，`Db::select()` 落到连接池
+当前那个名字上，而 `addConnection()` 会把池子的驱动名改成**最后注册**的那个；所以恢复默认连接
+必须排在所有 add/remove 之后。回归见 `tests/ScheduleHistoryFailureTest.php`
+（两条腿各验「必须抛且原因在链里」、缺表是唯一不抛的失败、真 `DROP COLUMN error_message`
+仍必须抛、插进去的行真读得回来且 `limit` 真的落在 SQL 上）。
+
+
+---
+
 ## 为什么选它
 
 | 痛点 | 本框架的做法 |
@@ -548,7 +588,7 @@ v1.13.0 发版当天，这个分工被活体复现推翻：`kode/process` v5.5.0
 
 ## 版本
 
-- 当前版本：**[v1.14.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.15.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

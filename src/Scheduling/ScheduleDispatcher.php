@@ -515,7 +515,14 @@ final class ScheduleDispatcher
     /**
      * 查询某任务的执行历史（最近 N 条）。
      *
+     * 失败口径与 {@see stats()} 完全一致（三条读腿同一个契约）：只有「历史表还没建」算
+     * 「没有历史」并回空数组，其余读失败一律抛，异常链里留着数据库的原始原因。
+     * 旧写法 `catch (\Throwable) { logger()->warning(); return []; }` 把断链/缺列/无权限压成
+     * 一个空数组，而管理端的历史抽屉据此渲染「暂无数据」—— 抽屉恰恰是有人来查故障时才点开的。
+     *
      * @return list<array<string, mixed>>
+     *
+     * @throws \RuntimeException 读不到执行历史时（除「历史表尚未建立」）
      */
     public function runHistory(string $taskName, int $limit = 50): array
     {
@@ -529,16 +536,22 @@ final class ScheduleDispatcher
 
             return $rows ?? [];
         } catch (\Throwable $e) {
-            logger()->warning("查询调度执行历史失败（{$taskName}）：" . $e->getMessage());
+            if (self::isMissingHistoryTable($e)) {
+                return [];
+            }
 
-            return [];
+            throw new \RuntimeException('读取调度执行历史失败（' . $taskName . '）：' . $e->getMessage(), 0, $e);
         }
     }
 
     /**
      * 查询某租户的调度执行历史（最近 N 条，跨任务）。
      *
+     * 失败口径同 {@see runHistory()}。
+     *
      * @return list<array<string, mixed>>
+     *
+     * @throws \RuntimeException 读不到执行历史时（除「历史表尚未建立」）
      */
     public function tenantRunHistory(int $tenantId, int $limit = 100): array
     {
@@ -552,9 +565,11 @@ final class ScheduleDispatcher
 
             return $rows ?? [];
         } catch (\Throwable $e) {
-            logger()->warning("查询租户调度历史失败（tenant={$tenantId}）：" . $e->getMessage());
+            if (self::isMissingHistoryTable($e)) {
+                return [];
+            }
 
-            return [];
+            throw new \RuntimeException('读取租户调度历史失败（tenant=' . $tenantId . '）：' . $e->getMessage(), 0, $e);
         }
     }
 
