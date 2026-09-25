@@ -32,8 +32,9 @@ final class VersionGuardTest extends TestCase
     }
 
     /**
-     * README 抄了三处版本号（「当前 `X`」、「当前版本：**[vX」、横幅样例的 `Kode Framework version:X`），
-     * 漏改一处就是文档在指一次不存在的发布。历史条目（如「v1.8.1 修正」）不在自述行这些措辞里。
+     * README 抄了四处版本号（「当前 `X`」、「当前版本：**[vX」、横幅样例的 `Kode Framework version:X`、
+     * `/health` 样例里的 `"version":"X"`），漏改一处就是文档在指一次不存在的发布。
+     * 历史条目（如「v1.8.1 修正」）不在自述行这些措辞里。
      */
     public function testReadmeVersionClaimsMatchTheConstant(): void
     {
@@ -41,7 +42,7 @@ final class VersionGuardTest extends TestCase
         $hits = [];
         preg_match_all(
             '/当前 `([0-9]+\.[0-9]+\.[0-9]+)`|当前版本：\*\*\[v([0-9]+\.[0-9]+\.[0-9]+)'
-            . '|Kode Framework version:([0-9]+\.[0-9]+\.[0-9]+)/u',
+            . '|Kode Framework version:([0-9]+\.[0-9]+\.[0-9]+)|"version":"([0-9]+\.[0-9]+\.[0-9]+)"/u',
             $readme,
             $hits,
             PREG_SET_ORDER
@@ -50,7 +51,9 @@ final class VersionGuardTest extends TestCase
         self::assertNotEmpty($hits, 'README 里的版本自述行找不到了：措辞变了就同步改这条守卫');
 
         foreach ($hits as $hit) {
-            $stated = ($hit[1] ?? '') !== '' ? $hit[1] : (($hit[2] ?? '') !== '' ? $hit[2] : ($hit[3] ?? ''));
+            $stated = ($hit[1] ?? '') !== '' ? $hit[1]
+                : (($hit[2] ?? '') !== '' ? $hit[2]
+                : (($hit[3] ?? '') !== '' ? $hit[3] : ($hit[4] ?? '')));
             self::assertSame(Application::VERSION, $stated,
                 "README 自述的版本 {$stated} 与 Application::VERSION 不一致");
         }

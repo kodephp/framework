@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.11.1`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.12.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,7 +26,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.11.1","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
+# {"status":"ok","service":"kode-app","version":"1.12.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
 # time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.11.1          PHP version:8.3.33
+Kode Framework version:1.12.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.11.1        PHP version:8.3.33
+Kode Framework version:1.12.0        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -305,6 +305,68 @@ catch 后记下真实原因，别再退回「已清理 0 条」。可接受区�
 
 ---
 
+## 常驻进程：状态终于读得回来了（v1.12.0）
+
+`ProcessManager` 过去只有写侧没有读侧。它按槽位往 `sys_get_temp_dir()` 写 pid 文件
+（`kode-worker-{name}:{slot}.pid`），路径由私有的 `pidFileFor()` 决定，外面没有任何口子能问到「哪几路在跑、pid 是多少」。
+于是应用侧自己编了一个路径去判活——`/tmp/kode-daemon.pid`，而那个文件从来没有人写过。
+后果不是「面板不准」而是三件事同时坏：状态恒显示「未运行」；「启动」按钮的防重入守卫因此
+永远放行，每点一次叠加一整套守护进程；「停止/重载」对着一个不存在的文件，永远失败。
+`kode/process` 只提供了写侧的 `Daemon`，读侧本就该由掌握槽位布局的 `ProcessManager` 负责。
+
+现在三个公开口子：
+
+```php
+$pm->residentSlots();  // list<{name, slot, pid_file}> —— 纯计算，不碰磁盘
+$pm->slotStates();     // + pid:int|null, alive:bool, started_at:int|null
+$pm->signalSlots(\Kode\Process\Signal::USR1);
+// → ['signalled' => ['heartbeat:0'], 'skipped' => [{label, reason}], 'failed' => [{label, reason}]]
+```
+
+四条口径：
+
+- **一次性 worker（`once()`）不在清单里。** 它们启动即退出、从不写 pid 文件，算成常驻槽位
+  就让面板多一行永远跑不到的记录，并对它报「发信号失败」。
+- **`slotStates()` 与 `start()` 用同一份展开**（私有的 `residentSlotPlan()`）。这里 fork 的
+  就是面板上显示的那些路；两份清单各写一遍迟早分叉，而分叉的表现是「状态页有一路、
+  实际没人跑」或反过来。
+- **`started_at` 取 pid 文件的 mtime**，这是不依赖 `/proc` 的跨平台口径。darwin 根本没有
+  `/proc`；而按 `/proc/{pid}/stat` 第 22 字段（clock ticks）算的应用，实测读到的是**宿主机的
+  开机时长**——常驻面板把「本机跑了 300 天」当成「这个 worker 跑了 300 天」。
+- **读路径绝不删失效的 pid 文件。** 清理责任属于写侧的退出逻辑（`Daemon` 优雅退出时自己
+  `unlink`）。读者删文件会把一次「正在启动、尚未落 pid」的正常拉起抹成「没发生过」。
+  同理，pid 文件内容不是纯数字时一律判「没在跑」，绝不去猜一个 pid 来发信号。
+
+信号语义必须由调用方明确选对，`Signal` 常量在 macOS 和 Linux 上数字不同（USR1 分别是 30 和 10），
+所以只能传 `Kode\Process\Signal::*`，不能传裸数字：
+
+| 信号 | Daemon 的行为 |
+| --- | --- |
+| `Signal::TERM` / `INT` | 优雅停止：停掉全部 worker、回收子进程、删 pid 文件 |
+| `Signal::USR1` | **平滑重载**该路的全部 worker（旧 worker 处理完当前任务再退） |
+| `Signal::HUP` | **没有安装处理器** → 系统默认处置 = 直接终止进程 |
+| `Signal::USR2` | 把运行时状态打进日志，供排障 |
+
+最后一行是这轮修掉的真缺陷：后台的「重载」按钮发的是 `1`，也就是 SIGHUP。它看起来什么都不发生
+（面板照旧、日志照旧），因为那个守护进程已经没了；再点「停止」时它已经不在，于是回「已停止」。
+重载请传 `Signal::USR1`。
+
+`signalSlots()` 的返回值分三档（`signalled` / `skipped` / `failed`）而不是布尔，理由是
+「一路在跑、一路早就没了」是常态：只回 `true` 会让面板把部分成功报成全成功。标识串与
+`slotStates()` 的 `name . ':' . slot` 同源，所以「刚才发给了谁」一定能和状态表逐行对上。
+另外 PID 会被操作系统复用，「文件在 + 进程在」理论上是别人的进程；这里不做二次归属判定
+（没有跨平台手段），对生产做停机操作前请核对 pid。
+
+回归见 `tests/ProcessSlotStateTest.php`：槽位枚举（含 `once()` 被排除、多实例逐槽位独立文件）、
+活 pid（用测试自己的 pid 验，`alive` 为真且 `started_at` 等于文件 mtime）、缺文件、
+内容不是数字、pid 已失效（断言 `alive` 为假**且文件原地不动**）、`signalSlots()` 只命中存活槽位、
+空注册表是 no-op、以及「状态表的标识 == 发信号结果的标识」这条对账。
+`start()` 的改动只有一处结构性的（改用 `residentSlotPlan()`），语义不变：所有 `once()` worker
+仍在任何 fork 之前同步执行完。
+
+
+---
+
 ## 为什么选它
 
 | 痛点 | 本框架的做法 |
@@ -358,7 +420,7 @@ catch 后记下真实原因，别再退回「已清理 0 条」。可接受区�
 
 ## 版本
 
-- 当前版本：**[v1.11.1](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.12.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

@@ -158,6 +158,125 @@ final class ProcessManager
     }
 
     /**
+     * 常驻槽位清单（纯计算，不做 I/O）：每行 = 一路会被 {@see start()} 真正启动的守护进程。
+     *
+     * 存在的理由是「谁在跑」这个问题只能有一个答案。此前框架只写不读
+     * （pid 文件路径由私有的 {@see pidFileFor()} 决定），应用侧于是自己编了一个
+     * `/tmp/kode-daemon.pid` —— 那个路径从来没有人写，结果状态面板恒「未运行」、
+     * 「启动」按钮每点一次叠加一整套守护进程、停止/重载永远失败。
+     *
+     * 一次性 worker（once()）不在列：它们启动即退出、从不写 pid 文件，
+     * 算成常驻槽位会让面板出现一个永远跑不到的行，并对它报「发信号失败」。
+     *
+     * @return list<array{name: string, slot: int, pid_file: string}>
+     */
+    public function residentSlots(): array
+    {
+        $rows = [];
+
+        foreach ($this->residentSlotPlan() as $item) {
+            $rows[] = [
+                'name'     => $item['worker']->name(),
+                'slot'     => $item['slot'],
+                'pid_file' => $this->pidFileFor($item['daemon']),
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * 各常驻槽位的运行状态。任意 SAPI 可调（只做「读 pid 文件 + 信号 0 探活」，不 fork）。
+     *
+     * pid 文件只由守护进程自己在进入运行循环时创建、退出时删除，因此：
+     *  - 文件缺失 = 这一路没在跑（或还没跑到写文件那一步）；
+     *  - 文件内容不是数字 = 同样判不在跑，绝不去猜一个 pid 来发信号；
+     *  - `started_at` 取文件 mtime = 守护进程的启动时刻，这是不依赖 `/proc` 的跨平台口径
+     *    （darwin 根本没有 `/proc`）；
+     *  - PID 会被操作系统复用，所以「文件在 + 进程在」理论上可能是别人的进程。
+     *    这里不做二次归属判定（无跨平台手段），面板据此发信号前请核对 pid。
+     *
+     * 读路径**不会**删除失效的 pid 文件：清理责任属于写侧的退出逻辑，
+     * 读者删文件会把一次「正在启动、尚未落 pid」的正常拉起抹成「没发生过」。
+     *
+     * @return list<array{name: string, slot: int, pid_file: string, pid: int|null, alive: bool, started_at: int|null}>
+     */
+    public function slotStates(): array
+    {
+        $states = [];
+
+        foreach ($this->residentSlotPlan() as $item) {
+            $file = $this->pidFileFor($item['daemon']);
+            $raw  = is_file($file) ? @file_get_contents($file) : false;
+            $pid  = self::pidOf($raw);
+
+            $states[] = [
+                'name'       => $item['worker']->name(),
+                'slot'       => $item['slot'],
+                'pid_file'   => $file,
+                'pid'        => $pid,
+                'alive'      => $pid !== null && KodeProcess::isProcessAlive($pid),
+                'started_at' => $pid === null ? null : (@filemtime($file) ?: null),
+            ];
+        }
+
+        return $states;
+    }
+
+    /**
+     * 向全部「当前存活」的常驻槽位发送一个信号。
+     *
+     * 信号语义由 kode/process 的 Daemon 决定：`Signal::TERM` = 优雅停止，
+     * `Signal::USR1` = 平滑重启该路的全部 worker。**SIGHUP 没有安装处理器**，
+     * 对守护进程发 HUP 会被系统按默认处置直接终止（不是重载）。
+     *
+     * 目标集合恒等于 slotStates() 里 alive 的那些行，标识同为 `name:slot`，
+     * 这样调用方拿到的「发给了谁」一定能和状态表对上行。
+     *
+     * @return array{signalled: list<string>, skipped: list<array{label: string, reason: string}>, failed: list<array{label: string, reason: string}>}
+     */
+    public function signalSlots(int $signal): array
+    {
+        $result = ['signalled' => [], 'skipped' => [], 'failed' => []];
+
+        foreach ($this->slotStates() as $row) {
+            $label = $row['name'] . ':' . $row['slot'];
+
+            if (!$row['alive']) {
+                $result['skipped'][] = ['label' => $label, 'reason' => '该槽位未在运行'];
+                continue;
+            }
+
+            if (@posix_kill((int) $row['pid'], $signal)) {
+                $result['signalled'][] = $label;
+                continue;
+            }
+
+            // errno 只在失败时有意义（成功时不会清零，见 kode/process 的同款注释）。
+            $result['failed'][] = [
+                'label'  => $label,
+                'reason' => '信号发送失败（errno ' . posix_get_last_error() . '，进程可能属于其他用户）',
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * pid 文件内容 → pid。只认纯数字，别的（半截写入、外部改写过）一律视为「没有 pid」。
+     */
+    private static function pidOf(string|false $raw): ?int
+    {
+        if (!is_string($raw)) {
+            return null;
+        }
+
+        $trimmed = trim($raw);
+
+        return $trimmed !== '' && ctype_digit($trimmed) ? (int) $trimmed : null;
+    }
+
+    /**
      * 无 fork 的逻辑验证：按注册顺序同步执行每个 worker 的每个生效槽位
      * onStart() → handle(slot) → onStop() 各一次，返回已执行的 worker 名称列表
      * （每个槽位各记一次）。一次性与常驻 worker 一视同仁。
@@ -218,6 +337,31 @@ final class ProcessManager
     }
 
     /**
+     * 常驻槽位的**唯一**展开口径：`start()` 按它逐个 fork 守护进程，
+     * {@see residentSlots()}/{@see slotStates()}/{@see signalSlots()} 按它找 pid 文件。
+     *
+     * 分成两处各展开一遍的话，「面板以为在跑的那一路」和「实际被启动的那一路」可以悄悄分叉
+     * ——比如一处漏了 `once()` 过滤、一处把槽位号算错，而这两处都各自「看起来正确」。
+     *
+     * @return list<array{worker: Worker, slot: int, daemon: SlotWorker}>
+     */
+    private function residentSlotPlan(): array
+    {
+        $plan = [];
+
+        foreach ($this->workers as $worker) {
+            if ($worker->once()) {
+                continue;
+            }
+            foreach ($this->effectiveSlots($worker) as $slot) {
+                $plan[] = ['worker' => $worker, 'slot' => $slot, 'daemon' => new SlotWorker($worker, $slot)];
+            }
+        }
+
+        return $plan;
+    }
+
+    /**
      * 启动时同步执行一次性 worker：每个生效槽位 onStart() → handle(slot) → onStop() 各一次。
      */
     private function runOnce(Worker $worker): void
@@ -274,16 +418,14 @@ final class ProcessManager
         }
 
         // 一次性 worker 先同步执行（启动即完成），再展开常驻槽位。
-        $daemons = [];
         foreach ($this->workers as $worker) {
             if ($worker->once()) {
                 $this->runOnce($worker);
-                continue;
-            }
-            foreach ($this->effectiveSlots($worker) as $slot) {
-                $daemons[] = new SlotWorker($worker, $slot);
             }
         }
+
+        // 与状态读取同一份展开（见 residentSlotPlan()）：这里 fork 的就是面板上会显示的那些路。
+        $daemons = array_column($this->residentSlotPlan(), 'daemon');
 
         if ($daemons === []) {
             $this->logger->info('全部 worker 为一次性任务，已执行完毕，无常驻进程。');
