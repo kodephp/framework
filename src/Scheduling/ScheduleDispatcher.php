@@ -676,8 +676,21 @@ final class ScheduleDispatcher
      * 从 kode_schedule_runs 表聚合：总执行数、成功数、失败数、跳过数、
      * 平均耗时、最大耗时、连续失败次数、最后执行时间。
      *
+     * 两条口径与「读不到」这件事有关，改动前请先读：
+     *  - **读不到一律抛** {@see \RuntimeException}。旧写法 `catch (\Throwable) { logger(); return []; }`
+     *    把断链/无权限/列缺失全部压成「这台系统没有任务跑过」，而后台那张「执行成功率」卡片
+     *    拿到空汇总时回的是 **100%**（见下条），于是数据库读不动了却显示一个绿色的完美数字。
+     *    catch 里那句 `logger()` 在未引导的进程（CLI、清理任务）里自己就抛「服务容器尚未启动」，
+     *    会把真正的连接失败顶掉，排障方向整个错一位。
+     *  - **唯一的例外是历史表还不存在**（全新环境从没跑过任务）：那是「没有历史」这个事实，
+     *    回空汇总而不是 500。别把这条判断放宽 —— 42703（列缺失）与 42P01 只差一个码。
+     *
+     * `success_rate` 在 `total === 0` 时是 **null**（没有分母的比率不存在），不是 100.0。
+     *
      * @param string|null $taskName 指定任务名；null 时返回全部任务的汇总
      * @return array<string, mixed>
+     *
+     * @throws \RuntimeException 读不到统计时（除「历史表尚未建立」）
      */
     public function stats(?string $taskName = null): array
     {
@@ -685,7 +698,12 @@ final class ScheduleDispatcher
             $db = \Kode\Database\Db\Db::class;
 
             if ($taskName !== null) {
-                $row = $db::selectOne(
+                // 注意：这里**没有** `Db::selectOne()` —— 那个方法在 kode/database 的 facade 上
+                // 从来不存在（`Db::__callStatic` 把它当成 Model 的静态方法转发，抛
+                // BadMethodCallException: 请创建 Model 类后使用静态方法调用）。旧写法每次调用
+                // 都抛，然后被下面那个 catch 吞成一条 total=0 / success_rate=100 的合成行，
+                // 于是「单任务统计」这条路从来没有工作过。取首行只能走 select()。
+                $rows = $db::select(
                     "SELECT
                         COUNT(*) AS total,
                         COUNT(*) FILTER (WHERE status = 'success') AS succeeded,
@@ -697,21 +715,14 @@ final class ScheduleDispatcher
                      FROM kode_schedule_runs WHERE task_name = ? GROUP BY task_name",
                     [$taskName]
                 );
+                $row = $rows === [] ? null : $rows[0];
 
-                $result = $row ?? [
-                    'total' => 0,
-                    'succeeded' => 0,
-                    'failed' => 0,
-                    'skipped' => 0,
-                    'avg_duration_ms' => 0,
-                    'max_duration_ms' => 0,
-                    'last_run_at' => null,
-                ];
+                $result = $row ?? self::emptyTaskStats();
 
-                // 计算成功率
-                $result['success_rate'] = $result['total'] > 0
-                    ? round(($result['succeeded'] / $result['total']) * 100, 1)
-                    : 100.0;
+                // 成功率：一次都没跑过时是 null（没有分母），不是 100
+                $result['success_rate'] = (int) $result['total'] > 0
+                    ? round(((int) $result['succeeded'] / (int) $result['total']) * 100, 1)
+                    : null;
 
                 // 连续失败次数（从最近记录往前数）
                 $result['consecutive_failures'] = $this->consecutiveFailures($taskName);
@@ -739,55 +750,85 @@ final class ScheduleDispatcher
                     'failed' => (int) $row['failed'],
                     'avg_duration_ms' => (int) round((float) $row['avg_duration_ms']),
                     'last_run_at' => $row['last_run_at'],
-                    'success_rate' => $row['total'] > 0
-                        ? round(($row['succeeded'] / $row['total']) * 100, 1)
-                        : 100.0,
+                    'success_rate' => (int) $row['total'] > 0
+                        ? round(((int) $row['succeeded'] / (int) $row['total']) * 100, 1)
+                        : null,
                 ];
             }
 
             return $result;
         } catch (\Throwable $e) {
-            logger()->warning("查询调度统计失败：" . $e->getMessage());
+            // 只有「历史表还没建」算「没有历史」：全新环境从没跑过任务，那是事实而不是故障，
+            // 回空汇总（调用方据此渲染「—」）。其余失败一律抛 —— 旧写法在这里 logger() 之后
+            // return [] / 一条 success_rate=100.0 的合成行，等于把「一座库没读到」渲染成
+            // 「这台系统没有任务跑过、且成功率完美」。
+            if (self::isMissingHistoryTable($e)) {
+                return $taskName === null ? [] : self::emptyTaskStats();
+            }
 
-            return $taskName !== null ? [
-                'total' => 0,
-                'succeeded' => 0,
-                'failed' => 0,
-                'skipped' => 0,
-                'avg_duration_ms' => 0,
-                'max_duration_ms' => 0,
-                'last_run_at' => null,
-                'success_rate' => 100.0,
-                'consecutive_failures' => 0,
-            ] : [];
+            throw new \RuntimeException('读取调度执行统计失败：' . $e->getMessage(), 0, $e);
         }
+    }
+
+    /** 一条「从没跑过」的任务统计：比率是 null，因为分母不存在。 */
+    private static function emptyTaskStats(): array
+    {
+        return [
+            'total' => 0,
+            'succeeded' => 0,
+            'failed' => 0,
+            'skipped' => 0,
+            'avg_duration_ms' => 0,
+            'max_duration_ms' => 0,
+            'last_run_at' => null,
+            'success_rate' => null,
+            'consecutive_failures' => 0,
+        ];
+    }
+
+    /**
+     * 这次失败是不是「kode_schedule_runs 还不存在」。
+     *
+     * 只认缺表本身：pgsql 是 42P01（relation does not exist），sqlite（压测备用库）是
+     * `no such table`。列缺失（42703）、无权限（42501）、断链（08xxx/HY000）都不在此列 ——
+     * 把它们一起放行就等于把这条判断变回「什么失败都算没有数据」。
+     */
+    private static function isMissingHistoryTable(\Throwable $e): bool
+    {
+        do {
+            $msg = $e->getMessage();
+            if (str_contains($msg, '42P01') || str_contains($msg, 'no such table')) {
+                return true;
+            }
+        } while (($e = $e->getPrevious()) !== null);
+
+        return false;
     }
 
     /**
      * 计算某任务的连续失败次数（从最近记录往前数，遇到 success 停止）。
+     *
+     * 读失败直接向外抛（调用方 stats() 会包成 RuntimeException）：旧写法 `return 0`
+     * 把「读不到」写成「没有连续失败」，而那个数字正是「这条任务健康」的判据之一。
      */
     private function consecutiveFailures(string $taskName): int
     {
-        try {
-            $db = \Kode\Database\Db\Db::class;
-            $rows = $db::select(
-                "SELECT status FROM kode_schedule_runs WHERE task_name = ? ORDER BY started_at DESC LIMIT 20",
-                [$taskName]
-            );
+        $db = \Kode\Database\Db\Db::class;
+        $rows = $db::select(
+            "SELECT status FROM kode_schedule_runs WHERE task_name = ? ORDER BY started_at DESC LIMIT 20",
+            [$taskName]
+        );
 
-            $count = 0;
-            foreach ($rows ?? [] as $row) {
-                if ($row['status'] === 'failed') {
-                    $count++;
-                } else {
-                    break;
-                }
+        $count = 0;
+        foreach ($rows ?? [] as $row) {
+            if ($row['status'] === 'failed') {
+                $count++;
+            } else {
+                break;
             }
-
-            return $count;
-        } catch (\Throwable) {
-            return 0;
         }
+
+        return $count;
     }
 
     // ─────────────────────────────────────────────

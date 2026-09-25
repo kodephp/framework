@@ -53,10 +53,19 @@ final class ScheduleListCommand extends Command
         }
 
         $rows = [];
+        $unreadable = 0;
         foreach ($tasks as $task) {
             $nextRun = $dispatcher->nextRun($task->name);
-            $stats = $dispatcher->stats($task->name);
-            $lastStatus = $stats['total'] > 0 ? $this->lastRunStatus($task->name) : '—';
+            // stats() 读不到时会抛（它不再把「一座库没读到」压成「这台系统没跑过任务」），
+            // 这里必须把那一行标成「读不到」并计数，而不是让它冒出来打断整张表 ——
+            // 也不许顺手回 0：`$stats['total'] > 0` 一判就变成「没有记录」。
+            try {
+                $stats = $dispatcher->stats($task->name);
+                $lastStatus = (int) $stats['total'] > 0 ? $this->lastRunStatus($task->name) : '—';
+            } catch (\Throwable) {
+                $unreadable++;
+                $lastStatus = '!';
+            }
 
             $rows[] = [
                 $task->name,
@@ -81,24 +90,38 @@ final class ScheduleListCommand extends Command
             $dispatcher->enabledCount(),
         ));
 
+        // 「读不到」必须单独说一句：只把那一列画成 ! 或 —，看的人会在「没有记录」与
+        // 「这座库连不上」之间猜，而这两件事的处置方式完全不同。
+        if ($unreadable > 0) {
+            $this->warn(sprintf(
+                '其中 %d 条任务的执行统计读不到（列显示 !）—— 这不是「没有执行记录」，请检查数据库连接。',
+                $unreadable,
+            ));
+        }
+
         return 0;
     }
 
     /**
      * 查询最近一次执行状态（简化显示）。
+     *
+     * 三种显示必须分得开：`—` = 这条任务没有执行记录，`!` = 这一行读不出来，
+     * 其余 = 真状态。facade 上没有 `selectOne()`（`Db::__callStatic` 会把它当成
+     * Model 静态方法转发并抛 BadMethodCallException），所以取首行走 `select()`。
      */
     private function lastRunStatus(string $name): string
     {
         try {
             $db = \Kode\Database\Db\Db::class;
-            $row = $db::selectOne(
+            $rows = $db::select(
                 "SELECT status, duration_ms FROM kode_schedule_runs WHERE task_name = ? ORDER BY started_at DESC LIMIT 1",
                 [$name],
             );
 
-            if ($row === null) {
+            if ($rows === []) {
                 return '—';
             }
+            $row = $rows[0];
 
             $status = match ($row['status']) {
                 'success' => '✓',
@@ -109,7 +132,8 @@ final class ScheduleListCommand extends Command
 
             return sprintf('%s %sms', $status, $row['duration_ms']);
         } catch (\Throwable) {
-            return '—';
+            // 与「没有记录」（上面那条 '—'）分开：! = 这一行读不出来
+            return '!';
         }
     }
 }

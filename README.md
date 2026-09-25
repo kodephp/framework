@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.13.1`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.14.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,7 +26,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.13.1","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
+# {"status":"ok","service":"kode-app","version":"1.14.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
 # time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.13.1          PHP version:8.3.33
+Kode Framework version:1.14.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.13.1        PHP version:8.3.33
+Kode Framework version:1.14.0        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -434,6 +434,67 @@ v1.13.0 发版当天，这个分工被活体复现推翻：`kode/process` v5.5.0
 
 ---
 
+## `ScheduleDispatcher::stats()`：读不到不再回「完美」，以及一处从未跑通的调用（v1.14.0）
+
+`stats()` 是「任务健康度」的唯一数据源（后台 `GET /api/schedules/health`、`schedule:list` 都读它）。
+这一轮改掉了两件事，第二件才是第一件的真因。
+
+**① 有一处调用从来就没跑通过。** 单任务那条腿写的是 `Db::selectOne(...)`，而 `kode/database`
+的 facade **从来没有**那个方法：`Db::__callStatic` 把它当成 Model 的静态方法转发，实测每次调用
+都抛 `BadMethodCallException: 请创建 Model 类后使用静态方法调用`。因为外面正好套着 ② 那个
+`catch (\Throwable)`，这个 `\Error` 被吞成一条合成行，于是**「单任务执行统计」从来没工作过**，
+而页面上一直是绿的。现在取首行走 `select()`（`$rows === [] ? null : $rows[0]`）。
+
+这类病的通用形态是：facade 方法名写错 → 运行时 `\Error` → 被 `catch (\Throwable)` 吞掉 →
+「API 用错」在页面上长成「这台系统没有这项数据」。`class_exists` 型门禁全抓不住（类名是对的）。
+所以本包新增 `tests/DbFacadeCallGateTest.php`：扫 `src/` 里对 `Db` 的**全部静态调用**
+（`Db::x(` 与 `$db::x(` 两种写法都要认，后者是本包 `$db = Db::class` 的既有风格），
+逐个 `method_exists`；先剥注释（文档里那句「旧写法长什么样」不是调用点）；
+带一条「把幻影方法名喂给同一个抽取器，它必须点名」的正对照，以及「扫到的调用点数不得少于 10」
+的防空转断言。
+
+**② 读不到不再压成「没有历史、而且完美」。** 旧写法：
+
+```php
+} catch (\Throwable $e) {
+    logger()->warning('查询调度统计失败：' . $e->getMessage());
+
+    return $taskName !== null ? ['total' => 0, …, 'success_rate' => 100.0] : [];
+}
+```
+
+三处坏法叠在一起：断链 / 无权限 / 列缺失全被压成「这台系统没有任务跑过」；`catch` 里先调
+`logger()`，未引导的进程（CLI、定时清理任务）会自己抛「服务容器尚未启动」，把真正的数据库原因
+顶掉；而回的那条合成行里 `success_rate = 100.0` —— 于是「一座库没读到」在页面上是一个**绿色的
+完美数字**，比空表更容易被照着做决策。`consecutiveFailures()` 同族：`catch → return 0`
+把「读不到」写成「没有连续失败」，而那正是「这条任务健康」的判据之一。
+
+现在的口径：
+
+- **读不到一律抛 `\RuntimeException`**，数据库原始异常挂在 `previous` 上（异常链里不许出现
+  「服务容器尚未启动」，这条是被断言的）。
+- **唯一的例外是历史表还没建**（全新环境从没跑过任务，那是事实）：只认 pgsql `42P01` 与
+  sqlite `no such table`，回空汇总。列缺失（42703）、无权限（42501）、断链（08xxx/HY000）
+  一律不在豁免内 —— 用例里真 `ALTER TABLE … DROP COLUMN duration_ms` 来钉住这条判断没被放宽。
+- **`total === 0` 时 `success_rate` 是 `null`**，不是 `100.0`：没有分母的比率不存在。
+  消费方（后台卡片）按 `null` 渲染 `—`。
+
+`schedule:list` 的另一半：`stats()` 现在会抛，命令不能因此打断整张表，也不能顺手回 0
+（`$stats['total'] > 0` 一判就变成「没有记录」）。那一列现在有三种显示，且互相分得开 ——
+`—` = 没有执行记录，`!` = 这一行读不出来，其余 = 真状态；表尾另出一行
+「其中 N 条任务的执行统计读不到」。
+
+消费方注意（**破坏性**）：以前把 `stats()` 当「恒不抛」的调用要显式接异常，别把它又吞成空数组。
+`success_rate` 的键恒在，但值可能是 `null`。
+
+回归见 `tests/ScheduleStatsFailureTest.php`（汇总腿与单任务腿各自验「必须抛且原因在链里」、
+缺表是唯一不抛的失败、42703 仍必须抛、`total=0` 时 `success_rate` 是 null，
+以及正向对照：一次性临时库 `kode_zz_stats_*` 里插 1 成功 + 1 失败，断言比率真的是 50.0
+且全任务汇总里有这一行）+ `tests/DbFacadeCallGateTest.php`。
+
+
+---
+
 ## 为什么选它
 
 | 痛点 | 本框架的做法 |
@@ -487,7 +548,7 @@ v1.13.0 发版当天，这个分工被活体复现推翻：`kode/process` v5.5.0
 
 ## 版本
 
-- 当前版本：**[v1.13.1](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.14.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
