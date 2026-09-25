@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.10.2`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.11.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,7 +26,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.10.2","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
+# {"status":"ok","service":"kode-app","version":"1.11.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
 # time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.10.2          PHP version:8.3.33
+Kode Framework version:1.11.0          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.10.2        PHP version:8.3.33
+Kode Framework version:1.11.0        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -252,6 +252,31 @@ HTTP 状态码**刻意保持 200**：`/health` 是报表不是闸门——摘流
 
 ---
 
+## `min:` / `max:` 现在按字段声明的类型判，而不是按值碰巧长什么样（v1.11.0）
+
+`Validator` 的 `min:`/`max:` 此前按 `is_numeric($value)` 自适应选比较方式：值是纯数字串就走
+**数值**比较。问题是 HTTP 层拿到的 JSON 值常常就是字符串，于是同一份规则会在特定输入下悄悄
+换成另一种判据，而且两个方向都错：
+
+- `'password' => '12'` 过 `min:6`（`12 >= 6`）—— 密码长度策略被一枚两位数字绕过；
+- `'title' => '20260101'` 过不了 `max:128`（`2.026e7 > 128`）—— 用日期当标题直接 422，
+  提示还是「应小于等于 128」；
+- 全数字的 64 位 sha256 过不了 `min:64|max:64`（恰好合规的长度被判成超大数值）。
+
+现在比较方式只由**字段自己声明的类型**决定：规则里有 `integer` / `numeric`，或值本来就是
+`int` / `float` → 数值比较；其余（含纯数字字符串）一律按**字符数**。新增 `string` 标记，
+它同时验类型并把 `min:`/`max:` 定在字符数上；值不是字符串时只报「类型不对」，不会再叠一条
+看不懂的长度错。需要按大小判的字段照旧写 `integer|numeric`（`age => 151` 仍被拒）。
+
+不受影响的：`length:`（本来就是字符数）、`in:`/`regex:`/`email`/`url`，以及控制台选项的
+`min:`/`max:`（那是 `kode/console` 的 `Input::validate()` 另一套解析器，一直是数值语义）。
+消费方唯一要留意的是「以前靠纯数字串走数值分支」的写法：把 `min:0` 这类规则改成
+`numeric|min:0` 即可拿回原语义。不变量由 `tests/ValidatorTest.php` 双向盯住（纯数字串按长度 +
+声明了数值类型的仍按数值），详见文档站 `docs/getting-started.md` 的校验篇目。
+
+
+---
+
 ## 为什么选它
 
 | 痛点 | 本框架的做法 |
@@ -305,7 +330,7 @@ HTTP 状态码**刻意保持 200**：`/health` 是报表不是闸门——摘流
 
 ## 版本
 
-- 当前版本：**[v1.10.2](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.11.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 
