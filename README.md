@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.13.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `1.13.1`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,7 +26,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"status":"ok","service":"kode-app","version":"1.13.0","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
+# {"status":"ok","service":"kode-app","version":"1.13.1","php":"8.3.33","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}
 # time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
@@ -80,7 +80,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:1.13.0          PHP version:8.3.33
+Kode Framework version:1.13.1          PHP version:8.3.33
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +111,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:1.13.0        PHP version:8.3.33
+Kode Framework version:1.13.1        PHP version:8.3.33
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -357,7 +357,8 @@ $pm->signalSlots(\Kode\Process\Signal::USR1);
 另外 PID 会被操作系统复用，「文件在 + 进程在」理论上是别人的进程；这里不做二次归属判定
 （没有跨平台手段），对生产做停机操作前请核对 pid。写侧的归属判定在 `kode/process` >= 5.5.0：
 `Daemon` 只认领「不存在 / 空 / 非数字 / 已死 / 是自己」的 pid 文件，且退出时只删写着**自己 pid**
-的那一份，所以别人占着的文件不会被覆盖成下一代的。
+的那一份，所以别人占着的文件不会被覆盖成下一代的。>= 5.5.1 起「判归属 + 落盘」还跑在同一把
+非阻塞 `flock` 里（锁加在 pid 文件本身），并发启动会被点名「并发启动」而拒绝。
 
 回归见 `tests/ProcessSlotStateTest.php`：槽位枚举（含 `once()` 被排除、多实例逐槽位独立文件）、
 活 pid（用测试自己的 pid 验，`alive` 为真且 `started_at` 等于文件 mtime）、缺文件、
@@ -400,8 +401,15 @@ $pm->start();
   文件原地留着，此时 `slotStates()` 回 `alive: false`，启动照走。把残留文件当成「在跑」
   等于把机器永久锁死在一次失败启动上，而唯一出路是让人手工去 `/tmp` 删文件。
 
-`kode/process` 那一侧的互斥仍然是最后一道（它管的是「同一个 pid 文件被两个进程写」，
-比如两个不同的 `ProcessManager` 实例并发启动），本包的这道管「同一个注册表被重复 start」。
+`kode/process` 那一侧的互斥**不是**这道预检的后备，反过来也一样，两道各治一种坏法：
+本包的这道管「同一个注册表被重复 `start()`」（面板连点、脚本重跑）；`kode/process` >= 5.5.1 的
+`flock` 管「同一个 pid 文件被两个进程同时判+写」（两个不同的 `ProcessManager` 实例并发启动、
+两条 `kode process:start` 同时敲）。注意**本包的预检挡不住并发**：两个进程可以同时在
+`slotStates()` 里看到「全没跑」，然后各自派发 —— 那时真正拦下来的是 process 侧那把锁。
+所以这道预检的价值是「在 fork 之前就给出一条能被 `catch` 到、能回 400 的拒绝」，
+而不是「最后一道互斥」（process 侧的异常在已 detach 的子进程里抛出，命令行只看到退出码）。
+v5.5.0 之前连 process 侧也挡不住并发（判定与落盘两步之间没有锁），
+实测同时敲两次 `php kode process:start` 会真起出两套守护进程 —— 那是 v5.5.1 修的。
 两道判据的分工不同，所以要一起留着。
 
 回归见 `tests/ProcessStartGuardTest.php`。`start()` 与 `Daemon::run()` 都会阻塞，
@@ -412,6 +420,16 @@ $pm->start();
 `testStalePidFileDoesNotBlockStart` 是这轮补的第二条腿：只有前两条时，
 「无视 `alive` 一律拦」的变异体能全绿——因为「全部不跑」的用例只注册了一个 `once()` worker，
 `slotStates()` 天生是空的，那个循环根本没执行。
+
+### v1.13.1：更正上面那句「最后一道」
+
+v1.13.0 发版当天，这个分工被活体复现推翻：`kode/process` v5.5.0 的互斥只罩住了「判」，
+没罩住「写」——同时敲两次 `php kode process:start` 会真起出两套互相看不见的守护进程
+（两边都在对方落盘前读到「没人占用」）。process 侧已在 **v5.5.1** 用 `flock` 补上，
+本包随之做两件事：**依赖下限抬到 `kode/process ^5.5.1`**（代码零改动），
+把上面「`kode/process` 那一侧是最后一道」改成如实的分工描述。
+本包这道预检的定位不变：它是**唯一能把拒绝变成一次可 `catch` 的异常、从而回 400** 的判定，
+而 process 侧那把锁在已 detach 的子进程里抛异常，命令行只看得见退出码。
 
 
 ---
@@ -469,7 +487,7 @@ $pm->start();
 
 ## 版本
 
-- 当前版本：**[v1.13.0](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v1.13.1](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

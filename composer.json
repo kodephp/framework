@@ -19,7 +19,7 @@
         "psr"
     ],
     "license": "MIT",
-    "version": "1.13.0",
+    "version": "1.13.1",
     "repositories": [
         {
             "type": "git",
@@ -59,7 +59,7 @@
         "kode/messaging": "^3.3",
         "kode/middleware": "*",
         "kode/parallel": "*",
-        "kode/process": "^5.5.0",
+        "kode/process": "^5.5.1",
         "kode/queue": "^2.2",
         "kode/router": "*",
         "kode/runtime": "*",

@@ -12,11 +12,13 @@ use PHPUnit\Framework\TestCase;
 /**
  * `start()` 的重复启动守卫。
  *
- * 存在的理由：pid 文件的互斥在 kode/process 里（v5.5.0 起），但那份判定发生在
+ * 存在的理由：pid 文件的互斥在 kode/process 里（v5.5.0 起判定、v5.5.1 起「判 + 落盘」
+ * 罩在同一把 flock 里），但那份判定发生在
  * **每个守护进程自己的子进程内** —— 多槽位时父进程只是 fork 完就 wait()，
  * 子进程抛出的异常没人接，`kode process:start` 照样回「启动成功」，
  * 而系统里静静躺着两套互相看不见的守护进程。所以框架必须在**派发之前**
  * 用同一份判据（`slotStates()`）拦一次：一次说清、退出码为 1。
+ * 注意这道预检挡不住**并发**（两个进程可同时看到「全没跑」），那是 process 侧 flock 的职责。
  */
 final class ProcessStartGuardTest extends TestCase
 {
