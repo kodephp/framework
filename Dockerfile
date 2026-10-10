@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
 # Kode Framework — 生产级多阶段构建（12-factor）
 # 1) 依赖阶段：composer install --no-dev --optimize-autoloader
-# 2) 运行阶段：php:8.3-cli + 非 root 用户 + opcache 预热 + 健康探针
+# 2) 运行阶段：php:8.4-cli + 非 root 用户 + opcache 预热 + 健康探针
 
 FROM composer:2 AS vendor
 WORKDIR /app
@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/tmp/cache \
     composer install --no-dev --optimize-autoloader --no-interaction --no-progress --prefer-dist \
     || composer update --no-dev --optimize-autoloader --no-interaction --no-progress --prefer-dist
 
-FROM php:8.3-cli
+FROM php:8.4-cli
 # 系统依赖：ext 所需（pcntl/posix 已内置，swoole 按需外挂）
 RUN apt-get update && apt-get install -y --no-install-recommends libzip-dev libicu-dev \
     && docker-php-ext-install zip opcache \
