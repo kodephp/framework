@@ -22,7 +22,7 @@
 3. **版本一致性**：`src/Application.php` 的 `VERSION` 与 `docs/`、`README.md` 中出现的版本号必须同步；
    提交前检查 `vendor/composer/installed.php` 与包内 `composer.json`/`src/*VERSION*` 是否一致。
 4. **不遗留补丁**：对 vendor 的过渡补丁在官方 tag 发布后必须移除并同步文档，vendor 保持纯净官方包。
-5. **测试纪律**：任何 src 改动必须跑通 `vendor/bin/phpunit`（全量 425+ tests）。沙箱缺扩展的环境性失败
+5. **测试纪律**：任何 src 改动必须跑通 `vendor/bin/phpunit`（全量 1120+ tests）。沙箱缺扩展的环境性失败
    （如 redis）如实标注，不编造「通过」。
 6. **目录结构纪律（全层级小写）**：`app/` 下**所有目录一律小写**——不限于第一层，含 `http/controllers`、`http/middleware`、
    `providers`、`models` 等；方法/类文件首字母大写驼峰（如 `app/http/controllers/UserController.php`、`app/console/GreetCommand.php`）；
@@ -38,7 +38,7 @@
 ## 常用命令
 
 ```bash
-vendor/bin/phpunit                      # 全量测试（需 PHP ≥ 8.1 + 常用扩展）
+vendor/bin/phpunit                      # 全量测试（需 PHP ≥ 8.4 + 常用扩展）
 php kode greet Kode                      # 命令自动发现冒烟（app/console/ 单层）
 # 新增 app/ 类无需 dump-autoload（PSR-4 即时加载）；仅改 composer.json 的 autoload 时再跑（见红线 6）
 ```
