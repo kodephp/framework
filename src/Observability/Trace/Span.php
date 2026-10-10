@@ -44,7 +44,7 @@ final class Span
     /**
      * 标记跨度结束（回填结束时间 + 状态）。
      */
-    public function finish(float $end = null, int $statusCode = SpanStatus::OK, string $statusMessage = ''): void
+    public function finish(?float $end = null, int $statusCode = SpanStatus::OK, string $statusMessage = ''): void
     {
         $this->end = $end ?? microtime(true);
         $this->statusCode = $statusCode;

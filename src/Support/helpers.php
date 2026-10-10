@@ -473,7 +473,7 @@ if (!function_exists('feature')) {
      *
      * @return \Kode\Framework\Feature\FeatureManager|bool
      */
-    function feature(string $name = null, ?string $key = null): FeatureManager|bool
+    function feature(?string $name = null, ?string $key = null): FeatureManager|bool
     {
         /** @var \Kode\Framework\Feature\FeatureManager $manager */
         $manager = resolve(\Kode\Framework\Feature\FeatureManager::class);
@@ -547,7 +547,7 @@ if (!function_exists('service')) {
      *
      * @return \Kode\Framework\ServiceDiscovery\ServiceDiscovery|\Kode\Framework\ServiceDiscovery\ServiceInstance|null
      */
-    function service(string $name = null, ?string $strategy = null): ServiceDiscovery|ServiceInstance|null
+    function service(?string $name = null, ?string $strategy = null): ServiceDiscovery|ServiceInstance|null
     {
         if (app() === null || !app()->container->bound(\Kode\Framework\ServiceDiscovery\ServiceDiscovery::class)) {
             return null;
