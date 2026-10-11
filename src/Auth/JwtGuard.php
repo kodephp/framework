@@ -139,7 +139,7 @@ final class JwtGuard implements AuthGuard
      * 框架只保留「claims 数组 → 签发」「令牌 → 校验」的薄适配与契约封装。
      */
     #[\Override]
-    public function authenticate(string $token, string $guard = 'api'): Payload
+    public function authenticate(#[\SensitiveParameter] string $token, string $guard = 'api'): Payload
     {
         return KodeJwt::guard($guard)->authenticate($token);
     }
@@ -148,13 +148,13 @@ final class JwtGuard implements AuthGuard
      * 续期：用未过期的旧令牌换取新令牌（refresh_ttl 内有效）。
      */
     #[\Override]
-    public function refresh(string $token, string $guard = 'api'): array
+    public function refresh(#[\SensitiveParameter] string $token, string $guard = 'api'): array
     {
         return KodeJwt::guard($guard)->refresh($token);
     }
 
     #[\Override]
-    public function invalidate(string $token, string $guard = 'api'): bool
+    public function invalidate(#[\SensitiveParameter] string $token, string $guard = 'api'): bool
     {
         return KodeJwt::guard($guard)->invalidate($token);
     }
@@ -163,7 +163,7 @@ final class JwtGuard implements AuthGuard
      * 按令牌把 jti 加入黑名单（即时失效，无需等过期）。
      */
     #[\Override]
-    public function revokeToken(string $token, string $guard = 'api'): bool
+    public function revokeToken(#[\SensitiveParameter] string $token, string $guard = 'api'): bool
     {
         return KodeJwt::revokeToken($token, $guard);
     }
@@ -205,7 +205,7 @@ final class JwtGuard implements AuthGuard
     /**
      * 仅校验令牌结构/签名/黑名单，不抛异常，返回是否有效。
      */
-    public function isTokenValid(string $token, string $guard = 'api'): bool
+    public function isTokenValid(#[\SensitiveParameter] string $token, string $guard = 'api'): bool
     {
         return KodeJwt::isTokenValid($token, $guard);
     }
@@ -215,7 +215,7 @@ final class JwtGuard implements AuthGuard
      *
      * @return array<string, mixed>|null
      */
-    public function getTokenInfo(string $token, string $guard = 'api'): ?array
+    public function getTokenInfo(#[\SensitiveParameter] string $token, string $guard = 'api'): ?array
     {
         return KodeJwt::getTokenInfo($token, $guard);
     }

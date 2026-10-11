@@ -28,24 +28,24 @@ interface AuthGuard
     /**
      * 校验令牌，失败抛异常。
      */
-    public function authenticate(string $token, string $guard = 'api'): Payload;
+    public function authenticate(#[\SensitiveParameter] string $token, string $guard = 'api'): Payload;
 
     /**
      * 续期：用未过期的旧令牌换取新令牌（refresh_ttl 内有效）。
      *
      * @return array<string, mixed>
      */
-    public function refresh(string $token, string $guard = 'api'): array;
+    public function refresh(#[\SensitiveParameter] string $token, string $guard = 'api'): array;
 
     /**
      * 注销（加入黑名单 / 使令牌失效）。
      */
-    public function invalidate(string $token, string $guard = 'api'): bool;
+    public function invalidate(#[\SensitiveParameter] string $token, string $guard = 'api'): bool;
 
     /**
      * 按令牌把 jti 加入黑名单（即时失效）。
      */
-    public function revokeToken(string $token, string $guard = 'api'): bool;
+    public function revokeToken(#[\SensitiveParameter] string $token, string $guard = 'api'): bool;
 
     /**
      * 判断 jti 是否已在黑名单中。

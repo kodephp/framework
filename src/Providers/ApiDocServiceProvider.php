@@ -125,7 +125,7 @@ HTML;
     /**
      * @param \Psr\Http\Message\ServerRequestInterface $request
      */
-    private function docAllowed(\Psr\Http\Message\ServerRequestInterface $request, string $protect, string $token): bool
+    private function docAllowed(\Psr\Http\Message\ServerRequestInterface $request, string $protect, #[\SensitiveParameter] string $token): bool
     {
         if ($protect === 'none') {
             return true;
