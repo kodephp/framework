@@ -16,6 +16,7 @@ use Kode\Framework\Translation\Translator;
  */
 final class TranslationServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(Translator::class, function (): Translator {

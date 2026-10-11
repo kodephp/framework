@@ -14,6 +14,7 @@ use Kode\Exception\ExceptionManager;
  */
 final class Exception extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return ExceptionManager::class;

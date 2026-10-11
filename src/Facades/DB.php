@@ -13,6 +13,7 @@ use Kode\Core\Facade;
  */
 final class DB extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return \Kode\Database\Db\Db::class;

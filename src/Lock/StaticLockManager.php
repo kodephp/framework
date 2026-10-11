@@ -43,6 +43,7 @@ final class StaticLockManager implements LockManager
         $this->ownerId = bin2hex(random_bytes(12));
     }
 
+    #[\Override]
     public function acquire(string $key, int $ttl = 30, ?string $owner = null): bool
     {
         $owner = $owner ?? $this->ownerId;
@@ -107,6 +108,7 @@ final class StaticLockManager implements LockManager
         return false;
     }
 
+    #[\Override]
     public function release(string $key, ?string $owner = null): bool
     {
         $owner = $owner ?? $this->ownerId;
@@ -187,6 +189,7 @@ final class StaticLockManager implements LockManager
         return true;
     }
 
+    #[\Override]
     public function isLocked(string $key): bool
     {
         $current = $this->read($key);
@@ -202,6 +205,7 @@ final class StaticLockManager implements LockManager
         return true;
     }
 
+    #[\Override]
     public function owner(string $key): ?string
     {
         $current = $this->read($key);
@@ -212,6 +216,7 @@ final class StaticLockManager implements LockManager
         return $current['owner'];
     }
 
+    #[\Override]
     public function ttl(string $key): ?int
     {
         $current = $this->read($key);
@@ -228,6 +233,7 @@ final class StaticLockManager implements LockManager
         return $remaining;
     }
 
+    #[\Override]
     public function forceRelease(string $key): bool
     {
         $current = $this->read($key);
@@ -240,6 +246,7 @@ final class StaticLockManager implements LockManager
         return true;
     }
 
+    #[\Override]
     public function keys(): array
     {
         if ($this->dir === null) {
@@ -256,6 +263,7 @@ final class StaticLockManager implements LockManager
         return array_values(array_filter($keys, fn (string $k): bool => $this->isLocked($k)));
     }
 
+    #[\Override]
     public function run(string $key, callable $work, int $ttl = 30): mixed
     {
         if (!$this->acquire($key, $ttl)) {

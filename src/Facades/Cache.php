@@ -12,6 +12,7 @@ use Kode\Core\Facade;
  */
 final class Cache extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return CacheManager::class;

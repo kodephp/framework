@@ -23,6 +23,7 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class AuthMiddleware implements MiddlewareInterface
 {
+    #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $token = Request::bearerToken();

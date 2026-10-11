@@ -25,6 +25,7 @@ use Kode\Framework\Server\GracefulShutdown;
  */
 final class TracerServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         // 追踪总开关关闭时，一并关闭 kode/http 的入站链路头同步（每请求省 4× 头嗅探）：
@@ -54,6 +55,7 @@ final class TracerServiceProvider extends ServiceProvider
         $this->container->alias('tracer', Tracer::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var array<string, mixed> $cfg */

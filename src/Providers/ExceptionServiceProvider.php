@@ -29,6 +29,7 @@ use Psr\Log\LoggerInterface;
  */
 final class ExceptionServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(ExceptionManager::class, function (): ExceptionManager {

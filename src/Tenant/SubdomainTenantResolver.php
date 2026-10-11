@@ -19,6 +19,7 @@ final class SubdomainTenantResolver implements TenantResolver
     ) {
     }
 
+    #[\Override]
     public function resolve(ServerRequestInterface $request): ?string
     {
         $host = $request->getUri()->getHost();

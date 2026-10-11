@@ -26,11 +26,13 @@ use Kode\Framework\Providers\ServiceProvider;
  */
 final class PluginServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(PluginManager::class, fn(): PluginManager => new PluginManager($this->container));
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var PluginManager $manager */

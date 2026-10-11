@@ -19,26 +19,31 @@ final class FiberBreaker implements CircuitBreaker
     {
     }
 
+    #[\Override]
     public function allowRequest(): bool
     {
         return $this->inner->allowRequest();
     }
 
+    #[\Override]
     public function recordSuccess(): void
     {
         $this->inner->recordSuccess();
     }
 
+    #[\Override]
     public function recordFailure(): void
     {
         $this->inner->recordFailure();
     }
 
+    #[\Override]
     public function state(): string
     {
         return $this->inner->state();
     }
 
+    #[\Override]
     public function metrics(): array
     {
         return $this->inner->metrics();

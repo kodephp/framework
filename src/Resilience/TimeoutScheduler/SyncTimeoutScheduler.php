@@ -18,6 +18,7 @@ use Kode\Framework\Resilience\TimeoutScheduler;
  */
 final class SyncTimeoutScheduler implements TimeoutScheduler
 {
+    #[\Override]
     public function run(callable $op, float $seconds): mixed
     {
         $start = microtime(true);

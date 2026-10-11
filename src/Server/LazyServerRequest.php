@@ -63,6 +63,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
      * 供 kode/http 链路追踪嗅探（hasTraceHeaders）等热路径守卫做早退判断，
      * 避免强制 server params 构建 / header 规范化。
      */
+    #[\Override]
     public function isHeadersResolved(): bool
     {
         return $this->headersResolved;
@@ -75,6 +76,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
      *   （header 规范化）或 getServerParams()（引导构建）；
      * - 已解析：退化为普通 getHeaderLine。
      */
+    #[\Override]
     public function peekHeader(string $name): ?string
     {
         if (!$this->headersResolved) {
@@ -136,6 +138,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
     /**
      * 服务器参数：首次访问才从原生请求构建（显式传入则原样保留）。
      */
+    #[\Override]
     public function getServerParams(): array
     {
         if ($this->lazyServerParams !== null) {
@@ -170,6 +173,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
      * 业务/中间件真正调用 {@see getProtocolVersion()} 时才付出解析成本，
      * 语义与旧实现（构造期提取）完全一致。
      */
+    #[\Override]
     public function getProtocolVersion(): string
     {
         if ($this->lazyProtocolVersion === null) {
@@ -185,6 +189,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
      * 与基类（可变风格）保持一致：原地更新协议版本并同步懒解析缓存，
      * 避免 with 之后 getProtocolVersion() 读到旧缓存值。
      */
+    #[\Override]
     public function withProtocolVersion(string $version): static
     {
         parent::withProtocolVersion($version);
@@ -193,16 +198,19 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return $this;
     }
 
+    #[\Override]
     public function getQueryParams(): array
     {
         return $this->lazyQuery ??= $this->native->get();
     }
 
+    #[\Override]
     public function getCookieParams(): array
     {
         return $this->lazyCookie ??= $this->native->cookies();
     }
 
+    #[\Override]
     public function getParsedBody(): mixed
     {
         if (!$this->bodyParsed) {
@@ -213,6 +221,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return $this->lazyBody;
     }
 
+    #[\Override]
     public function getUploadedFiles(): array
     {
         return $this->lazyFiles ??= $this->normalizeFiles($this->native->files());
@@ -221,6 +230,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
     /**
      * 请求头：首次访问才从原生解析进基类（protected 字段可直接写）。
      */
+    #[\Override]
     public function getHeaders(): array
     {
         $this->resolveHeaders();
@@ -228,6 +238,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::getHeaders();
     }
 
+    #[\Override]
     public function hasHeader(string $name): bool
     {
         $this->resolveHeaders();
@@ -235,6 +246,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::hasHeader($name);
     }
 
+    #[\Override]
     public function getHeader(string $name): array
     {
         $this->resolveHeaders();
@@ -242,6 +254,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::getHeader($name);
     }
 
+    #[\Override]
     public function getHeaderLine(string $name): string
     {
         $this->resolveHeaders();
@@ -249,6 +262,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::getHeaderLine($name);
     }
 
+    #[\Override]
     public function withHeader(string $name, $value): static
     {
         $this->resolveHeaders();
@@ -256,6 +270,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::withHeader($name, $value);
     }
 
+    #[\Override]
     public function withAddedHeader(string $name, $value): static
     {
         $this->resolveHeaders();
@@ -263,6 +278,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::withAddedHeader($name, $value);
     }
 
+    #[\Override]
     public function withoutHeader(string $name): static
     {
         $this->resolveHeaders();
@@ -273,6 +289,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
     /**
      * 原始请求体：首次访问才从原生读取（显式传入的流原样保留）。
      */
+    #[\Override]
     public function getBody(): StreamInterface
     {
         if (!$this->rawBodyResolved) {
@@ -285,6 +302,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::getBody();
     }
 
+    #[\Override]
     public function withBody(StreamInterface $body): static
     {
         $this->rawBodyResolved = true;
@@ -293,6 +311,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::withBody($body);
     }
 
+    #[\Override]
     public function withQueryParams(array $query): static
     {
         $this->lazyQuery = $query;
@@ -300,6 +319,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::withQueryParams($query);
     }
 
+    #[\Override]
     public function withCookieParams(array $cookies): static
     {
         $this->lazyCookie = $cookies;
@@ -307,6 +327,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::withCookieParams($cookies);
     }
 
+    #[\Override]
     public function withParsedBody(mixed $data): static
     {
         $this->lazyBody = $data;
@@ -315,6 +336,7 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         return parent::withParsedBody($data);
     }
 
+    #[\Override]
     public function withUploadedFiles(array $uploadedFiles): static
     {
         $this->lazyFiles = $uploadedFiles;

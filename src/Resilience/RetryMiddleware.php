@@ -48,6 +48,7 @@ final class RetryMiddleware implements MiddlewareInterface
     ) {
     }
 
+    #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         if (empty($this->options['enabled'] ?? true)) {

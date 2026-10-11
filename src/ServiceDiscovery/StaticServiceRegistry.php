@@ -60,6 +60,7 @@ final class StaticServiceRegistry implements ServiceRegistry
         }
     }
 
+    #[\Override]
     public function register(ServiceInstance $instance): bool
     {
         $isNew = !isset($this->byId[$instance->id]);
@@ -74,6 +75,7 @@ final class StaticServiceRegistry implements ServiceRegistry
         return $isNew;
     }
 
+    #[\Override]
     public function unregister(string $id): void
     {
         $instance = $this->byId[$id] ?? null;
@@ -92,11 +94,13 @@ final class StaticServiceRegistry implements ServiceRegistry
         }
     }
 
+    #[\Override]
     public function get(string $id): ?ServiceInstance
     {
         return $this->byId[$id] ?? null;
     }
 
+    #[\Override]
     public function discover(string $name): array
     {
         $ids = $this->byName[$name] ?? [];
@@ -107,6 +111,7 @@ final class StaticServiceRegistry implements ServiceRegistry
         ));
     }
 
+    #[\Override]
     public function all(): array
     {
         $out = [];
@@ -117,11 +122,13 @@ final class StaticServiceRegistry implements ServiceRegistry
         return $out;
     }
 
+    #[\Override]
     public function names(): array
     {
         return array_keys($this->byName);
     }
 
+    #[\Override]
     public function count(): int
     {
         return count($this->byId);

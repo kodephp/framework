@@ -19,6 +19,7 @@ use Psr\Log\LoggerInterface;
  */
 final class LogServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(LoggerInterface::class, function (): LoggerInterface {
@@ -36,6 +37,7 @@ final class LogServiceProvider extends ServiceProvider
         $this->container->alias('accessLogSink', AccessLogSink::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var array<string, mixed> $cfg */

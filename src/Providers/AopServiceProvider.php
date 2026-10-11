@@ -23,6 +23,7 @@ use Kode\Framework\Providers\ServiceProvider;
  */
 final class AopServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         /** @var array<string, mixed> $config */

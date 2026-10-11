@@ -32,6 +32,7 @@ use Kode\Fibers\Core\CircuitBreaker as FiberCircuitBreaker;
  */
 final class ResilienceServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(Breaker::class, function (): Breaker {

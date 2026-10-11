@@ -16,6 +16,7 @@ use Kode\Framework\Providers\ServiceProvider;
  */
 final class SnowflakeServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(Snowflake::class, function (): Snowflake {

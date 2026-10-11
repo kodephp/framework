@@ -27,6 +27,7 @@ final class DatabaseServiceProvider extends ServiceProvider
     /** @var bool 慢查询监听是否已挂上（EventManager 是进程级单例） */
     private static bool $slowQueryListenerRegistered = false;
 
+    #[\Override]
     public function register(): void
     {
         /** @var array<string, mixed> $config */

@@ -22,6 +22,7 @@ use Kode\Framework\Scheduling\TaskScanner;
  */
 final class SchedulingServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(ScheduleDispatcher::class, function (): ScheduleDispatcher {

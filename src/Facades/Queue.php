@@ -13,6 +13,7 @@ use Kode\Core\Facade;
  */
 final class Queue extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return \Kode\Queue\Queue::class;

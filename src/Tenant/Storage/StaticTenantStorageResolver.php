@@ -45,6 +45,7 @@ final class StaticTenantStorageResolver implements TenantConnectionResolver
     ) {
     }
 
+    #[\Override]
     public function resolve(string $tenantId): ?array
     {
         return match ($this->strategy) {

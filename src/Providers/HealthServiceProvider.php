@@ -20,6 +20,7 @@ use Kode\Framework\Health\HealthChecker;
  */
 final class HealthServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(HealthChecker::class, function (): HealthChecker {

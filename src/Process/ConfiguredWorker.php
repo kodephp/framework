@@ -36,11 +36,13 @@ final class ConfiguredWorker extends Worker
     ) {
     }
 
+    #[\Override]
     public function name(): string
     {
         return $this->inner->name();
     }
 
+    #[\Override]
     public function handle(int $slot = 0): void
     {
         // 内层 worker 若声明了 handle(int $slot = 0)（感知槽位），转发槽位；否则维持 handle()。
@@ -52,6 +54,7 @@ final class ConfiguredWorker extends Worker
         }
     }
 
+    #[\Override]
     public function interval(): float
     {
         if (isset($this->declared['interval'])) {
@@ -61,6 +64,7 @@ final class ConfiguredWorker extends Worker
         return $this->inner->interval();
     }
 
+    #[\Override]
     public function instances(): int
     {
         $base = $this->inner->instances();
@@ -71,6 +75,7 @@ final class ConfiguredWorker extends Worker
         return max(1, $base);
     }
 
+    #[\Override]
     public function slots(): array
     {
         if (isset($this->declared['slots'])) {
@@ -80,6 +85,7 @@ final class ConfiguredWorker extends Worker
         return $this->inner->slots();
     }
 
+    #[\Override]
     public function once(): bool
     {
         if (isset($this->declared['once'])) {
@@ -89,11 +95,13 @@ final class ConfiguredWorker extends Worker
         return $this->inner->once();
     }
 
+    #[\Override]
     public function onStart(): void
     {
         $this->inner->onStart();
     }
 
+    #[\Override]
     public function onStop(): void
     {
         $this->inner->onStop();

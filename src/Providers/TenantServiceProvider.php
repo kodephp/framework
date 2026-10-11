@@ -19,6 +19,7 @@ use Kode\Framework\Tenant\TenantResolver;
  */
 final class TenantServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(TenantResolver::class, function (): ?TenantResolver {

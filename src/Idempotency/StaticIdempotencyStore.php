@@ -33,11 +33,13 @@ final class StaticIdempotencyStore implements IdempotencyStore
     ) {
     }
 
+    #[\Override]
     public function has(string $key): bool
     {
         return $this->read($key) !== null;
     }
 
+    #[\Override]
     public function put(string $key, int $ttl, ?string $payload = null): bool
     {
         if ($this->dir === null) {
@@ -62,6 +64,7 @@ final class StaticIdempotencyStore implements IdempotencyStore
         return true;
     }
 
+    #[\Override]
     public function payload(string $key): ?string
     {
         $current = $this->read($key);
@@ -72,6 +75,7 @@ final class StaticIdempotencyStore implements IdempotencyStore
         return $current['payload'] ?? null;
     }
 
+    #[\Override]
     public function attach(string $key, ?string $payload): void
     {
         $current = $this->read($key);
@@ -82,11 +86,13 @@ final class StaticIdempotencyStore implements IdempotencyStore
         $this->write($key, $current);
     }
 
+    #[\Override]
     public function forget(string $key): void
     {
         $this->clear($key);
     }
 
+    #[\Override]
     public function ttl(string $key): ?int
     {
         $current = $this->read($key);
@@ -98,6 +104,7 @@ final class StaticIdempotencyStore implements IdempotencyStore
         return $remaining > 0 ? $remaining : null;
     }
 
+    #[\Override]
     public function keys(): array
     {
         if ($this->dir === null) {
@@ -114,6 +121,7 @@ final class StaticIdempotencyStore implements IdempotencyStore
         return array_values(array_filter($keys, fn (string $k): bool => $this->has($k)));
     }
 
+    #[\Override]
     public function prune(): void
     {
         if ($this->dir === null) {

@@ -19,6 +19,7 @@ use Kode\Http\Response;
  */
 final class ApiDocServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(OpenApiGenerator::class, function (): OpenApiGenerator {
@@ -32,6 +33,7 @@ final class ApiDocServiceProvider extends ServiceProvider
         $this->container->alias('apidoc', OpenApiGenerator::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
         // 默认关闭：未显式配置 enabled=true 时不挂载任何文档端点，

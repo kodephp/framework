@@ -22,6 +22,7 @@ use Psr\Log\LoggerInterface;
  */
 final class ComplianceServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(AuditSink::class, static fn(): AuditSink => new AuditSink());
@@ -39,6 +40,7 @@ final class ComplianceServiceProvider extends ServiceProvider
         $this->container->alias('audit', AuditService::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var App $app */

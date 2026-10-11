@@ -23,6 +23,7 @@ use Kode\Framework\Tenant\Storage\TenantStorageMiddleware;
  */
 final class TenantStorageServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         /** @var array<string, mixed> $tenant */

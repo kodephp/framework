@@ -35,6 +35,7 @@ final class PackInfoCommand extends Command
     /** 本命令认识的选项 */
     private const OPTS = ['json'];
 
+    #[\Override]
     protected function handle(): int
     {
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {

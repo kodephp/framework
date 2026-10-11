@@ -25,6 +25,7 @@ final class StaticIdempotencyManager implements IdempotencyManager
     ) {
     }
 
+    #[\Override]
     public function once(string $key, callable $work, int $ttl = 3600): mixed
     {
         if ($this->store->has($key)) {
@@ -51,6 +52,7 @@ final class StaticIdempotencyManager implements IdempotencyManager
         }
     }
 
+    #[\Override]
     public function seen(string $key, int $ttl = 3600): bool
     {
         if ($this->store->has($key)) {
@@ -67,21 +69,25 @@ final class StaticIdempotencyManager implements IdempotencyManager
         return $recorded;
     }
 
+    #[\Override]
     public function forget(string $key): void
     {
         $this->store->forget($key);
     }
 
+    #[\Override]
     public function attach(string $key, ?string $payload): void
     {
         $this->store->attach($key, $payload);
     }
 
+    #[\Override]
     public function replay(string $key): ?string
     {
         return $this->store->payload($key);
     }
 
+    #[\Override]
     public function store(): IdempotencyStore
     {
         return $this->store;

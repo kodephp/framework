@@ -15,6 +15,7 @@ use Kode\Framework\Validation\Validator;
  */
 final class ValidationServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(Validator::class, fn(): Validator => new Validator());

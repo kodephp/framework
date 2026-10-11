@@ -27,6 +27,7 @@ use Kode\Framework\Lock\StaticLockManager;
  */
 final class LockServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(LockManager::class, function (): LockManager {

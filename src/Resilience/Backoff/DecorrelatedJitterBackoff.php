@@ -25,6 +25,7 @@ final class DecorrelatedJitterBackoff implements BackoffStrategy
         $this->previous = $base;
     }
 
+    #[\Override]
     public function delay(int $attempt): float
     {
         $min = $this->base;

@@ -11,6 +11,7 @@ use Kode\Core\Facade;
  */
 final class Schema extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return \Kode\Framework\Database\Schema::class;

@@ -23,6 +23,7 @@ final class ProcessListCommand extends Command
     /** 本命令不接选项；传任何选项都当误用报掉 */
     private const OPTS = [];
 
+    #[\Override]
     protected function handle(): int
     {
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {

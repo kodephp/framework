@@ -12,6 +12,7 @@ use Kode\Framework\Messaging\Messenger;
  */
 final class Messaging extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return Messenger::class;

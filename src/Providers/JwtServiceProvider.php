@@ -13,6 +13,7 @@ use Kode\Framework\Providers\ServiceProvider;
  */
 final class JwtServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(JwtGuard::class, function (): JwtGuard {
@@ -27,6 +28,7 @@ final class JwtServiceProvider extends ServiceProvider
         $this->container->alias('jwt', JwtGuard::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
         // 启动期可见性（非阻断）：HS 守卫已声明但 secret 为空时，鉴权接口首请求必 500。

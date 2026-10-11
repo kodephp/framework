@@ -22,11 +22,13 @@ final class FileConfigSource implements ConfigSource
     {
     }
 
+    #[\Override]
     public function name(): string
     {
         return (string) ($this->options['name'] ?? basename((string) ($this->options['path'] ?? 'file')));
     }
 
+    #[\Override]
     public function isReloadable(): bool
     {
         return true;
@@ -35,6 +37,7 @@ final class FileConfigSource implements ConfigSource
     /**
      * @return array<string, mixed>
      */
+    #[\Override]
     public function load(): array
     {
         $path = (string) ($this->options['path'] ?? '');

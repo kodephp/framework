@@ -15,6 +15,7 @@ use Kode\Framework\Providers\ServiceProvider;
  */
 final class CacheServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(CacheManager::class, function (): CacheManager {

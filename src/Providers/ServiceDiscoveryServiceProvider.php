@@ -21,11 +21,13 @@ use Kode\Framework\ServiceDiscovery\StaticServiceRegistry;
  */
 final class ServiceDiscoveryServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         // 实例与播种在 boot() 中完成（config 已加载），这里不提前绑定以免空壳。
     }
 
+    #[\Override]
     public function boot(): void
     {
         if (!(bool) $this->config('services.enabled', true)) {

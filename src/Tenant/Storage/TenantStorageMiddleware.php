@@ -30,6 +30,7 @@ final class TenantStorageMiddleware implements MiddlewareInterface
     ) {
     }
 
+    #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $tenantId = TenantContext::id();

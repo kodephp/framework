@@ -22,6 +22,7 @@ use Kode\Framework\Resilience\TimeoutScheduler;
  */
 final class FiberTimeoutScheduler implements TimeoutScheduler
 {
+    #[\Override]
     public function run(callable $op, float $seconds): mixed
     {
         try {

@@ -53,6 +53,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
     ) {
     }
 
+    #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         // 路由属性门控（白名单式）：注入 registry 时仅显式 #[Idempotency] 标记的路由参与

@@ -23,6 +23,7 @@ final class ExponentialBackoff implements BackoffStrategy
     ) {
     }
 
+    #[\Override]
     public function delay(int $attempt): float
     {
         $raw = $this->base * ($this->factor ** max(0, $attempt - 1));

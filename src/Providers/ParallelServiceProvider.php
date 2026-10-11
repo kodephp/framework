@@ -30,6 +30,7 @@ use Kode\Parallel\Runtime\Runtime;
  */
 final class ParallelServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         /** @var array<string, mixed> $config */

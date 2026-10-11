@@ -12,6 +12,7 @@ use Kode\Framework\Observability\Metrics\MetricRegistry;
  */
 final class Metrics extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return MetricRegistry::class;

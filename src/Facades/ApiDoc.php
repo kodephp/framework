@@ -12,6 +12,7 @@ use Kode\Framework\ApiDoc\OpenApiGenerator;
  */
 final class ApiDoc extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return OpenApiGenerator::class;

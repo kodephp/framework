@@ -25,11 +25,13 @@ final class SlotWorker extends Worker
     ) {
     }
 
+    #[\Override]
     public function name(): string
     {
         return $this->inner->name() . ':' . $this->slot;
     }
 
+    #[\Override]
     public function handle(int $slot = 0): void
     {
         // 内层未感知槽位（handle() 零参）时，多实例本会各自执行一遍——保持该行为。
@@ -41,31 +43,37 @@ final class SlotWorker extends Worker
         }
     }
 
+    #[\Override]
     public function interval(): float
     {
         return $this->inner->interval();
     }
 
+    #[\Override]
     public function instances(): int
     {
         return 1;
     }
 
+    #[\Override]
     public function slots(): array
     {
         return [$this->slot];
     }
 
+    #[\Override]
     public function once(): bool
     {
         return false;
     }
 
+    #[\Override]
     public function onStart(): void
     {
         $this->inner->onStart();
     }
 
+    #[\Override]
     public function onStop(): void
     {
         $this->inner->onStop();

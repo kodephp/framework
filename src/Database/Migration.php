@@ -37,16 +37,19 @@ use Kode\Database\Database\Migrations\Migration as BaseMigration;
  */
 abstract class Migration extends BaseMigration
 {
+    #[\Override]
     protected function create(string $table, callable $callback): void
     {
         Schema::create($table, $callback);
     }
 
+    #[\Override]
     protected function table(string $table, callable $callback): void
     {
         Schema::table($table, $callback);
     }
 
+    #[\Override]
     protected function drop(string $table): void
     {
         Schema::drop($table);

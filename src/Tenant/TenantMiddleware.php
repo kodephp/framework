@@ -29,6 +29,7 @@ final class TenantMiddleware implements MiddlewareInterface
     ) {
     }
 
+    #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $id = $this->resolver?->resolve($request) ?? $this->default;

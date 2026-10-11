@@ -18,11 +18,13 @@ use Psr\Log\LoggerInterface;
  */
 final class ConfigServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         // 配置已在 Application 启动阶段绑定，这里无需重复绑定。
     }
 
+    #[\Override]
     public function boot(): void
     {
         $this->applyTimezone();

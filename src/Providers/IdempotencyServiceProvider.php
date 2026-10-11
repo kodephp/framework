@@ -27,6 +27,7 @@ use Kode\Framework\Idempotency\StaticIdempotencyStore;
  */
 final class IdempotencyServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(IdempotencyManager::class, function (): IdempotencyManager {

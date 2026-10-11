@@ -35,6 +35,7 @@ final class MessagingConsumeCommand extends Command
     /** @var list<string> 处理器约定方法（按优先级） */
     private const array HANDLER_METHODS = ['handle', '__invoke', 'run', 'execute'];
 
+    #[\Override]
     protected function handle(): int
     {
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {

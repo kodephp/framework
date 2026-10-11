@@ -22,11 +22,13 @@ use Kode\Framework\Config\ConfigSource;
  */
 final class ConfigCenterServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         // 单例在 boot() 中按「已启用的源」实例化并 seed，这里不提前绑定以免空壳。
     }
 
+    #[\Override]
     public function boot(): void
     {
         if (!(bool) $this->config('center.enabled', false)) {

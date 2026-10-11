@@ -12,6 +12,7 @@ use Kode\Core\Facade;
  */
 final class Event extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return Dispatcher::class;

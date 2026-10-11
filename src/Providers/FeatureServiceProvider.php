@@ -19,6 +19,7 @@ use Kode\Framework\Feature\FeatureRegistry;
  */
 final class FeatureServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(FeatureRegistry::class, fn(): FeatureRegistry => new FeatureRegistry());
@@ -32,6 +33,7 @@ final class FeatureServiceProvider extends ServiceProvider
         $this->container->alias('feature', FeatureManager::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
     }

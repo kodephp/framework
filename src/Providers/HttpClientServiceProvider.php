@@ -12,6 +12,7 @@ use Kode\HttpClient\HttpClient;
  */
 final class HttpClientServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(HttpClient::class, function (): HttpClient {

@@ -56,6 +56,7 @@ class Schema extends BaseSchema
      * @param string|null $driver 目标驱动；缺省时取默认连接的驱动，保证 DDL 方言与
      *                            执行连接一致（此前恒为 MySQL 方言，sqlite 下建表直接报错）。
      */
+    #[\Override]
     public static function create(string $table, callable $callback, ?string $driver = null): string
     {
         self::assertIdentifier($table, '表名');
@@ -72,6 +73,7 @@ class Schema extends BaseSchema
      *
      * @param string|null $driver 目标驱动（同 {@see self::create}，缺省跟默认连接）。
      */
+    #[\Override]
     public static function table(string $table, callable $callback, ?string $driver = null): string
     {
         self::assertIdentifier($table, '表名');
@@ -86,6 +88,7 @@ class Schema extends BaseSchema
     /**
      * 删除表并执行（返回生成的 DDL）。
      */
+    #[\Override]
     public static function drop(string $table): string
     {
         self::assertIdentifier($table, '表名');

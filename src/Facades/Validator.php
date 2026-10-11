@@ -12,6 +12,7 @@ use Kode\Framework\Validation\Validator as ValidationValidator;
  */
 final class Validator extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return ValidationValidator::class;

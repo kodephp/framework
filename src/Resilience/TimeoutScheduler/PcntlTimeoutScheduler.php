@@ -21,6 +21,7 @@ use Kode\Framework\Resilience\TimeoutScheduler;
  */
 final class PcntlTimeoutScheduler implements TimeoutScheduler
 {
+    #[\Override]
     public function run(callable $op, float $seconds): mixed
     {
         if (!extension_loaded('pcntl') || PHP_SAPI !== 'cli') {

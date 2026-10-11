@@ -28,6 +28,7 @@ final class LocaleMiddleware implements MiddlewareInterface
     ) {
     }
 
+    #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         if (empty($this->config['enabled'])) {

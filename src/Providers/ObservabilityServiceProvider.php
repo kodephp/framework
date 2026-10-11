@@ -21,12 +21,14 @@ use Kode\Http\Response;
  */
 final class ObservabilityServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(MetricRegistry::class, fn(): MetricRegistry => new MetricRegistry());
         $this->container->alias('metrics', MetricRegistry::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var App $app */

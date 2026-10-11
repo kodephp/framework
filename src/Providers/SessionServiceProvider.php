@@ -20,6 +20,7 @@ use Kode\Session\SessionManager;
  */
 final class SessionServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(SessionManager::class, function (): SessionManager {

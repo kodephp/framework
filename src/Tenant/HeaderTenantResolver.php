@@ -18,6 +18,7 @@ final class HeaderTenantResolver implements TenantResolver
     ) {
     }
 
+    #[\Override]
     public function resolve(ServerRequestInterface $request): ?string
     {
         $value = $request->getHeaderLine($this->header);

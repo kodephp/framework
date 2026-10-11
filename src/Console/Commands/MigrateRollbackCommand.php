@@ -25,6 +25,7 @@ final class MigrateRollbackCommand extends Command
     /** 本命令认识的选项 */
     private const OPTS = ['step'];
 
+    #[\Override]
     protected function handle(): int
     {
         // 回滚是这批命令里最贵的写操作：`migrate:rollback --pretend` 被静默忽略

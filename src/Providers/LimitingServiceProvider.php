@@ -23,6 +23,7 @@ use Kode\Limiting\RateLimiterInterface;
  */
 final class LimitingServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $config = (array) $this->config('limiting', []);

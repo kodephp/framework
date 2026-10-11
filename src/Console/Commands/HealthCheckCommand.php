@@ -27,6 +27,7 @@ final class HealthCheckCommand extends Command
     /** 本命令认识的选项 */
     private const OPTS = ['ready', 'json'];
 
+    #[\Override]
     protected function handle(): int
     {
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {

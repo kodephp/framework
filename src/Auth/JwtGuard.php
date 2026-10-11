@@ -99,6 +99,7 @@ final class JwtGuard implements AuthGuard
      * 有效期钳制：exp 恒不超过 iat + 守卫 ttl——调用方传入的超长 exp 会被
      * 压到上限（需更长有效期请调高 ttl，而非逐次传参）；iat 缺省为当前时间。
      */
+    #[\Override]
     public function issue(array $claims, string $guard = 'api'): string
     {
         $guardConfig = $this->guardConfig($guard);
@@ -137,6 +138,7 @@ final class JwtGuard implements AuthGuard
      * 委托 kode/jwt 的 GuardInterface 实例（KodeJwt::guard）处理，
      * 框架只保留「claims 数组 → 签发」「令牌 → 校验」的薄适配与契约封装。
      */
+    #[\Override]
     public function authenticate(string $token, string $guard = 'api'): Payload
     {
         return KodeJwt::guard($guard)->authenticate($token);
@@ -145,11 +147,13 @@ final class JwtGuard implements AuthGuard
     /**
      * 续期：用未过期的旧令牌换取新令牌（refresh_ttl 内有效）。
      */
+    #[\Override]
     public function refresh(string $token, string $guard = 'api'): array
     {
         return KodeJwt::guard($guard)->refresh($token);
     }
 
+    #[\Override]
     public function invalidate(string $token, string $guard = 'api'): bool
     {
         return KodeJwt::guard($guard)->invalidate($token);
@@ -158,6 +162,7 @@ final class JwtGuard implements AuthGuard
     /**
      * 按令牌把 jti 加入黑名单（即时失效，无需等过期）。
      */
+    #[\Override]
     public function revokeToken(string $token, string $guard = 'api'): bool
     {
         return KodeJwt::revokeToken($token, $guard);
@@ -174,6 +179,7 @@ final class JwtGuard implements AuthGuard
     /**
      * 判断 jti 是否已在黑名单中。
      */
+    #[\Override]
     public function isBlacklisted(string $jti, string $guard = 'api'): bool
     {
         return KodeJwt::isBlacklisted($jti, $guard);
@@ -182,6 +188,7 @@ final class JwtGuard implements AuthGuard
     /**
      * 把 jti 移出黑名单（恢复可用）。
      */
+    #[\Override]
     public function unblacklist(string $jti, string $guard = 'api'): bool
     {
         return KodeJwt::unblacklist($jti, $guard);

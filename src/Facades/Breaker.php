@@ -13,6 +13,7 @@ use Kode\Core\Facade;
  */
 final class Breaker extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return \Kode\Framework\Resilience\Breaker::class;

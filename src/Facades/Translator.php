@@ -13,6 +13,7 @@ use Kode\Core\Facade;
  */
 final class Translator extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return \Kode\Framework\Translation\Translator::class;

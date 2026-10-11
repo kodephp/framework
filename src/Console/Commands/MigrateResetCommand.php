@@ -24,6 +24,7 @@ final class MigrateResetCommand extends Command
     /** 本命令不接选项；传任何选项都当误用报掉（`--pretend` 之类） */
     private const OPTS = [];
 
+    #[\Override]
     protected function handle(): int
     {
         // reset 撤的是全部迁移。任何看不懂的选项都可能是「以为传了 dry-run、实际全量回滚」

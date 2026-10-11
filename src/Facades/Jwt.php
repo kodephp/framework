@@ -12,6 +12,7 @@ use Kode\Framework\Auth\JwtGuard;
  */
 final class Jwt extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return JwtGuard::class;

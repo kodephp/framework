@@ -26,6 +26,7 @@ final class MigrateCommand extends Command
     /** 本命令认识的选项 */
     private const OPTS = ['step', 'pretend'];
 
+    #[\Override]
     protected function handle(): int
     {
         // 不静默忽略：写库命令上「以为传了 dry-run、实际全量执行」是最贵的误会

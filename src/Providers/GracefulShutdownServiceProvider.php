@@ -23,12 +23,14 @@ use Kode\Framework\Server\GracefulShutdown;
  */
 final class GracefulShutdownServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(GracefulShutdown::class, fn(): GracefulShutdown => new GracefulShutdown());
         $this->container->alias('graceful', GracefulShutdown::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var GracefulShutdown $manager */

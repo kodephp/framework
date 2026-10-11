@@ -11,6 +11,7 @@ use Kode\Framework\Messaging\Messenger;
  */
 final class MessagingServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(Messenger::class, function (): Messenger {

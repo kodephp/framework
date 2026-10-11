@@ -43,6 +43,7 @@ final class ClusterCoordinator implements CoordinatorInterface
     /**
      * 轮次开始：释放上轮持有的派发锁（如有）。
      */
+    #[\Override]
     public function tick(): void
     {
         if ($this->held !== null) {
@@ -58,6 +59,7 @@ final class ClusterCoordinator implements CoordinatorInterface
     /**
      * 本轮是否应当派发：抢到分布式锁的节点返回 true。
      */
+    #[\Override]
     public function shouldDispatch(): bool
     {
         try {

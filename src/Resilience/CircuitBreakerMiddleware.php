@@ -59,6 +59,7 @@ final class CircuitBreakerMiddleware implements MiddlewareInterface
         $this->dispatcher = $dispatcher === null ? null : \Closure::fromCallable($dispatcher);
     }
 
+    #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         if (empty($this->options['enabled'] ?? true)) {

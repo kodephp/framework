@@ -16,6 +16,7 @@ final class FixedBackoff implements BackoffStrategy
     ) {
     }
 
+    #[\Override]
     public function delay(int $attempt): float
     {
         return max(0.0, $this->delay);

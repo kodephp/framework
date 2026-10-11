@@ -47,11 +47,13 @@ use Kode\Framework\Providers\ServiceProvider;
  */
 final class ConsoleServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(Kernel::class, fn(): Kernel => new Kernel());
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var Kernel $kernel */

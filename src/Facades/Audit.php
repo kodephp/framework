@@ -12,6 +12,7 @@ use Kode\Framework\Security\Audit\AuditService;
  */
 final class Audit extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return AuditService::class;

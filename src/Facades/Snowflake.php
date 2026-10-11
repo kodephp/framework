@@ -14,6 +14,7 @@ use Kode\Core\Facade;
  */
 final class Snowflake extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return \Kode\Framework\Support\Snowflake::class;

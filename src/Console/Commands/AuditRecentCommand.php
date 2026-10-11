@@ -29,6 +29,7 @@ final class AuditRecentCommand extends Command
     /** 本命令认识的选项 */
     private const OPTS = ['limit', 'action'];
 
+    #[\Override]
     protected function handle(): int
     {
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {

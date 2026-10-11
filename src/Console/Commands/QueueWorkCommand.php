@@ -40,6 +40,7 @@ final class QueueWorkCommand extends Command
     /** 本命令认识的选项 */
     private const OPTS = ['connection', 'queue', 'name', 'tries', 'timeout', 'sleep', 'max-jobs', 'max-time', 'memory', 'once'];
 
+    #[\Override]
     protected function handle(): int
     {
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {

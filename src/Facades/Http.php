@@ -12,6 +12,7 @@ use Kode\HttpClient\HttpClient;
  */
 final class Http extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return HttpClient::class;

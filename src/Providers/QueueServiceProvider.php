@@ -18,6 +18,7 @@ use Kode\Queue\QueueManager;
  */
 final class QueueServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(QueueManager::class, function (): QueueManager {

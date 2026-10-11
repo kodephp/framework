@@ -53,6 +53,7 @@ final class MakePluginCommand extends Command
         $this->basePath = $basePath;
     }
 
+    #[\Override]
     protected function handle(): int
     {
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {

@@ -52,6 +52,7 @@ use Kode\Http\Middleware\SecurityHeaders;
  */
 final class HttpServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(App::class, function (): App {
@@ -69,6 +70,7 @@ final class HttpServiceProvider extends ServiceProvider
         $this->container->singleton(Reader::class, fn(): Reader => new Reader());
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var App $app */

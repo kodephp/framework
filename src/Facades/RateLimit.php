@@ -12,6 +12,7 @@ use Kode\Limiting\Limiter;
  */
 final class RateLimit extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return Limiter::class;

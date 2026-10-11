@@ -193,6 +193,7 @@ abstract class TestCase extends BaseTestCase
      * 首个实例，导致后启动测试的 config overrides / providers 无法生效），
      * 保证每个测试类都拿到独立、按自身配置引导的应用。
      */
+    #[\Override]
     protected function tearDown(): void
     {
         self::$app = null;

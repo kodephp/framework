@@ -16,6 +16,7 @@ use Psr\Log\LoggerInterface;
  */
 final class ProcessServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(ProcessManager::class, function (): ProcessManager {

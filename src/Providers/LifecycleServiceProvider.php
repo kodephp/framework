@@ -19,10 +19,12 @@ use Kode\Framework\Lifecycle\ApplicationBooted;
  */
 final class LifecycleServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
     }
 
+    #[\Override]
     public function boot(): void
     {
         try {

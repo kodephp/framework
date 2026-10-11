@@ -14,12 +14,14 @@ use Kode\Event\Dispatcher;
  */
 final class EventServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->container->singleton(Dispatcher::class, fn(): Dispatcher => new Dispatcher());
         $this->container->alias('events', Dispatcher::class);
     }
 
+    #[\Override]
     public function boot(): void
     {
         /** @var Dispatcher $dispatcher */

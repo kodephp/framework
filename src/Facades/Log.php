@@ -12,6 +12,7 @@ use Psr\Log\LoggerInterface;
  */
 final class Log extends Facade
 {
+    #[\Override]
     protected static function id(): string
     {
         return LoggerInterface::class;

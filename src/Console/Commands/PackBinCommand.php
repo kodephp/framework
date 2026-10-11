@@ -32,6 +32,7 @@ class PackBinCommand extends Command
     /** 本命令认识的选项 */
     private const OPTS = ['json', 'sfx', 'php'];
 
+    #[\Override]
     protected function handle(): int
     {
         if (($bad = $this->rejectUnknownOptions(self::OPTS)) !== null) {
