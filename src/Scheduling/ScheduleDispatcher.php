@@ -181,13 +181,7 @@ final class ScheduleDispatcher
      */
     public function find(string $name): ?ScheduledTask
     {
-        foreach ($this->registered as $task) {
-            if ($task->name === $name) {
-                return $task;
-            }
-        }
-
-        return null;
+        return array_find($this->registered, fn($task) => $task->name === $name);
     }
 
     /**
@@ -956,13 +950,7 @@ final class ScheduleDispatcher
      */
     private function registeredIndex(string $name): int|false
     {
-        foreach ($this->registered as $index => $task) {
-            if ($task->name === $name) {
-                return $index;
-            }
-        }
-
-        return false;
+        return array_find_key($this->registered, fn($task, $index) => $task->name === $name) ?? false;
     }
 
     /**
@@ -1055,13 +1043,7 @@ final class ScheduleDispatcher
         // 列表
         if (str_contains($field, ',')) {
             $fields = explode(',', $field);
-            foreach ($fields as $f) {
-                if ($this->cronFieldMatches($value, trim($f))) {
-                    return true;
-                }
-            }
-
-            return false;
+            return array_any($fields, fn($f) => $this->cronFieldMatches($value, trim($f)));
         }
 
         // 范围

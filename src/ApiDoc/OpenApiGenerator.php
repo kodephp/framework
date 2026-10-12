@@ -176,13 +176,7 @@ final class OpenApiGenerator
     private function isIgnored(string $pattern, array $prefixes): bool
     {
         $path = '/' . ltrim($this->normalizePath($pattern), '/');
-        foreach ($prefixes as $prefix) {
-            if ($path === $prefix || str_starts_with($path, $prefix . '/')) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($prefixes, fn($prefix) => $path === $prefix || str_starts_with($path, $prefix . '/'));
     }
 
     /**

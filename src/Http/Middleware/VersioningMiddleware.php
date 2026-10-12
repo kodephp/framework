@@ -62,12 +62,6 @@ final class VersioningMiddleware implements MiddlewareInterface
 
     private function isInfra(string $path): bool
     {
-        foreach (['/health', '/metrics', '/docs', '/ping'] as $prefix) {
-            if (str_starts_with($path, $prefix)) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any(['/health', '/metrics', '/docs', '/ping'], fn($prefix) => str_starts_with($path, $prefix));
     }
 }

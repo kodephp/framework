@@ -91,13 +91,7 @@ final class QueryMasker
     private static function matchesMask(string $key, array $mask): bool
     {
         $lower = strtolower($key);
-        foreach ($mask as $sensitive) {
-            if (str_contains($lower, $sensitive)) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($mask, fn($sensitive) => str_contains($lower, $sensitive));
     }
 
     /**

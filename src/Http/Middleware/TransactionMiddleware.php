@@ -99,12 +99,6 @@ class TransactionMiddleware implements MiddlewareInterface
         }
 
         $path = $request->getUri()->getPath();
-        foreach ($this->skipPaths as $skip) {
-            if (str_starts_with($path, (string) $skip)) {
-                return false;
-            }
-        }
-
-        return true;
+        return array_all($this->skipPaths, fn($skip) => !(str_starts_with($path, (string) $skip)));
     }
 }

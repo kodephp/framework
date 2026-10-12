@@ -77,12 +77,6 @@ final class LocaleMiddleware implements MiddlewareInterface
 
         // 退而求其次：语言前缀匹配（如 zh 命中 zh-CN）。
         $base = explode('-', $first)[0];
-        foreach ($available as $av) {
-            if (str_starts_with($av, $base . '-') || str_starts_with($first, explode('-', (string) $av)[0] . '-')) {
-                return $av;
-            }
-        }
-
-        return null;
+        return array_find($available, fn($av) => str_starts_with($av, $base . '-') || str_starts_with($first, explode('-', (string) $av)[0] . '-'));
     }
 }

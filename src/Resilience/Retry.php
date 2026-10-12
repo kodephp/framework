@@ -115,13 +115,7 @@ final class Retry
             return (bool) $retryOn($e);
         }
         if (is_array($retryOn)) {
-            foreach ($retryOn as $class) {
-                if ($e instanceof $class) {
-                    return true;
-                }
-            }
-
-            return false;
+            return array_any($retryOn, fn($class) => $e instanceof $class);
         }
 
         return true;

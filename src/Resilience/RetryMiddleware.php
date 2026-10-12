@@ -89,13 +89,7 @@ final class RetryMiddleware implements MiddlewareInterface
             if ($e instanceof RetryableHttpStatusException) {
                 return true;
             }
-            foreach ($retryOnException as $class) {
-                if ($e instanceof $class) {
-                    return true;
-                }
-            }
-
-            return false;
+            return array_any($retryOnException, fn($class) => $e instanceof $class);
         };
 
         try {
