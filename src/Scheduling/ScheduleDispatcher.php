@@ -1030,6 +1030,10 @@ final class ScheduleDispatcher
         if (str_contains($field, '/')) {
             [$range, $step] = explode('/', $field, 2);
             $step = (int) $step;
+            // 非法步长（0 或负数）：cron 字段不匹配，避免 % 0 触发 DivisionByZeroError
+            if ($step < 1) {
+                return false;
+            }
             if ($range === '*') {
                 return $val % $step === 0;
             }
