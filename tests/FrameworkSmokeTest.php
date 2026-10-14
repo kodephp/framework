@@ -98,9 +98,10 @@ final class FrameworkSmokeTest extends TestCase
 
         $r->assertStatus(200);
         $json = $r->json();
-        $this->assertTrue($json['ok']);
-        $this->assertSame(Application::VERSION, $json['framework']);
-        $this->assertCount(10, $json['items']);
+        $this->assertSame(200, $json['code']);
+        $this->assertTrue($json['data']['ok']);
+        $this->assertSame(Application::VERSION, $json['data']['framework']);
+        $this->assertCount(10, $json['data']['items']);
     }
 
     public function test_idempotency_key_records_then_replays(): void

@@ -41,7 +41,9 @@ final class RobustnessTest extends TestCase
 
         self::assertSame(500, $resp->getStatusCode());
         $body = json_decode((string) $resp->getBody(), true);
-        self::assertSame('Internal Server Error', $body['message']);
+        // 信封模式：msg 在信封键，message 不再出现。
+        self::assertSame('Internal Server Error', $body['msg']);
+        self::assertSame(500, $body['code']);
         // 回退响应仍带 trace_id 字段（可能为空的字符串，但结构完整）。
         self::assertArrayHasKey('trace_id', $body);
     }

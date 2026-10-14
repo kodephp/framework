@@ -23,8 +23,8 @@ final class TestingExperienceTest extends TestCase
 
         $this->patch('/_dx/echo', ['a' => 1])
             ->assertStatus(200)
-            ->assertJsonPath('method', 'PATCH')
-            ->assertJsonPath('a', 1);
+            ->assertJsonPath('data.method', 'PATCH')
+            ->assertJsonPath('data.a', 1);
     }
 
     public function testAssertJsonSubsetAndHeader(): void

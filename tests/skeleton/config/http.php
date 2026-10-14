@@ -14,6 +14,18 @@
 
 return [
     /*
+     * 统一响应信封（默认开）。
+     * 开启后业务 API 统一返回 {code, msg, data}：code 默认等于 HTTP 状态码（可传自定义业务码），
+     * 分页额外附带 total/page/per_page/last_page（与 code/msg 同级，业务数据在 data 下）。
+     * 探针（/health* /ping /metrics）保持极简格式不受信封影响。
+     * 关闭（false）退回直出模式：成功直接返回数据 JSON，错误 {"message":"..."}。
+     */
+    'envelope' => (bool) env('HTTP_ENVELOPE', true),
+
+    // 跳过信封化的路径前缀（探针、指标保持极简格式）。
+    'envelope_skip_paths' => ['/health', '/metrics', '/ping'],
+
+    /*
      * 请求体 JSON 严格校验。
      * 开启后，Content-Type 为 application/json（或 +json）且 body 非空的请求，
      * 若 body 不是合法 JSON，直接返回 400（而非静默当作空对象、下游以 422/500 收场）。

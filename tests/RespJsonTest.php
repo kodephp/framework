@@ -9,54 +9,133 @@ use Kode\Http\Response;
 use PHPUnit\Framework\TestCase;
 
 /**
- * 标准响应（无信封）单元测试：Resp::json / Resp::error / Resp::make。
+ * 统一响应信封单元测试（http.envelope 默认开）：Resp::json / Resp::error / Resp::make / raw 变体。
+ *
+ * 信封结构：{code, msg, data, ...extra}——code 默认等于 HTTP 状态码，可传自定义业务码；
+ * 分页额外附带 total/page/per_page/last_page（与 code/msg 同级，业务数据在 data 下）。
  */
 final class RespJsonTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Resp::envelope(true);
+    }
+
+    protected function tearDown(): void
+    {
+        Resp::envelope(true);
+        parent::tearDown();
+    }
+
     private function decode(Response $resp): array
     {
         return json_decode((string) $resp->getBody(), true);
     }
 
-    public function testJsonReturnsRawDataWithoutEnvelope(): void
+    public function testJsonWrapsDataInEnvelope(): void
     {
         $resp = Resp::json(['id' => 1, 'name' => 'Kode']);
         $body = $this->decode($resp);
 
         self::assertSame(200, $resp->getStatusCode());
-        self::assertSame(['id' => 1, 'name' => 'Kode'], $body);
-        self::assertArrayNotHasKey('code', $body);
-        self::assertArrayNotHasKey('msg', $body);
-        self::assertArrayNotHasKey('data', $body);
+        self::assertSame(200, $body['code']);
+        self::assertSame('ok', $body['msg']);
+        self::assertSame(['id' => 1, 'name' => 'Kode'], $body['data']);
+        self::assertSame('1', $resp->getHeaderLine('X-Kode-Envelope'));
     }
 
-    public function testJsonNullBecomesEmptyObject(): void
+    public function testJsonAcceptsCustomBusinessCode(): void
+    {
+        $resp = Resp::json(['balance' => 100], 200, code: 10001);
+        $body = $this->decode($resp);
+
+        self::assertSame(200, $resp->getStatusCode());
+        self::assertSame(10001, $body['code']);
+        self::assertSame(['balance' => 100], $body['data']);
+    }
+
+    public function testJsonNullDataIsNullInEnvelope(): void
     {
         $resp = Resp::json(null);
-        self::assertSame('{}', trim((string) $resp->getBody()));
+        $body = $this->decode($resp);
+
+        self::assertSame(200, $body['code']);
+        self::assertNull($body['data']);
     }
 
-    public function testErrorReturnsStandardBodyAndStatus(): void
+    public function testErrorReturnsEnvelopeWithStatusAsCode(): void
     {
         $resp = Resp::error('参数错误', 400);
         $body = $this->decode($resp);
 
         self::assertSame(400, $resp->getStatusCode());
-        self::assertSame('参数错误', $body['message']);
-        self::assertArrayNotHasKey('code', $body);
+        self::assertSame(400, $body['code']);
+        self::assertSame('参数错误', $body['msg']);
+        self::assertNull($body['data']);
     }
 
-    public function testErrorMergesExtraFields(): void
+    public function testErrorAcceptsCustomBusinessCode(): void
+    {
+        $resp = Resp::error('余额不足', 400, code: 10002);
+        $body = $this->decode($resp);
+
+        self::assertSame(400, $resp->getStatusCode());
+        self::assertSame(10002, $body['code']);
+        self::assertSame('余额不足', $body['msg']);
+    }
+
+    public function testErrorMergesExtraFieldsAtRoot(): void
     {
         $resp = Resp::error('校验失败', 422, ['errors' => [['field' => 'email', 'message' => '非法']]]);
         $body = $this->decode($resp);
 
         self::assertSame(422, $resp->getStatusCode());
+        self::assertSame(422, $body['code']);
         self::assertSame('email', $body['errors'][0]['field']);
-        self::assertArrayNotHasKey('data', $body);
+        self::assertNull($body['data']);
     }
 
-    public function testMakeBuildsJsonResponseBody(): void
+    public function testPaginatePutsPaginationFieldsAtRoot(): void
+    {
+        $resp = Resp::paginate([['id' => 1]], 30, 2, 10);
+        $body = $this->decode($resp);
+
+        self::assertSame(200, $resp->getStatusCode());
+        self::assertSame(200, $body['code']);
+        self::assertSame([['id' => 1]], $body['data']);
+        self::assertSame(30, $body['total']);
+        self::assertSame(2, $body['page']);
+        self::assertSame(10, $body['per_page']);
+        self::assertSame(3, $body['last_page']);
+    }
+
+    public function testEnvelopeOffFallsBackToRawMode(): void
+    {
+        Resp::envelope(false);
+
+        $ok = $this->decode(Resp::json(['id' => 1]));
+        self::assertSame(['id' => 1], $ok);
+        self::assertArrayNotHasKey('code', $ok);
+
+        $err = $this->decode(Resp::error('参数错误', 400));
+        self::assertSame('参数错误', $err['message']);
+        self::assertArrayNotHasKey('code', $err);
+
+        Resp::envelope(true);
+    }
+
+    public function testRawJsonBypassesEnvelopeEvenWhenEnabled(): void
+    {
+        $resp = Resp::rawJson(['status' => 'ok']);
+        $body = $this->decode($resp);
+
+        self::assertSame(['status' => 'ok'], $body);
+        self::assertArrayNotHasKey('code', $body);
+        self::assertSame('passthrough', $resp->getHeaderLine('X-Kode-Envelope'));
+    }
+
+    public function testMakeBuildsJsonResponseBodyWithoutEnvelope(): void
     {
         $resp = Resp::make(['id' => 1], 201, ['X-Trace' => 'abc']);
         $body = $this->decode($resp);
@@ -64,5 +143,6 @@ final class RespJsonTest extends TestCase
         self::assertSame(201, $resp->getStatusCode());
         self::assertSame(['id' => 1], $body);
         self::assertSame('abc', $resp->getHeaderLine('X-Trace'));
+        self::assertSame('passthrough', $resp->getHeaderLine('X-Kode-Envelope'));
     }
 }

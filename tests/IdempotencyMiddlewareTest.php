@@ -79,7 +79,7 @@ final class IdempotencyMiddlewareTest extends TestCase
         self::assertSame('true', $r->getHeaderLine('Idempotency-Recorded'));
         self::assertSame('', $r->getHeaderLine('Idempotency-Replay'));
         self::assertJsonStringEqualsJsonString(
-            (string) json_encode(['marker' => 'A', 'count' => 1]),
+            (string) json_encode(['code' => 200, 'msg' => 'ok', 'data' => ['marker' => 'A', 'count' => 1]]),
             (string) $r->getBody()
         );
         self::assertSame(['A'], $this->runs);

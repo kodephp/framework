@@ -67,7 +67,7 @@ final class RetryMiddlewareEndpointTest extends TestCase
     {
         $r = $this->get('/retry-mw-test')->assertStatus(200);
 
-        self::assertTrue($r->json()['ok']);
+        self::assertTrue($r->json()['data']['ok']);
         self::assertSame(2, count($this->runs), '重试应使 handler 在同一次请求内执行两次');
     }
 

@@ -49,7 +49,24 @@ final class ExceptionMiddleware implements MiddlewareInterface
             $result = $this->manager->respond($e);
             $body = $result['body'];
 
-            $response = Response::json($body)->status($result['status']);
+            // 信封模式：把 ExceptionManager 的结构化体并入 {code, msg, data} 信封。
+            // code 保持 ExceptionManager 的业务码（如 E9999），msg 取其 msg；
+            // location / chain / trace_id 等诊断字段并入根级（信封 data 之外）。
+            if (Resp::isEnvelopeEnabled() && is_array($body)) {
+                $msg = (string) ($body['msg'] ?? $body['message'] ?? 'Internal Server Error');
+                $diag = $body;
+                unset($diag['msg'], $diag['message'], $diag['code'], $diag['data']);
+
+                $envelope = [
+                    'code' => $body['code'] ?? $result['status'],
+                    'msg'  => $msg,
+                    'data' => $body['data'] ?? null,
+                ] + $diag;
+
+                $response = Response::json($envelope)->status($result['status']);
+            } else {
+                $response = Response::json($body)->status($result['status']);
+            }
 
             // 透传分布式链路标识，便于网关 / 日志串联。
             if (!empty($body['trace_id'])) {
@@ -84,9 +101,10 @@ final class ExceptionMiddleware implements MiddlewareInterface
             // logger 也可能不可用，尽力而为，不二次抛错。
         }
 
-        return Response::json([
-            'message' => 'Internal Server Error',
-            'trace_id' => $traceId,
-        ])->status(500);
+        $payload = Resp::isEnvelopeEnabled()
+            ? ['code' => 500, 'msg' => 'Internal Server Error', 'data' => null, 'trace_id' => $traceId]
+            : ['message' => 'Internal Server Error', 'trace_id' => $traceId];
+
+        return Response::json($payload)->status(500);
     }
 }

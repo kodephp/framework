@@ -214,16 +214,19 @@ final class ApiDocTest extends TestCase
         $res->assertStatus(200);
 
         $body = $res->body();
-        self::assertStringContainsString('"openapi": "3.0.3"', $body);
-        $decoded = json_decode($body, true);
-        self::assertIsArray($decoded);
+        // 信封模式下 OpenAPI 文档在 data 字段内。
+        $envelope = json_decode($body, true);
+        self::assertIsArray($envelope);
+        $decoded = $envelope['data'] ?? $envelope;
+        self::assertStringContainsString('3.0.3', (string) ($decoded['openapi'] ?? ''));
         self::assertArrayHasKey('paths', $decoded);
     }
 
     public function testOpenApiJsonHonoursConfiguredIgnorePaths(): void
     {
         $body = $this->get('/docs/openapi.json')->body();
-        $decoded = json_decode($body, true);
+        $envelope = json_decode($body, true);
+        $decoded = $envelope['data'] ?? $envelope;
 
         // tests/skeleton/config/apidoc.php 声明 ignore_paths = ['/health', '/metrics', '/ping']：
         // 端点照常服务（见 HealthEndpointTest），但不再淹没业务 API。
@@ -245,7 +248,8 @@ final class ApiDocTest extends TestCase
     public function testProductShowCarriesOpenApiAttribute(): void
     {
         $res = $this->get('/docs/openapi.json');
-        $spec = json_decode($res->body(), true);
+        $envelope = json_decode($res->body(), true);
+        $spec = $envelope['data'] ?? $envelope;
 
         self::assertArrayHasKey('/products/{id}', $spec['paths']);
         $op = $spec['paths']['/products/{id}']['get'];

@@ -74,7 +74,7 @@ final class CircuitBreakerMiddlewareEndpointTest extends TestCase
             $r = $this->get('/cb-mw-trip');
             $r->assertStatus(500);
             self::assertSame('closed', $r->header('X-Circuit-Breaker'));
-            self::assertSame('boom', $r->json()['message'] ?? null);
+            self::assertSame('boom', $r->json()['msg'] ?? null);
         }
 
         $r = $this->get('/cb-mw-trip');
@@ -102,7 +102,7 @@ final class CircuitBreakerMiddlewareEndpointTest extends TestCase
         // 用独立探针路由发一次 500：因失败计数清零，熔断未打开，正常穿透返回 500。
         $r = $this->get('/cb-mw-probe');
         $r->assertStatus(500);
-        self::assertSame('boom', $r->json()['message'] ?? null);
+        self::assertSame('boom', $r->json()['msg'] ?? null);
     }
 
     #[\RunInSeparateProcess]
@@ -118,7 +118,7 @@ final class CircuitBreakerMiddlewareEndpointTest extends TestCase
             $r = $this->get('/cb-mw-open');
             $r->assertStatus(500);
             self::assertSame('', $r->header('X-Circuit-Breaker'), '未标记路由不应被熔断中间件处理');
-            self::assertSame('boom', $r->json()['message'] ?? null);
+            self::assertSame('boom', $r->json()['msg'] ?? null);
         }
     }
 }

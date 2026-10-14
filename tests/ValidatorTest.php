@@ -120,10 +120,12 @@ final class ValidatorTest extends TestCase
         };
 
         $ok = json_decode((string) $controller->jsonRun()->getBody(), true);
-        self::assertSame(['id' => 1], $ok);
+        self::assertSame(200, $ok['code']);
+        self::assertSame(['id' => 1], $ok['data']);
 
         $fail = json_decode((string) $controller->errorRun()->getBody(), true);
-        self::assertSame('bad', $fail['message']);
+        self::assertSame('bad', $fail['msg']);
+        self::assertSame(400, $fail['code']);
         self::assertSame(400, $controller->errorRun()->getStatusCode());
     }
 

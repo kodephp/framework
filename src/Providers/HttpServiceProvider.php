@@ -76,6 +76,9 @@ final class HttpServiceProvider extends ServiceProvider
         /** @var App $app */
         $app = $this->container->get(App::class);
 
+        // 统一响应信封开关：默认开启（{code, msg, data}），http.envelope=false 退回直出模式。
+        Resp::envelope((bool) $this->config('http.envelope', true));
+
         /** @var RouteResolver $resolver 跨中间件复用单次请求内的路由匹配结果 */
         $resolver = $this->container->get(RouteResolver::class);
         /** @var RouteRegistry $registry 路由属性登记表（限流/韧性/幂等/CSRF/特性 共享），
@@ -297,6 +300,16 @@ final class HttpServiceProvider extends ServiceProvider
 
         // ---- 框架内置探针（适配 k8s / 负载均衡健康检查）----
         $this->registerHealthEndpoints($app);
+
+        // ---- 统一响应信封（http.envelope，默认开）----
+        // 包装「裸 return 数组」经 resolve 出的 JSON 为 {code, msg, data}；
+        // Resp::json / Resp::error 产出的响应已打 X-Kode-Envelope 标记，直接透传不二次包装。
+        // 探针路径（/health* /ping /metrics）走 rawJson + skipPaths 双保险，保持极简格式。
+        if (!empty($this->config('http.envelope', true))) {
+            $app->use(new \Kode\Framework\Http\Middleware\EnvelopeMiddleware(
+                skipPaths: (array) $this->config('http.envelope_skip_paths', ['/health', '/metrics', '/ping']),
+            ));
+        }
 
         // 加载路由（属性路由 + 显式路由文件，每条打来源标签供 route:list 使用）。
         /** @var RouteRegistry $registry */
@@ -928,7 +941,8 @@ final class HttpServiceProvider extends ServiceProvider
      */
     private function registerHealthEndpoints(App $app): void
     {
-        $app->get('/health/live', static fn() => Resp::json([
+        // 探针走 rawJson（直出极简格式，不套信封）：k8s 存活/就绪探针读 HTTP 状态码 + 简单体。
+        $app->get('/health/live', static fn() => Resp::rawJson([
             'status' => 'ok',
         ]));
 
@@ -938,14 +952,14 @@ final class HttpServiceProvider extends ServiceProvider
             try {
                 $graceful = $this->container->get(\Kode\Framework\Server\GracefulShutdown::class);
                 if ($graceful instanceof \Kode\Framework\Server\GracefulShutdown && $graceful->isShuttingDown()) {
-                    return Resp::json(['status' => 'degraded', 'reason' => 'shutting_down', 'checks' => []], 503);
+                    return Resp::rawJson(['status' => 'degraded', 'reason' => 'shutting_down', 'checks' => []], 503);
                 }
             } catch (\Throwable) {
             }
             $result = $this->healthChecker()->check();
             $status = $result['healthy'] ? 200 : 503;
 
-            return Resp::json([
+            return Resp::rawJson([
                 'status'  => $result['healthy'] ? 'ok' : 'degraded',
                 'checks'  => $this->presentChecks($result['checks']),
             ], $status);
@@ -957,7 +971,7 @@ final class HttpServiceProvider extends ServiceProvider
             $t0 = microtime(true);
             $result = $this->healthChecker()->check();
 
-            return Resp::json([
+            return Resp::rawJson([
                 // 状态必须反映探针：此前恒为 ok，DB 断了 components 里写着 error 而顶层仍是 ok，
                 // 巡检面板读 status 的那只眼睛永远绿着。HTTP 码保持 200 —— 摘流量看 /health/ready，
                 // 这里翻红只用于「让人知道」，不参与编排判定（详见方法注释）。
@@ -972,7 +986,7 @@ final class HttpServiceProvider extends ServiceProvider
             ]);
         });
 
-        $app->get('/ping', static fn() => Resp::json(['pong' => true]));
+        $app->get('/ping', static fn() => Resp::rawJson(['pong' => true]));
     }
 
     /**

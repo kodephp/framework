@@ -32,7 +32,7 @@ final class BareModeTest extends TestCase
     private function l0Overrides(): array
     {
         return [
-            'http' => ['exception_middleware' => false, 'connection_cleanup' => false],
+            'http' => ['exception_middleware' => false, 'connection_cleanup' => false, 'envelope' => false],
             'security' => ['request_id' => false, 'enabled' => false],
             'logging' => ['access_log' => ['enabled' => false]],
             'cors' => ['enabled' => false],

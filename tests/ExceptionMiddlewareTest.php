@@ -97,7 +97,9 @@ final class ExceptionMiddlewareTest extends TestCase
         self::assertSame(422, $resp->getStatusCode());
 
         $body = json_decode((string) $resp->getBody(), true);
-        self::assertSame('参数校验失败', $body['message']);
+        // 信封模式：code 默认取 ExceptionManager 业务码，msg 为提示语，errors 并入根级。
+        self::assertSame(422, $body['code']);
+        self::assertSame('参数校验失败', $body['msg']);
         self::assertSame([['field' => 'email', 'message' => '必填']], $body['errors']);
     }
 

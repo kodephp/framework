@@ -38,26 +38,41 @@ abstract class Controller
     }
 
     /**
-     * 标准成功响应：直接返回数据 JSON（无信封，框架默认推荐写法）。
+     * 成功响应（默认信封 {code, msg, data}，http.envelope=false 时直出）。
      *
-     *   return $this->json($user);
-     *   return $this->json(['items' => $list]);
+     *   return $this->json($user);                    // {code:200, msg:'ok', data:{...}}
+     *   return $this->json($user, code: 10001);       // 自定义业务码
+     *   return $this->json($list, 200, code: 0);      // 显式 code=0
      *
-     * 等价于在控制器里直接 `return $user;` / `return [...];`。
+     * @param int|null $code 自定义业务码（默认等于 HTTP 状态码）
      */
-    protected function json(mixed $data = null, int $status = 200): Response
+    protected function json(mixed $data = null, int $status = 200, ?int $code = null, string $msg = 'ok'): Response
     {
-        return Resp::json($data, $status);
+        return Resp::json($data, $status, $code, $msg);
     }
 
     /**
-     * 标准错误响应：直接带 HTTP 状态（无信封）。
+     * 分页成功响应：业务数据在 data，分页元数据与 code/msg 同级。
+     *
+     *   return $this->paginate($items, $total, $page, $perPage);
+     *   // → {code:200, msg:'ok', data:[...], total, page, per_page, last_page}
+     *
+     * @param list<mixed> $items 当前页数据
+     */
+    protected function paginate(array $items, int $total, int $page, int $perPage, int $status = 200, ?int $code = null, string $msg = 'ok'): Response
+    {
+        return Resp::paginate($items, $total, $page, $perPage, $status, $code, $msg);
+    }
+
+    /**
+     * 错误响应（默认信封 {code, msg, data:null, ...extra}）。
      *
      *   return $this->error('参数错误', 400);
+     *   return $this->error('余额不足', 400, code: 10002);  // 自定义业务码
      */
-    protected function error(string $message, int $status = 400, array $extra = []): Response
+    protected function error(string $message, int $status = 400, array $extra = [], ?int $code = null): Response
     {
-        return Resp::error($message, $status, $extra);
+        return Resp::error($message, $status, $extra, $code);
     }
 
     /**
