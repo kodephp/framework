@@ -110,6 +110,16 @@ final class RespJsonTest extends TestCase
         self::assertSame(3, $body['last_page']);
     }
 
+    public function testPaginateEmptyTotalZeroKeepsLastPageOne(): void
+    {
+        // 与 kode/database QueryBuilder::paginate() 对齐：total=0 时 last_page=1，不是 0。
+        $resp = Resp::paginate([], 0, 1, 10);
+        $body = $this->decode($resp);
+
+        self::assertSame(0, $body['total']);
+        self::assertSame(1, $body['last_page']);
+    }
+
     public function testPaginateFromAcceptsDbResultArray(): void
     {
         // 模拟 kode/database QueryBuilder::paginate() 返回结构。

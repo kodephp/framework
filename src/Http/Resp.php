@@ -75,7 +75,7 @@ final class Resp
                 'total'        => $total,
                 'per_page'     => $perPage,
                 'current_page' => $page,
-                'last_page'    => (int) ceil($total / max(1, $perPage)),
+                'last_page'    => $total > 0 ? (int) ceil($total / max(1, $perPage)) : 1,
             ];
             $body = json_encode($payload, Response::JSON_FLAGS | JSON_THROW_ON_ERROR);
             return Response::make($body, $status);
@@ -85,7 +85,7 @@ final class Resp
         $payload['total'] = $total;
         $payload['page'] = $page;
         $payload['per_page'] = $perPage;
-        $payload['last_page'] = (int) ceil($total / max(1, $perPage));
+        $payload['last_page'] = $total > 0 ? (int) ceil($total / max(1, $perPage)) : 1;
 
         $body = json_encode($payload, Response::JSON_FLAGS | JSON_THROW_ON_ERROR);
         return Response::make($body, $status)->header('X-Kode-Envelope', '1');
