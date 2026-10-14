@@ -92,6 +92,27 @@ final class Resp
     }
 
     /**
+     * 直接收 DB paginate() 结果的分页响应（免手动拆参）。
+     *
+     * 适配 kode/database 的 QueryBuilder::paginate() / Model::paginate() 返回结构：
+     *   ['items' => [...], 'total' => int, 'per_page' => int, 'current_page' => int, 'last_page' => int]
+     *
+     *   return Resp::paginateFrom(DB::table('users')->where(...)->paginate($page, 15));
+     *
+     * @param array<string, mixed> $result DB paginate() 返回的整包数组
+     */
+    public static function paginateFrom(array $result, int $status = 200, ?int $code = null, string $msg = 'ok'): Response
+    {
+        /** @var list<mixed> $items */
+        $items = array_values((array) ($result['items'] ?? []));
+        $total = (int) ($result['total'] ?? count($items));
+        $page = (int) ($result['current_page'] ?? $result['page'] ?? 1);
+        $perPage = (int) ($result['per_page'] ?? max(1, count($items)));
+
+        return self::paginate($items, $total, $page, $perPage, $status, $code, $msg);
+    }
+
+    /**
      * 错误响应。
      *
      * @param array<string, mixed> $extra 额外字段（errors / field 等），并入根级。

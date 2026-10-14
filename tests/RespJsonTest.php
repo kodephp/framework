@@ -110,6 +110,39 @@ final class RespJsonTest extends TestCase
         self::assertSame(3, $body['last_page']);
     }
 
+    public function testPaginateFromAcceptsDbResultArray(): void
+    {
+        // 模拟 kode/database QueryBuilder::paginate() 返回结构。
+        $dbResult = [
+            'items'        => [['id' => 1], ['id' => 2]],
+            'total'        => 42,
+            'per_page'     => 15,
+            'current_page' => 2,
+            'last_page'    => 3,
+        ];
+
+        $resp = Resp::paginateFrom($dbResult);
+        $body = $this->decode($resp);
+
+        self::assertSame(200, $resp->getStatusCode());
+        self::assertSame(200, $body['code']);
+        self::assertSame([['id' => 1], ['id' => 2]], $body['data']);
+        self::assertSame(42, $body['total']);
+        self::assertSame(2, $body['page']);
+        self::assertSame(15, $body['per_page']);
+        self::assertSame(3, $body['last_page']);
+    }
+
+    public function testPaginateFromFallsBackGracefullyOnMissingKeys(): void
+    {
+        $resp = Resp::paginateFrom(['items' => [['id' => 9]]]);
+        $body = $this->decode($resp);
+
+        self::assertSame(1, $body['total']);
+        self::assertSame(1, $body['page']);
+        self::assertSame(1, $body['last_page']);
+    }
+
     public function testEnvelopeOffFallsBackToRawMode(): void
     {
         Resp::envelope(false);

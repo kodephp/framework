@@ -65,6 +65,19 @@ abstract class Controller
     }
 
     /**
+     * 直接收 DB paginate() 结果的分页响应（免手动拆参）。
+     *
+     *   return $this->paginateFrom(DB::table('users')->paginate($page, 15));
+     *   return $this->paginateFrom(Post::paginate($page, 15));
+     *
+     * @param array<string, mixed> $result kode/database QueryBuilder / Model 的 paginate() 返回
+     */
+    protected function paginateFrom(array $result, int $status = 200, ?int $code = null, string $msg = 'ok'): Response
+    {
+        return Resp::paginateFrom($result, $status, $code, $msg);
+    }
+
+    /**
      * 错误响应（默认信封 {code, msg, data:null, ...extra}）。
      *
      *   return $this->error('参数错误', 400);
