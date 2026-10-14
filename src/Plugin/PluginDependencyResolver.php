@@ -275,10 +275,8 @@ class PluginDependencyResolver
         $graph = static::graph();
 
         // 自依赖
-        foreach ($graph[$name] ?? [] as $dep) {
-            if ($dep['name'] === $name) {
-                return true;
-            }
+        if (array_any($graph[$name] ?? [], fn (array $dep) => $dep['name'] === $name)) {
+            return true;
         }
 
         // BFS：从 name 的所有直接依赖出发，看能否回到 name
@@ -362,13 +360,9 @@ class PluginDependencyResolver
      */
     private static function constraintOf(string $name, string $depName, array $graph): ?string
     {
-        foreach ($graph[$name] ?? [] as $dep) {
-            if ($dep['name'] === $depName) {
-                return $dep['version'];
-            }
-        }
+        $found = array_find($graph[$name] ?? [], fn (array $dep) => $dep['name'] === $depName);
 
-        return null;
+        return $found['version'] ?? null;
     }
 
     /**

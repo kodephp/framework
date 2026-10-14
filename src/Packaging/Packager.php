@@ -407,10 +407,8 @@ PHP
      */
     private static function isExcluded(string $rel, array $excludeDirs, array $excludeBasename, array $excludeExt): bool
     {
-        foreach ($excludeDirs as $prefix) {
-            if (str_starts_with($rel . '/', $prefix)) {
-                return true;
-            }
+        if (array_any($excludeDirs, fn (string $prefix) => str_starts_with($rel . '/', $prefix))) {
+            return true;
         }
         if (isset($excludeBasename[basename($rel)])) {
             return true;
