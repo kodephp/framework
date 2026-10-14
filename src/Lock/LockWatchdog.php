@@ -6,7 +6,6 @@ namespace Kode\Framework\Lock;
 
 use Kode\Fibers\Concurrency\Scheduler;
 use Kode\Fibers\Fibers;
-use RuntimeException;
 
 /**
  * 分布式锁看门狗（自动续期装饰器）。
