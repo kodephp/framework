@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Framework\Providers;
 
 use Kode\Console\Kernel;
+use Kode\Framework\Support\AppDiscovery;
 use Kode\Framework\Console\Commands\ApiDocGenerateCommand;
 use Kode\Framework\Console\Commands\ConfigReloadCommand;
 use Kode\Framework\Console\Commands\DbSeedCommand;
@@ -43,7 +44,7 @@ use Kode\Framework\Providers\ServiceProvider;
 /**
  * 控制台服务提供者（kode/console）
  *
- * 构建 Kernel，注册 config 中声明的命令，并自动扫描 app/console 目录。
+ * 构建 Kernel，注册 config 中声明的命令，自动扫描 app/console 与子应用 app/{App}/console 目录。
  */
 final class ConsoleServiceProvider extends ServiceProvider
 {
@@ -66,13 +67,10 @@ final class ConsoleServiceProvider extends ServiceProvider
             $kernel->addMany($commands);
         }
 
-        $dir = $this->config('path.base') . '/app/console';
-        if (is_dir($dir)) {
-            foreach (glob($dir . '/*Command.php') ?: [] as $file) {
-                $class = '\app\\console\\' . basename($file, '.php');
-                if (class_exists($class)) {
-                    $kernel->add($class);
-                }
+        // 命令自动发现：主应用 app/console + 子应用 app/{App}/console（同一发现规则，见 Support\AppDiscovery）。
+        foreach ($this->discoverCommandClasses() as $class) {
+            if (class_exists($class)) {
+                $kernel->add($class);
             }
         }
 
@@ -132,5 +130,32 @@ final class ConsoleServiceProvider extends ServiceProvider
         $kernel->add(PackBinCommand::class);
         $kernel->add(PackVerifyCommand::class);
         $kernel->add(PackInfoCommand::class);
+    }
+
+    /**
+     * 自动发现待注册的命令类名（只做目录→类名推导，不做 class_exists——
+     * 是否可加载由 boot() 判定，便于本方法独立单测）。
+     *
+     * 顺序：主应用 app/console/*Command.php → 子应用 app/{App}/console/*Command.php
+     * （子应用规则与 HttpServiceProvider 的控制器发现同源：Support\AppDiscovery）。
+     *
+     * @return list<string> 带前导反斜杠的 FQCN
+     */
+    private function discoverCommandClasses(): array
+    {
+        $base = (string) $this->config('path.base', '');
+        $classes = [];
+
+        foreach (glob($base . '/app/console/*Command.php') ?: [] as $file) {
+            $classes[] = '\app\console\\' . basename((string) $file, '.php');
+        }
+
+        foreach (AppDiscovery::discover($base) as $name => $appDir) {
+            foreach (glob($appDir . '/console/*Command.php') ?: [] as $file) {
+                $classes[] = '\app\\' . $name . '\console\\' . basename((string) $file, '.php');
+            }
+        }
+
+        return $classes;
     }
 }

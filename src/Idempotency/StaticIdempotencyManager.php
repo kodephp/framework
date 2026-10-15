@@ -31,14 +31,14 @@ final class StaticIdempotencyManager implements IdempotencyManager
         if ($this->store->has($key)) {
             $this->dispatch(new IdempotencyHit($key));
 
-            throw new DuplicateRequest($key);
+            throw DuplicateRequest::for($key);
         }
 
         // 先占位（put 返回 false 说明并发下被他人抢先）
         if (!$this->store->put($key, $ttl)) {
             $this->dispatch(new IdempotencyHit($key));
 
-            throw new DuplicateRequest($key);
+            throw DuplicateRequest::for($key);
         }
 
         $this->dispatch(new IdempotencyRecorded($key, $ttl));

@@ -196,7 +196,7 @@ final class QueueWorkCommand extends Command
 
             try {
                 return new ArrayFailedJobStore();
-            } catch (\Throwable) {
+            } catch (\Throwable) { // @phpstan-ignore catch.neverThrown (内存存储构造无 IO，防御保留：此处失败则静默降级为「无死信记录」)
                 return null;
             }
         }

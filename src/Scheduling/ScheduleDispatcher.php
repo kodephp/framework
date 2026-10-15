@@ -582,7 +582,7 @@ final class ScheduleDispatcher
      *
      * @param int $retentionDays 保留天数（1..3650）
      * @return int 实际删除的记录数
-     * @throws InvalidArgumentException 天数越界
+     * @throws \InvalidArgumentException 天数越界
      * @throws \RuntimeException 删除失败（previous 为数据库原始异常）
      */
     public function pruneRunHistory(int $retentionDays = 30): int

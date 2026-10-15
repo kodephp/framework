@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace app\http\controllers;
+namespace app\controllers;
 
 use Kode\Framework\ApiDoc\Attributes\OpenApi;
 use Kode\Framework\ApiDoc\Attributes\OpenApiParameter;

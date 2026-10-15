@@ -48,7 +48,7 @@ final class ConfiguredWorker extends Worker
         // 内层 worker 若声明了 handle(int $slot = 0)（感知槽位），转发槽位；否则维持 handle()。
         $params = (new ReflectionMethod($this->inner, 'handle'))->getNumberOfParameters();
         if ($params > 0) {
-            $this->inner->handle($slot);
+            $this->inner->handle($slot); // @phpstan-ignore arguments.count (反射已确认内层声明了槽位参数，静态类型仍是零参基类)
         } else {
             $this->inner->handle();
         }

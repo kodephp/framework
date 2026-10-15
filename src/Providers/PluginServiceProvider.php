@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Providers;
 
+use Kode\DI\Container;
 use Kode\Framework\Plugin\PluginDiscoverer;
 use Kode\Framework\Plugin\PluginManager;
 use Kode\Framework\Providers\ServiceProvider;
@@ -29,7 +30,16 @@ final class PluginServiceProvider extends ServiceProvider
     #[\Override]
     public function register(): void
     {
-        $this->container->singleton(PluginManager::class, fn(): PluginManager => new PluginManager($this->container));
+        $this->container->singleton(PluginManager::class, function (): PluginManager {
+            // PluginManager 需要 concrete Container（singleton/alias 等非 PSR 能力），
+            // 引导期容器必为 Kode\DI\Container 实例，此处显式收窄并给出可读错误。
+            $container = $this->container;
+            if (!$container instanceof Container) {
+                throw new \LogicException('插件系统需要 Kode\DI\Container 实例，收到 ' . $container::class);
+            }
+
+            return new PluginManager($container);
+        });
     }
 
     #[\Override]

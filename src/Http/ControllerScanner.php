@@ -116,6 +116,10 @@ final class ControllerScanner
         }
     }
 
+    /**
+     * @param array<string> $classMiddleware
+     * @param MetaList<\Kode\Attributes\Meta<object>> $metas 类级元数据列表
+     */
     private function register(
         string $class,
         string $method,

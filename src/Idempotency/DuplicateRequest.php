@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Framework\Idempotency;
 
+use Kode\Exception\Enum\ErrorCode;
 use Kode\Exception\KodeException;
 
 /**
@@ -15,6 +16,10 @@ final class DuplicateRequest extends KodeException
 {
     public static function for(string $key): self
     {
-        return new self('幂等键重复（TTL 内已处理）：' . $key, 409);
+        return new self(
+            ErrorCode::Conflict,
+            '幂等键重复（TTL 内已处理）：' . $key,
+            context: ['key' => $key],
+        );
     }
 }

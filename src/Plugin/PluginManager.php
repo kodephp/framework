@@ -267,7 +267,7 @@ final class PluginManager
      *
      * @template T of object
      * @param class-string<T>|string $id
-     * @return T
+     * @return ($id is class-string<T> ? T : object)
      */
     public function make(string $id): object
     {

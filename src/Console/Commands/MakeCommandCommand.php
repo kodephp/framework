@@ -16,15 +16,15 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
  */
 #[AsCommand(
     name: 'make:command',
-    description: '生成控制台命令（app/console）',
-    usage: 'make:command {name : 生成的类名} {--force : 覆盖已存在的文件}',
+    description: '生成控制台命令（app/console，--app 可定向子应用）',
+    usage: 'make:command {name : 生成的类名} {--force : 覆盖已存在的文件} {--app= : 子应用名，生成到 app/<app>/console（自动发现注册）}',
 )]
 final class MakeCommandCommand extends Command
 {
     use GeneratesFiles;
 
     /** 本命令认识的选项 */
-    private const OPTS = ['force'];
+    private const OPTS = ['force', 'app'];
 
     public function __construct(string $basePath = '')
     {
@@ -62,12 +62,19 @@ final class MakeCommandCommand extends Command
             return 1;
         }
 
+        $app = $this->resolveTargetApp();
+        if ($app === null) {
+            return 1;
+        }
+
+        $ns = 'app' . $this->appNamespaceSegment($app) . '\console';
+
         $content = <<<PHP
 <?php
 
 declare(strict_types=1);
 
-namespace app\console;
+namespace {$ns};
 
 use Kode\Console\Attribute\AsCommand;
 use Kode\Framework\Console\Command;
@@ -92,7 +99,7 @@ final class {$class} extends Command
 
 PHP;
 
-        $path = $this->path('app/console/' . $class . '.php');
+        $path = $this->path('app' . $this->appDirSegment($app) . '/console/' . $class . '.php');
         if (!$this->writeFile($path, $content, $this->flag('force', false))) {
             $this->warn("已存在，跳过（用 --force 覆盖）：{$path}");
 

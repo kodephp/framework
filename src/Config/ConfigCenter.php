@@ -33,8 +33,8 @@ final class ConfigCenter
     private array $lastChangedKeys = [];
 
     /**
-     * @param iterable<ConfigSource>    $sources    配置源
-     * @param callable|null             $dispatcher 事件派发器（注入，避免与事件系统启动顺序耦合）
+     * @param iterable<ConfigSource> $sources    配置源
+     * @param \Closure|null          $dispatcher 事件派发器（注入，避免与事件系统启动顺序耦合）
      */
     public function __construct(
         private readonly Config $config,

@@ -27,7 +27,9 @@ final class HealthServiceProvider extends ServiceProvider
             return new HealthChecker(
                 (array) $this->config('health', []),
                 $this->container,
-                static fn (HealthChecked $event): object => event($event),
+                static function (HealthChecked $event): void {
+                    event($event);
+                },
             );
         });
         $this->container->alias('health', HealthChecker::class);

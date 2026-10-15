@@ -577,7 +577,7 @@ final class HttpServer
                 $onStop();
 
                 if (is_callable($previous)) {
-                    $previous($signo);
+                    $previous($signo); // @phpstan-ignore arguments.count (pcntl 存根把信号处理器标为无参，实际按 int $signo 调用)
                 }
             });
         }
@@ -699,7 +699,7 @@ final class HttpServer
         }
 
         $info = @posix_getpwuid(posix_geteuid());
-        if (is_array($info) && isset($info['name'])) {
+        if (is_array($info)) {
             return (string) $info['name'];
         }
 

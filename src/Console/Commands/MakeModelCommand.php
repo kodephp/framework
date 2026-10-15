@@ -16,15 +16,15 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
  */
 #[AsCommand(
     name: 'make:model',
-    description: '生成数据模型（app/models）',
-    usage: 'make:model {name : 生成的类名} {--force : 覆盖已存在的文件}',
+    description: '生成数据模型（app/models，--app 可定向子应用）',
+    usage: 'make:model {name : 生成的类名} {--force : 覆盖已存在的文件} {--app= : 子应用名，生成到 app/<app>/models}',
 )]
 final class MakeModelCommand extends Command
 {
     use GeneratesFiles;
 
     /** 本命令认识的选项 */
-    private const OPTS = ['force'];
+    private const OPTS = ['force', 'app'];
 
     public function __construct(string $basePath = '')
     {
@@ -49,12 +49,19 @@ final class MakeModelCommand extends Command
         $class = $this->studly($raw);
         $table = $this->snakePlural($class);
 
+        $app = $this->resolveTargetApp();
+        if ($app === null) {
+            return 1;
+        }
+
+        $ns = 'app' . $this->appNamespaceSegment($app) . '\models';
+
         $content = <<<PHP
 <?php
 
 declare(strict_types=1);
 
-namespace app\models;
+namespace {$ns};
 
 use Kode\Framework\Database\Model;
 
@@ -74,7 +81,7 @@ final class {$class} extends Model
 
 PHP;
 
-        $path = $this->path('app/models/' . $class . '.php');
+        $path = $this->path('app' . $this->appDirSegment($app) . '/models/' . $class . '.php');
         if (!$this->writeFile($path, $content, $this->flag('force', false))) {
             $this->warn("已存在，跳过（用 --force 覆盖）：{$path}");
 

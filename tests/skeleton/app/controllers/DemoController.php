@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace app\http\controllers;
+namespace app\controllers;
 
 use Kode\Framework\Http\Controller;
 

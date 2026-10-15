@@ -111,7 +111,7 @@ final class EnvelopeMiddleware implements MiddlewareInterface
             return $response;
         }
 
-        $new = $response->withBody(\Nyholm\Psr7\Utils::streamFor($encoded));
+        $new = $response->withBody(\Kode\Http\create_stream($encoded));
         if (!$new->hasHeader('Content-Type')) {
             $new = $new->withHeader('Content-Type', 'application/json; charset=utf-8');
         }

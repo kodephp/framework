@@ -63,6 +63,45 @@ trait GeneratesFiles
     }
 
     /**
+     * 解析 --app= 目标子应用（多应用脚手架）：
+     *   未传返回 ''（单应用，生成到 app/<layer>/...）；
+     *   合法返回应用名（小写标识符，与 PSR-4 namespace 段一致）；
+     *   非法打错误并返回 null（调用方据此 return 1）。
+     */
+    protected function resolveTargetApp(): ?string
+    {
+        $app = (string) $this->opt('app', '');
+        if ($app === '') {
+            return '';
+        }
+
+        // 与目录小写纪律一致：应用名即目录名即 namespace 段，禁连字符（-）以免 namespace 非法。
+        if (preg_match('/^[a-z][a-z0-9_]*$/', $app) !== 1) {
+            $this->error('非法子应用名（须小写字母开头，仅含小写字母/数字/下划线）：' . $app);
+
+            return null;
+        }
+
+        return $app;
+    }
+
+    /**
+     * 子应用目录段：''（单应用）或 '/<app>'。
+     */
+    protected function appDirSegment(#[\SensitiveParameter] string $app): string
+    {
+        return $app === '' ? '' : '/' . $app;
+    }
+
+    /**
+     * 子应用 namespace 段：''（单应用）或 '\<app>'。
+     */
+    protected function appNamespaceSegment(#[\SensitiveParameter] string $app): string
+    {
+        return $app === '' ? '' : '\\' . $app;
+    }
+
+    /**
      * StudlyCase（首字母大写的驼峰）：create_users_table → CreateUsersTable，
      * SendNewsletter / UserController → 保持原有驼峰（不整体小写化）。
      */

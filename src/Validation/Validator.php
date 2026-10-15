@@ -99,7 +99,7 @@ final class Validator
      * 需要按大小判的字段请用 `integer` / `numeric` 明说；需要按字符数判的可以直接写 `string`。
      *
      * @param mixed $value 当前字段值，用于推断 min/max 约束类型
-     * @return list<Assert\Constraint>
+     * @return list<\Symfony\Component\Validator\Constraint>
      */
     private function parseRules(string $ruleStr, mixed $value): array
     {

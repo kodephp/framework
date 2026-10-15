@@ -25,16 +25,17 @@ trait RouteMatchTrait
      */
     private function resolveRoute(ServerRequestInterface $request): array
     {
-        if (isset($this->resolver) && $this->resolver !== null) {
+        // isset 即已排除 null（属性不存在或为 null 都为 false），无需再比较 null。
+        if (isset($this->resolver)) {
             return $this->resolver->resolve($request);
         }
 
-        if (isset($this->router) && $this->router !== null) {
+        if (isset($this->router)) {
             $matched = $this->router->match($request->getMethod(), $request->getUri()->getPath());
 
             return [$request, $matched];
         }
 
-        return [$request, null];
+        return [$request, null]; // @phpstan-ignore deadCode.unreachable (router 在部分使用类中非空、在 ?Router 使用类中可空——此兜底对后者是活路径)
     }
 }

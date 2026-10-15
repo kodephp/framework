@@ -162,6 +162,7 @@ final class RouteListCommand extends Command
                 'source' => $source,
                 'action' => $this->action($route),
                 'ratelimit' => $this->rateLimitCol($route, $registry),
+                default => '',
             };
         }
 
@@ -190,7 +191,7 @@ final class RouteListCommand extends Command
      */
     private function groupKey(Route $route): string
     {
-        $seg = explode('/', trim($route->getPattern(), '/'))[0] ?? '';
+        $seg = explode('/', trim($route->getPattern(), '/'))[0];
 
         return $seg === '' ? '/' : $seg;
     }

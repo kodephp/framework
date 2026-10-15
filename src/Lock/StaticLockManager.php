@@ -267,7 +267,7 @@ final class StaticLockManager implements LockManager
     public function run(string $key, callable $work, int $ttl = 30): mixed
     {
         if (!$this->acquire($key, $ttl)) {
-            throw new LockAcquireException($key);
+            throw LockAcquireException::for($key);
         }
         try {
             return $work();

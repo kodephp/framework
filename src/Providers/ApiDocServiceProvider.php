@@ -72,7 +72,7 @@ final class ApiDocServiceProvider extends ServiceProvider
             );
         });
 
-        $app->get($uiPath, function (\Psr\Http\Message\ServerRequestInterface $request) use ($generator, $protect, $token, $jsonPath): Response {
+        $app->get($uiPath, function (\Psr\Http\Message\ServerRequestInterface $request) use ($protect, $token, $jsonPath): Response {
             if (!$this->docAllowed($request, $protect, $token)) {
                 return Response::make('Forbidden', 403, ['Content-Type' => 'text/plain; charset=utf-8']);
             }

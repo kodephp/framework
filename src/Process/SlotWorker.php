@@ -37,7 +37,7 @@ final class SlotWorker extends Worker
         // 内层未感知槽位（handle() 零参）时，多实例本会各自执行一遍——保持该行为。
         $params = (new \ReflectionMethod($this->inner, 'handle'))->getNumberOfParameters();
         if ($params > 0) {
-            $this->inner->handle($this->slot);
+            $this->inner->handle($this->slot); // @phpstan-ignore arguments.count (反射已确认内层声明了槽位参数，静态类型仍是零参基类)
         } else {
             $this->inner->handle();
         }

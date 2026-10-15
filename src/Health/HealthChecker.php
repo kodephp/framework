@@ -166,8 +166,8 @@ final class HealthChecker
 
         /** @var Queue $queue */
         $queue = $this->container->get(Queue::class);
-        // 轻量连通性探测：尝试获取连接（不真正消费）。
-        $queue->connection();
+        // 轻量连通性探测：查询默认队列长度（只读 round-trip，不消费不入队）。
+        $queue->size();
 
         return 'ok';
     }

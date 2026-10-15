@@ -5,6 +5,7 @@
 /tests/                export-ignore
 /.workbuddy/           export-ignore
 /.github/              export-ignore
+/phpstan.neon          export-ignore
 
 # 说明：v1.0.0 起本仓库收敛为纯内核，app/ config/ public/ database/ lang/ 已移除
 # （骨架独立为 kode/skeleton 仓库）。tests/skeleton/ 是集成测试夹具，随 /tests/ 一并排除。

@@ -95,7 +95,7 @@ final class Retry
             }
         }
 
-        $ex = new RetryExhausted(count($failures), $failures, previous: $failures !== [] ? end($failures) : null);
+        $ex = new RetryExhausted(count($failures), $failures, previous: end($failures));
         $this->dispatch(new RetryExhaustedEvent($label, $ex->attempts, $ex->last() ?? $ex));
 
         throw $ex;
@@ -114,11 +114,11 @@ final class Retry
         if (is_callable($retryOn)) {
             return (bool) $retryOn($e);
         }
-        if (is_array($retryOn)) {
+        if (is_array($retryOn)) { // @phpstan-ignore function.alreadyNarrowedType (phpdoc 联合已约束为 list；运行期用户配置可能传入越界标量，防御保留)
             return array_any($retryOn, fn($class) => $e instanceof $class);
         }
 
-        return true;
+        return true; // @phpstan-ignore deadCode.unreachable (同上：越界值走此防御分支)
     }
 
     /**

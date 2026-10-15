@@ -16,15 +16,15 @@ use Kode\Framework\Console\Commands\Concerns\GeneratesFiles;
  */
 #[AsCommand(
     name: 'make:middleware',
-    description: '生成 HTTP 中间件（app/http/middleware）',
-    usage: 'make:middleware {name : 生成的类名} {--force : 覆盖已存在的文件}',
+    description: '生成 HTTP 中间件（app/middleware，--app 可定向子应用）',
+    usage: 'make:middleware {name : 生成的类名} {--force : 覆盖已存在的文件} {--app= : 子应用名，生成到 app/<app>/middleware}',
 )]
 final class MakeMiddlewareCommand extends Command
 {
     use GeneratesFiles;
 
     /** 本命令认识的选项 */
-    private const OPTS = ['force'];
+    private const OPTS = ['force', 'app'];
 
     public function __construct(string $basePath = '')
     {
@@ -51,12 +51,19 @@ final class MakeMiddlewareCommand extends Command
             $class .= 'Middleware';
         }
 
+        $app = $this->resolveTargetApp();
+        if ($app === null) {
+            return 1;
+        }
+
+        $ns = 'app' . $this->appNamespaceSegment($app) . '\middleware';
+
         $content = <<<PHP
 <?php
 
 declare(strict_types=1);
 
-namespace app\http\middleware;
+namespace {$ns};
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -81,7 +88,7 @@ final class {$class} implements MiddlewareInterface
 
 PHP;
 
-        $path = $this->path('app/http/middleware/' . $class . '.php');
+        $path = $this->path('app' . $this->appDirSegment($app) . '/middleware/' . $class . '.php');
         if (!$this->writeFile($path, $content, $this->flag('force', false))) {
             $this->warn("已存在，跳过（用 --force 覆盖）：{$path}");
 

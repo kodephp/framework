@@ -59,7 +59,7 @@ final class OtlpHttpExporter implements SpanExporter
     {
         $lines = ['Content-Type: application/json'];
         foreach ($this->headers as $key => $value) {
-            if ($value !== '' && $value !== null) {
+            if ($value !== '') {
                 $lines[] = $key . ': ' . $value;
             }
         }

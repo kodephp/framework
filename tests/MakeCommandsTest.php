@@ -71,14 +71,28 @@ final class MakeCommandsTest extends TestCase
     {
         $code = $this->execute(new MakeControllerCommand($this->tmp), ['User']);
         self::assertSame(0, $code);
-        $this->assertGenerated('app/http/controllers/UserController.php', 'class UserController extends Controller');
-        $this->assertGenerated('app/http/controllers/UserController.php', 'namespace app\http\controllers;');
+        $this->assertGenerated('app/controllers/UserController.php', 'class UserController extends Controller');
+        $this->assertGenerated('app/controllers/UserController.php', 'namespace app\controllers;');
     }
 
     public function testMakeControllerKeepsSuffix(): void
     {
         $this->execute(new MakeControllerCommand($this->tmp), ['UserController']);
-        $this->assertGenerated('app/http/controllers/UserController.php', 'class UserController extends Controller');
+        $this->assertGenerated('app/controllers/UserController.php', 'class UserController extends Controller');
+    }
+
+    public function testMakeControllerWithAppOptionTargetsSubApplication(): void
+    {
+        $code = $this->execute(new MakeControllerCommand($this->tmp), ['Panel', '--app=admin']);
+        self::assertSame(0, $code);
+        $this->assertGenerated('app/admin/controllers/PanelController.php', 'namespace app\admin\controllers;');
+    }
+
+    public function testMakeControllerRejectsInvalidAppName(): void
+    {
+        $code = $this->execute(new MakeControllerCommand($this->tmp), ['Panel', '--app=Bad-Name']);
+        self::assertSame(1, $code, '应用名须小写标识符（目录名即 namespace 段）');
+        self::assertFileDoesNotExist($this->tmp . '/app/controllers/PanelController.php');
     }
 
     public function testMakeModel(): void
@@ -86,6 +100,12 @@ final class MakeCommandsTest extends TestCase
         $this->execute(new MakeModelCommand($this->tmp), ['Post']);
         $this->assertGenerated('app/models/Post.php', 'class Post extends Model');
         $this->assertGenerated('app/models/Post.php', "protected string \$table = 'posts';");
+    }
+
+    public function testMakeModelWithAppOption(): void
+    {
+        $this->execute(new MakeModelCommand($this->tmp), ['Invoice', '--app=admin']);
+        $this->assertGenerated('app/admin/models/Invoice.php', 'namespace app\admin\models;');
     }
 
     public function testMakeMigration(): void
@@ -99,7 +119,14 @@ final class MakeCommandsTest extends TestCase
     public function testMakeMiddleware(): void
     {
         $this->execute(new MakeMiddlewareCommand($this->tmp), ['Auth']);
-        $this->assertGenerated('app/http/middleware/AuthMiddleware.php', 'class AuthMiddleware implements MiddlewareInterface');
+        $this->assertGenerated('app/middleware/AuthMiddleware.php', 'class AuthMiddleware implements MiddlewareInterface');
+        $this->assertGenerated('app/middleware/AuthMiddleware.php', 'namespace app\middleware;');
+    }
+
+    public function testMakeMiddlewareWithAppOption(): void
+    {
+        $this->execute(new MakeMiddlewareCommand($this->tmp), ['Auth', '--app=admin']);
+        $this->assertGenerated('app/admin/middleware/AuthMiddleware.php', 'namespace app\admin\middleware;');
     }
 
     public function testMakeCommand(): void
@@ -107,6 +134,13 @@ final class MakeCommandsTest extends TestCase
         $this->execute(new MakeCommandCommand($this->tmp), ['SendNewsletter']);
         $this->assertGenerated('app/console/SendNewsletterCommand.php', 'class SendNewsletterCommand extends Command');
         $this->assertGenerated('app/console/SendNewsletterCommand.php', "name: 'send_newsletter'");
+    }
+
+    public function testMakeCommandWithAppOption(): void
+    {
+        $this->execute(new MakeCommandCommand($this->tmp), ['SyncFeed', '--app=admin']);
+        $this->assertGenerated('app/admin/console/SyncFeedCommand.php', 'namespace app\admin\console;');
+        $this->assertGenerated('app/admin/console/SyncFeedCommand.php', "name: 'sync_feed'");
     }
 
     public function testSkipWhenExistsWithoutForce(): void

@@ -167,8 +167,8 @@ class PluginDependencyResolver
      */
     public static function graph(): array
     {
-        if (static::$graph !== null) {
-            return static::$graph;
+        if (self::$graph !== null) {
+            return self::$graph;
         }
         $graph = [];
         foreach (static::collection() as $name => $class) {
@@ -180,7 +180,7 @@ class PluginDependencyResolver
             $graph[$name] = self::requirements($plugin);
         }
 
-        return static::$graph = $graph;
+        return self::$graph = $graph;
     }
 
     /**
@@ -190,8 +190,8 @@ class PluginDependencyResolver
      */
     public static function reverse(): array
     {
-        if (static::$reverse !== null) {
-            return static::$reverse;
+        if (self::$reverse !== null) {
+            return self::$reverse;
         }
         $reverse = [];
         foreach (static::graph() as $name => $deps) {
@@ -203,7 +203,7 @@ class PluginDependencyResolver
             $names = array_values(array_unique($names));
         }
 
-        return static::$reverse = $reverse;
+        return self::$reverse = $reverse;
     }
 
     /**
@@ -434,7 +434,7 @@ class PluginDependencyResolver
         if (str_starts_with($constraint, '^')) {
             $base = ltrim($constraint, '^');
             $parts = explode('.', $base);
-            $major = (int) ($parts[0] ?? 0);
+            $major = (int) $parts[0];
             if ($major > 0) {
                 $upper = ($major + 1) . '.0.0';
             } else {
@@ -447,7 +447,7 @@ class PluginDependencyResolver
         if (str_starts_with($constraint, '~')) {
             $base = ltrim($constraint, '~');
             $parts = explode('.', $base);
-            $major = (int) ($parts[0] ?? 0);
+            $major = (int) $parts[0];
             $minor = (int) ($parts[1] ?? 0);
             $upper = $major . '.' . ($minor + 1) . '.0';
 
@@ -461,7 +461,7 @@ class PluginDependencyResolver
     /**
      * 依赖概览（供 API / 前端展示）：直接依赖 + 传递闭包 + 下游依赖者 + 是否成环。
      *
-     * @return array{dependencies: list<array{name,version,installed,status,ok}>, dependents: list<string>, transitive: list<string>, cycle: bool}
+     * @return array{dependencies: list<array{name: string, version: string|null, installed: string, status: string, ok: bool}>, dependents: list<string>, transitive: list<string>, cycle: bool}
      */
     public static function overview(string $name): array
     {
@@ -495,7 +495,7 @@ class PluginDependencyResolver
     /** 使缓存失效（新增/删除插件文件后调用；通常 reload 会重建进程）。 */
     public static function flush(): void
     {
-        static::$graph = null;
-        static::$reverse = null;
+        self::$graph = null;
+        self::$reverse = null;
     }
 }

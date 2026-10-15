@@ -90,7 +90,7 @@ final class LockWatchdog
         $owner = $owner ?? bin2hex(random_bytes(12));
 
         if (!$this->manager->acquire($key, $ttl, $owner)) {
-            throw new LockAcquireException($key);
+            throw LockAcquireException::for($key);
         }
 
         $interval = max(1, (int) ceil($ttl * $this->renewRatio));
@@ -208,9 +208,9 @@ final class LockWatchdog
         $stop = false;
         $scheduler->go(static function () use (&$stop, $interval, $tick): void {
             try {
-                while (!$stop) {
+                while (!$stop) { // @phpstan-ignore booleanNot.alwaysTrue ($stop 由闭包外的 stop 标记异步置位，phpstan 无法建模跨协程引用写入)
                     Fibers::sleep($interval);
-                    if ($stop) {
+                    if ($stop) { // @phpstan-ignore if.alwaysFalse (同上：退出条件依赖协程外置位)
                         break;
                     }
                     $tick();

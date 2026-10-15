@@ -27,7 +27,7 @@ final class FiberTimeoutScheduler implements TimeoutScheduler
     {
         try {
             return Fibers::withTimeout($op, $seconds);
-        } catch (FiberTimeoutException $e) {
+        } catch (FiberTimeoutException $e) { // @phpstan-ignore catch.neverThrown (超时由 kode/fibers 运行时抛出，包侧 withTimeout 未以 @throws 声明)
             throw new TimeoutExceeded($seconds, 'anonymous', $e);
         }
     }

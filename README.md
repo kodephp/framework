@@ -9,7 +9,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `3.1.4`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
+本包版本可由类常量核对：`Kode\Framework\Application::VERSION`，或调用 `Application::version()`（当前 `3.2.0`）。`composer.json` 的 `version` 是 composer 侧权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败。
 
 ## 5 分钟跑起来
 
@@ -26,7 +26,7 @@ php kode start
 
 # 3. 验证
 curl http://127.0.0.1:9527/health
-# {"code":200,"msg":"ok","data":{"service":"kode-app","version":"3.1.4","php":"8.4.26","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}}
+# {"code":200,"msg":"ok","data":{"service":"kode-app","version":"3.2.0","php":"8.4.26","env":"local","time":0.52,"uptime":3.4,"components":{"app":"ok"}}}
 # time = health check 方法执行耗时（毫秒）；status 随探针（任一 error 即 degraded），HTTP 恒 200
 ```
 
@@ -42,8 +42,8 @@ curl http://127.0.0.1:9527/health
 第一个接口：
 
 ```php
-// app/http/controllers/HelloController.php
-namespace app\http\controllers;
+// app/controllers/HelloController.php
+namespace app\controllers;
 
 use Kode\Framework\Http\Controller;
 
@@ -60,7 +60,7 @@ final class HelloController extends Controller
 ```php
 // app/routes.php
 use Kode\Http\App;
-use app\http\controllers\HelloController;
+use app\controllers\HelloController;
 
 return function (App $app): void {
     $app->get('/hello', fn() => resolve(HelloController::class)->say());
@@ -69,6 +69,15 @@ return function (App $app): void {
 
 ```bash
 curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
+```
+
+多应用（可选）：`app/<name>/routes.php` 存在即被自动发现，约定同主应用——
+`app/admin/controllers`、`app/admin/middleware`、`app/admin/routes.php`，
+（历史写法 `app/admin/http/controllers` 仍兼容）；`app/<name>/console` 下的命令类同样自动注册。
+属性路由会同时扫描主应用 `app/controllers` 与各子应用目录；`make` 命令支持 `--app=admin` 直接落位。
+
+```bash
+php kode make:controller Dashboard --app=admin   # → app/admin/controllers/DashboardController.php
 ```
 
 ---
@@ -80,7 +89,7 @@ curl "http://127.0.0.1:9527/hello?name=Kode"   # {"hello":"Kode"}
 ```text
 Kode[kode] start in PRODUCTION mode
 --- KODE ---------------------------------------------------------------------
-Kode Framework version:3.1.4          PHP version:8.4.26
+Kode Framework version:3.2.0          PHP version:8.4.26
 Runtime:native                   Event-Loop:event
 --- WORKERS ------------------------------------------------------------------
 proto    user       worker           listen                       processes  status
@@ -111,7 +120,7 @@ Press Ctrl+C to stop. Start success.
 
 ```text
 ----------------------------------------------GLOBAL STATUS----------------------------------------------
-Kode Framework version:3.1.4        PHP version:8.4.26
+Kode Framework version:3.2.0        PHP version:8.4.26
 start time:2026-08-30 12:36:36    run 0 days 0 hours 1 minutes
 master pid:81664      runtime:native     event-loop:event    load average:0.35, 0.31, 0.28
 1 workers       3 processes
@@ -588,7 +597,7 @@ catch 长得一模一样：
 
 ## 版本
 
-- 当前版本：**[v3.1.4](https://github.com/kodephp/framework/releases)**
+- 当前版本：**[v3.2.0](https://github.com/kodephp/framework/releases)**
 - 包名：`kode/framework`（Composer）
 - 仓库：<https://github.com/kodephp/framework>
 

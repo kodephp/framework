@@ -73,7 +73,7 @@ class Packager
      */
     public static function config(): array
     {
-        $user = static::userConfig();
+        $user = self::userConfig();
         unset($user['packager']);
         $defaults = [
             'build_dir'            => 'build',
@@ -145,7 +145,7 @@ class Packager
             return self::$driverClass;
         }
 
-        $candidate = static::userConfig()['packager'] ?? null;
+        $candidate = self::userConfig()['packager'] ?? null;
         if (is_string($candidate) && $candidate !== '') {
             if (class_exists($candidate)) {
                 if ($candidate === self::class || is_subclass_of($candidate, self::class)) {
@@ -155,7 +155,7 @@ class Packager
                     sprintf('config/packaging.php 的 packager「%s」不是 %s 或其子类', $candidate, self::class)
                 );
             }
-            throw new \ClassNotFoundException(
+            throw new \InvalidArgumentException(
                 sprintf('config/packaging.php 的 packager「%s」类不存在，请检查命名空间与 autoload', $candidate)
             );
         }
@@ -633,7 +633,7 @@ PHP
             // 无静态映射时 autoload_real.php 回退到平铺映射文件，上面已重写。
             return;
         }
-        $src = (string) @file_get_contents($staticFile);
+        $src = @file_get_contents($staticFile);
         if ($src === false) {
             throw new \RuntimeException("无法读取：{$staticFile}");
         }
@@ -972,14 +972,9 @@ PHP
             // 签名校验：PHP 8.0+ getSignature() 返回 array（hash/hash_type），
             // 更早版本返回 PharSignature 对象；两种都兼容，不做单一假设。
             $sig = $phar->getSignature();
-            if (is_array($sig)) {
-                $checks['signature_type'] = (string) ($sig['hash_type'] ?? $sig['type'] ?? 'unknown');
-                $checks['signature_hash'] = substr((string) ($sig['hash'] ?? ''), 0, 16) . '…';
-            } elseif (is_object($sig) && method_exists($sig, 'getType')) {
-                $checks['signature_type'] = (string) $sig->getType();
-            } else {
-                $checks['signature_type'] = is_object($sig) ? get_class($sig) : get_debug_type($sig);
-            }
+            // PHP 8 恒返回 array{hash, hash_type}（对象签名形态是 PHP 7 时代产物，最低要求 8.4）。
+            $checks['signature_type'] = (string) $sig['hash_type'];
+            $checks['signature_hash'] = substr((string) $sig['hash'], 0, 16) . '…';
             // 签名真伪无需单独校验方法（Phar 无 isValid）：new \Phar() 与遍历本身
             // 会校验签名，篡改即抛 UnexpectedValueException，被下方 catch 拦下。
             $checks['files'] = (string) $phar->count();
@@ -994,7 +989,8 @@ PHP
         }
 
         if (!$isPhar) {
-            return ['ok' => $errors === [], 'errors' => $errors, 'checks' => $checks];
+            // 走到此分支必已捕获异常入栈（try 成功会置 $isPhar），ok 恒为 false。
+            return ['ok' => false, 'errors' => $errors, 'checks' => $checks];
         }
 
         $checks['alias'] = $alias;
@@ -1042,7 +1038,7 @@ PHP
         $lines[] = '  产物      : ' . $result['artifact'];
         $lines[] = '  体积      : ' . self::humanBytes((int) $result['bytes']);
         $lines[] = '  SHA256    : ' . $result['sha256'];
-        if (isset($result['files']) && $result['files'] !== null) {
+        if (isset($result['files'])) {
             $lines[] = '  包内文件  : ' . $result['files'];
         }
         if (isset($result['signature'])) {

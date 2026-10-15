@@ -364,7 +364,8 @@ final class LazyServerRequest extends KodeServerRequest implements ServerRequest
         // 使 parent::hasHeader/getHeader/getHeaders 基于真实数据工作。
         foreach ($headers as $name => $value) {
             $normalized = strtolower($name);
-            $this->headers[$name] = is_array($value) ? $value : [$value];
+            // ProcessRequest::headers() 契约即 array<string, string>，值恒为字符串。
+            $this->headers[$name] = [$value];
             $this->headerNames[$normalized] = $name;
         }
     }

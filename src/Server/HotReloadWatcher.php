@@ -29,9 +29,6 @@ final class HotReloadWatcher
     /** 轮询间隔（微秒）。 */
     private const CHECK_USLEEP = 500_000;
 
-    /** 关停子进程后的宽限等待（微秒），让 worker 处理完在途请求。 */
-    private const GRACE_USLEEP = 800_000;
-
     /** stopChild 的 SIGTERM 宽限上限（秒）：超时升级 SIGKILL，防 proc_close 长阻塞。 */
     private const STOP_GRACE_SECONDS = 5.0;
 
@@ -47,6 +44,7 @@ final class HotReloadWatcher
     private const MAX_FAST_RESTARTS = 3;
 
     /** 当前 serve 子进程资源（供信号处理器关停）。 */
+    /** @var resource|null */
     private $currentProc = null;
 
     /**

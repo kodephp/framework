@@ -7,6 +7,7 @@ namespace Kode\Framework\Providers;
 use Kode\Attributes\Reader;
 use Kode\Framework\Application;
 use Kode\Framework\Http\ControllerScanner;
+use Kode\Framework\Support\AppDiscovery;
 use Kode\Framework\Http\Middleware\AccessLogMiddleware;
 use Kode\Framework\Http\RouteResolver;
 use Kode\Framework\Logging\AccessLogSink;
@@ -447,7 +448,7 @@ final class HttpServiceProvider extends ServiceProvider
         if (!empty($sec['referrer_policy'])) {
             $headers['Referrer-Policy'] = (string) $sec['referrer_policy'];
         }
-        if (!empty($sec['xss_protection']) && (string) $sec['xss_protection'] !== '0') {
+        if (!empty($sec['xss_protection'])) {
             $headers['X-XSS-Protection'] = (string) $sec['xss_protection'];
         }
         // 自定义 HSTS 串（如 'max-age=31536000; includeSubDomains'）直接下发。
@@ -716,6 +717,7 @@ final class HttpServiceProvider extends ServiceProvider
         // 会退化为相对 CWD，故此处用真实的 path.base 拼成绝对路径，避免依赖工作目录。
         $base = (string) $this->config('path.base', '');
         $dirs = $this->resolveAbsoluteDirs($dirs, $base);
+        $dirs = $this->withConventionControllerDirs($dirs, $base);
         $dirs = $this->withApplicationControllerDirs($dirs);
         $dirs = $this->withPluginControllerDirs($dirs);
         $scanner->scan($dirs);
@@ -778,39 +780,55 @@ final class HttpServiceProvider extends ServiceProvider
 
     /**
      * 多应用自动发现（零开关）：app/{App}/routes.php 存在即视为一个子应用，
-     * 其 http/controllers 或 controllers 目录自动纳入属性路由扫描。
+     * 其 controllers 目录自动纳入属性路由扫描。
      *
-     * 约定（与主应用对齐）：
+     * 约定（与 ThinkPHP/Webman/Hyperf multi-app 同型：应用目录内扁平结构，不再套 http 层）：
      *   - 应用目录：app/admin/routes.php、app/api/routes.php ...（目录名即应用名，小写）；
-     *   - 控制器目录：app/{App}/http/controllers 或 app/{App}/controllers；
+     *   - 控制器目录：app/{App}/controllers（新约定）；app/{App}/http/controllers（旧写法，兼容）；
      *   - namespace：与目录严格对应（PSR-4 app\ → app/），如
-     *     app/admin/http/controllers/AdminPanelController.php → app\admin\http\controllers\AdminPanelController。
+     *     app/admin/controllers/AdminPanelController.php → app\admin\controllers\AdminPanelController；
      *   - 路由来源标签：app:<App>（route:list 分组展示）。
      *
-     * 不满足「存在 routes.php」的普通目录（app/http、app/services、app/models 等）不受影响，
+     * 不满足「存在 routes.php」的普通目录（app/services、app/models 等）不受影响，
      * 不会被误判为子应用。
      *
      * @return list<string> 子应用目录绝对路径列表
      */
     private function discoverApplications(): array
     {
-        $base = (string) $this->config('path.base', '');
-        $apps = [];
+        return array_values(AppDiscovery::discover((string) $this->config('path.base', '')));
+    }
 
-        foreach (glob($base . '/app/*', GLOB_ONLYDIR) ?: [] as $dir) {
-            if (basename((string) $dir) === 'routes') {
-                continue; // 主应用路由目录（归属主应用，见 resolveRouteSources）
-            }
-            if (is_file($dir . '/routes.php')) {
-                $apps[] = $dir;
+    /**
+     * 单应用约定目录兜底（零配置）：配置未声明 'app' 标签时自动纳入 ——
+     *   app/controllers（新约定，无 http 层）优先，app/http/controllers（旧写法）兼容。
+     *
+     * 配置（routes.attributes.controllers['app']）显式声明时以配置为准，本方法不动。
+     *
+     * @param array<string, string> $dirs
+     * @return array<string, string>
+     */
+    private function withConventionControllerDirs(array $dirs, string $base): array
+    {
+        if ($base === '' || isset($dirs['app'])) {
+            return $dirs;
+        }
+
+        foreach (['app/controllers', 'app/http/controllers'] as $rel) {
+            if (is_dir($base . '/' . $rel)) {
+                $dirs['app'] = $base . '/' . $rel;
+                break;
             }
         }
 
-        return $apps;
+        return $dirs;
     }
 
     /**
      * 把子应用控制器目录纳入属性扫描（自动发现，无需开关）。
+     *
+     * 每个子应用取第一个存在的目录：app/{App}/controllers（新约定）
+     * 优先，app/{App}/http/controllers（旧写法）兜底。
      *
      * @param array<string, string> $dirs
      * @return array<string, string>
@@ -819,7 +837,7 @@ final class HttpServiceProvider extends ServiceProvider
     {
         foreach ($this->discoverApplications() as $appDir) {
             $name = basename((string) $appDir);
-            foreach (['http/controllers', 'controllers'] as $rel) {
+            foreach (['controllers', 'http/controllers'] as $rel) {
                 $candidate = $appDir . '/' . $rel;
                 if (is_dir($candidate)) {
                     $dirs['app:' . $name] = $candidate;

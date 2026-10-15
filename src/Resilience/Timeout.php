@@ -9,6 +9,7 @@ use Kode\Framework\Resilience\Events\TimeoutExceeded as TimeoutExceededEvent;
 use Kode\Framework\Resilience\TimeoutExceeded;
 use Kode\Framework\Resilience\TimeoutScheduler;
 use Kode\Framework\Resilience\TimeoutScheduler\FiberTimeoutScheduler;
+use Kode\Framework\Resilience\TimeoutScheduler\PcntlTimeoutScheduler;
 use Kode\Framework\Resilience\TimeoutScheduler\SyncTimeoutScheduler;
 
 /**
@@ -94,7 +95,7 @@ final class Timeout
         return match ($name) {
             'fiber' => new FiberTimeoutScheduler(),
             'pcntl' => new PcntlTimeoutScheduler(),
-            'sync' => new SyncTimeoutScheduler(),
+            'sync' => new SyncTimeoutScheduler(), // @phpstan-ignore match.alwaysTrue (union 联合逐臂收窄后的必然恒真；default 保留为运行期越界护栏)
             default => self::autoScheduler(),
         };
     }

@@ -24,15 +24,20 @@
 4. **不遗留补丁**：对 vendor 的过渡补丁在官方 tag 发布后必须移除并同步文档，vendor 保持纯净官方包。
 5. **测试纪律**：任何 src 改动必须跑通 `vendor/bin/phpunit`（全量 1120+ tests）。沙箱缺扩展的环境性失败
    （如 redis）如实标注，不编造「通过」。
-6. **目录结构纪律（全层级小写）**：`app/` 下**所有目录一律小写**——不限于第一层，含 `http/controllers`、`http/middleware`、
-   `providers`、`models` 等；方法/类文件首字母大写驼峰（如 `app/http/controllers/UserController.php`、`app/console/GreetCommand.php`）；
+6. **目录结构纪律（全层级小写）**：`app/` 下**所有目录一律小写**——不限于第一层，含 `controllers`、`middleware`、
+   `providers`、`models` 等；方法/类文件首字母大写驼峰（如 `app/controllers/UserController.php`、`app/console/GreetCommand.php`）；
    console 命令单层存放于 `app/console/`（namespace `app\console`），不搞嵌套子目录。
-   - **namespace 与目录的配套约定（勿打破）**：目录小写 ↔ namespace **全小写**一一对应（`app\http\controllers` ↔ `app/http/controllers/`）。
+   - **单应用（默认约定）**：控制器在 `app/controllers`、中间件在 `app/middleware`（**不再套 `http/` 层**）；
+     历史写法 `app/http/controllers` 仍被扫描兼容，但新代码一律用扁平路径。
+   - **多应用（可选）**：`app/<name>/routes.php` 存在即识别为子应用（`<name>` 须匹配 `^[a-z][a-z0-9_]*$`），
+     目录约定 `app/<name>/controllers`、`app/<name>/middleware`、`app/<name>/console`（legacy `app/<name>/http/controllers` 兼容）；
+     `make:*` 命令支持 `--app=<name>` 落位到子应用。配置 `routes.attributes.controllers['app']` 显式声明时以配置为准。
+   - **namespace 与目录的配套约定（勿打破）**：目录小写 ↔ namespace **全小写**一一对应（`app\controllers` ↔ `app/controllers/`）。
      `composer.json` 已配 `"app\\": "app/"`，PSR-4 直接命中，无需 classmap 兜底。因此：
      - `app/` 下新增/修改类走 PSR-4 即时可加载，**无需 `composer dump-autoload`**；仅当改了 `composer.json` 的 `autoload` 映射本身时才需刷新。属性路由在启动时递归扫描控制器目录自动注册，改完重启服务即生效。
      - 保持「目录小写 + namespace 小写 + 类名/方法名驼峰」一致即可，不要去把目录或 namespace 改成驼峰；
-     - 改 `config/routes.php` 的 `attributes.controllers` 与 `src/Console/Commands/Make*Command.php` 生成路径时，必须继续用小写目录
-       （`app/http/controllers`、`app/http/middleware`、`app/models`、`app/console`），并同步 tests 断言与 docs。
+     - 改 `config/routes.php` 的 `attributes.controllers` 与 `src/Console/Commands/Make*Command.php` 生成路径时，必须继续用小写扁平目录
+       （`app/controllers`、`app/middleware`、`app/models`、`app/console`），并同步 tests 断言与 docs。
 7. **字符卫生**：PHP/配置代码正文一律 ASCII 半角标点，禁止全角引号/逗号/分号混入源码；中文注释可用全角，代码符号必须半角。
 
 ## 常用命令

@@ -7,10 +7,10 @@ namespace Kode\Framework\Providers;
 use Kode\Framework\Http\RateLimit\Algorithm;
 use Kode\Framework\Http\RateLimit\LimiterFactory;
 use Kode\Framework\Http\RateLimit\RateLimitAttributeReader;
+use Kode\Limiting\Algorithm\RateLimiterInterface;
 use Kode\Limiting\Enum\RedisMode;
 use Kode\Limiting\Enum\LimiterType;
 use Kode\Limiting\Limiter;
-use Kode\Limiting\RateLimiterInterface;
 
 /**
  * 限流服务提供者（kode/limiting，PHP 8.3+）
@@ -66,7 +66,8 @@ final class LimitingServiceProvider extends ServiceProvider
                 // 修复（v1.0.0）：旧实现误读 redis.host/port——memcached 客户端会连到
                 // Redis 主机的 11211 端口，专属配置段被完全忽略。
                 (string) ($config['memcached']['host'] ?? '127.0.0.1'),
-                (int) ($config['memcached']['port'] ?? 11211)
+                (int) ($config['memcached']['port'] ?? 11211),
+                (string) ($config['memcached']['prefix'] ?? 'kode:limiting:')
             ),
             'pdo' => Limiter::pdo(
                 $type,
@@ -88,6 +89,7 @@ final class LimitingServiceProvider extends ServiceProvider
                 $this->redisMode($config),
                 $this->sentinels($config),
                 (string) ($config['redis']['master_name'] ?? 'mymaster'),
+                (string) ($config['redis']['prefix'] ?? 'kode:limiting:'),
                 $this->clusterNodes($config)
             ),
             default => $this->memory($type, $capacity, $rate),

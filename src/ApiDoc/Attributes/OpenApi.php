@@ -108,10 +108,10 @@ final class OpenApi
      */
     private function normalizeParameters(array $params): array
     {
-        return array_values(array_map(
+        return array_map(
             static fn($p): array => $p instanceof OpenApiParameter ? $p->toArray() : (array) $p,
             $params
-        ));
+        );
     }
 
     /**

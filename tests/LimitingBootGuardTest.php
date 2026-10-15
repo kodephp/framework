@@ -71,7 +71,7 @@ final class LimitingBootGuardTest extends TestCase
             use Kode\Http\App;
 
             return function (App $app): void {
-                $app->get('/_guard/ratelimit', [\app\http\controllers\ProductsController::class, 'index']);
+                $app->get('/_guard/ratelimit', [\app\controllers\ProductsController::class, 'index']);
             };
             PHP);
     }

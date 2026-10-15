@@ -50,7 +50,7 @@ final class OpenApiRequestBody
             $schema['properties'] = $this->properties;
         }
         if ($this->required !== []) {
-            $schema['required'] = array_values($this->required);
+            $schema['required'] = $this->required;
         }
         if ($this->example !== null) {
             $schema['example'] = $this->example;

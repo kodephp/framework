@@ -40,7 +40,7 @@ use Psr\Http\Message\ResponseInterface;
  */
 abstract class TestCase extends BaseTestCase
 {
-    /** @var array<string, mixed> 已启动的应用实例缓存（每个测试类启动一次） */
+    /** @var Application|null 已启动的应用实例缓存（每个测试类启动一次） */
     private static ?Application $app = null;
 
     /** 项目根目录（子类可覆盖；默认取框架/项目根）。 */
