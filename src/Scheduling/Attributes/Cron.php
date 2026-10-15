@@ -49,7 +49,7 @@ final class Cron
          * 集群模式：true 时使用 Kode::cronCluster()（分布式锁，保证多进程/多机
          * 同一调度时刻至多执行一次）。前提：已配置协调存储（Cluster::make('redis'|'file'...)）。
          */
-        public bool $cluster = false,
+        public private(set) bool $cluster = false,
     ) {
     }
 }

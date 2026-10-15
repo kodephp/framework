@@ -23,7 +23,7 @@ final class Span
 
     public int $statusCode = SpanStatus::UNSET;
 
-    public string $statusMessage = '';
+    public private(set) string $statusMessage = '';
 
     /**
      * @param array<string, mixed> $attributes 业务/语义属性（http.method、db.statement 等）
