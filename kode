@@ -497,21 +497,41 @@ final class KodeServeCommand extends KodeServerCommand
                 $host = $args[++$i];
                 $serveArgs[] = '--host';
                 $serveArgs[] = $host;
+            } elseif (str_starts_with($args[$i], '--host=') && ($value = substr($args[$i], strlen('--host='))) !== '') {
+                $host = $value;
+                $serveArgs[] = '--host';
+                $serveArgs[] = $host;
             } elseif ($args[$i] === '--port' && isset($args[$i + 1])) {
                 $port = (int) $args[++$i];
+                $serveArgs[] = '--port';
+                $serveArgs[] = (string) $port;
+            } elseif (str_starts_with($args[$i], '--port=') && ($value = substr($args[$i], strlen('--port='))) !== '') {
+                $port = (int) $value;
                 $serveArgs[] = '--port';
                 $serveArgs[] = (string) $port;
             } elseif ($args[$i] === '--workers' && isset($args[$i + 1])) {
                 $workers = max(1, (int) $args[++$i]);
                 $serveArgs[] = '--workers';
                 $serveArgs[] = (string) $workers;
+            } elseif (str_starts_with($args[$i], '--workers=') && ($value = substr($args[$i], strlen('--workers='))) !== '') {
+                $workers = max(1, (int) $value);
+                $serveArgs[] = '--workers';
+                $serveArgs[] = (string) $workers;
             } elseif ($args[$i] === '--runtime' && isset($args[$i + 1])) {
                 $runtime = $args[++$i];
+                $serveArgs[] = '--runtime';
+                $serveArgs[] = $runtime;
+            } elseif (str_starts_with($args[$i], '--runtime=') && ($value = substr($args[$i], strlen('--runtime='))) !== '') {
+                $runtime = $value;
                 $serveArgs[] = '--runtime';
                 $serveArgs[] = $runtime;
             } elseif ($args[$i] === '--graceful' && isset($args[$i + 1])) {
                 // 优雅停机宽限（秒）：Ctrl+C / stop 后留给在途请求排空的最长时间；0 = 用默认值。
                 $graceful = max(0, (int) $args[++$i]);
+                $serveArgs[] = '--graceful';
+                $serveArgs[] = (string) $graceful;
+            } elseif (str_starts_with($args[$i], '--graceful=') && ($value = substr($args[$i], strlen('--graceful='))) !== '') {
+                $graceful = max(0, (int) $value);
                 $serveArgs[] = '--graceful';
                 $serveArgs[] = (string) $graceful;
             }
@@ -609,6 +629,19 @@ final class KodeStopCommand extends KodeServerCommand
             if (is_file($paths['pid_file'])) {
                 @unlink($paths['pid_file']);
             }
+
+            // master 已死但 worker 还活着（master 被 SIGKILL、终端关闭、看门狗误杀等）：
+            // worker 继承了监听套接字，会一直占着端口，而旧的 stop 只看 master PID，
+            // 于是每次都回「未运行」并留下一堆孤儿，端口再也起不来。这里补一刀收尸。
+            $killed = $this->killResidualWorkers(HttpServer::processMatchToken($config['name'] ?? null));
+            if ($killed > 0) {
+                $host = (string) ($config['host'] ?? '127.0.0.1');
+                $port = (int) ($config['port'] ?? 8000);
+                $this->waitPortFree($host, $port, 5.0);
+                echo "服务未运行（master 已退出），已清理 {$killed} 个残留 worker（PID 文件：{$paths['pid_file']}）\n";
+                return 0;
+            }
+
             echo "服务未运行（PID 文件：{$paths['pid_file']}）\n";
             return 0;
         }
