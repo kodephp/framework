@@ -75,7 +75,7 @@ final class BannerStopHintTest extends TestCase
         self::assertStringNotContainsString('php kode stop', $foreground);
     }
 
-    /** 源码与 README 不得再把用户指向不存在的 bin/kode（vendor/bin/kode 是 composer 的真路径）。 */
+    /** 源码与 README 不得把用户指向不存在的入口；composer bin 声明的入口必须真实存在。 */
     public function testDocsAndCodeDoNotPointAtPhantomEntry(): void
     {
         $root = dirname(__DIR__);
@@ -97,12 +97,18 @@ final class BannerStopHintTest extends TestCase
                 continue;
             }
             $text = str_replace('vendor/bin/kode', '', (string) file_get_contents($path));
-            if (str_contains($text, 'bin/kode')) {
+            if (str_contains($text, 'bin/kode') && !is_file($root . '/bin/kode')) {
                 $offenders[] = $relative;
             }
         }
 
         self::assertSame([], $offenders, '以下文件引用了不存在的入口 bin/kode');
+
+        $manifest = json_decode((string) file_get_contents($root . '/composer.json'), true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($manifest);
+        foreach ((array) ($manifest['bin'] ?? []) as $bin) {
+            self::assertFileExists($root . '/' . ltrim((string) $bin, '/'), "composer bin 声明的入口不存在：{$bin}");
+        }
     }
 
     /**

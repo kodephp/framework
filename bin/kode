@@ -1,0 +1,105 @@
+<?php
+
+/**
+ * Kode CLI 启动闸门。
+ *
+ * 背景：`kode` 本体使用了 PHP 8 语法（match、构造器属性提升、never 等），
+ * 在 PHP 7.x 下会在**编译期**直接报 `unexpected '=>'`，连版本判断都执行不到。
+ * 因此本文件必须保持 PHP 7.4 可解析，只做两件事：
+ *
+ *  1. 当前 PHP >= 8.4：补项目根常量后转发给真正的 CLI（../kode）；
+ *  2. 当前 PHP < 8.4：找一台 >= 8.4 的 PHP 重新执行本命令，找不到就给出明确报错。
+ *
+ * 候选顺序：`KODE_PHP_BIN` 环境变量 > Homebrew / 系统常见路径 > PATH 下的 php8.4/php84。
+ * 不用 PATH 里的裸 `php`，避免重新执行回自己。
+ *
+ * 注意：本文件不要使用 PHP 8 语法，否则闸门自身就无法在 7.x 下解析。
+ */
+
+/** @var int 最低 PHP 版本（与 composer.json 的 require.php 保持一致） */
+const KODE_CLI_MIN_PHP = 80400;
+
+/**
+ * 找一个满足最低版本、可执行的 PHP。
+ */
+function kode_cli_locate_php(int $minimum): ?string
+{
+    $candidates = [];
+
+    $env = getenv('KODE_PHP_BIN');
+    if (is_string($env) && $env !== '') {
+        $candidates[] = $env;
+    }
+
+    $candidates[] = '/opt/homebrew/opt/php@8.4/bin/php';
+    $candidates[] = '/opt/homebrew/bin/php';
+    $candidates[] = '/usr/local/bin/php';
+    $candidates[] = '/usr/bin/php8.4';
+    $candidates[] = '/usr/bin/php84';
+
+    $path = getenv('PATH');
+    if (is_string($path) && $path !== '') {
+        foreach (explode(PATH_SEPARATOR, $path) as $dir) {
+            $dir = rtrim($dir, DIRECTORY_SEPARATOR);
+            if ($dir === '') {
+                continue;
+            }
+            $candidates[] = $dir . '/php8.4';
+            $candidates[] = $dir . '/php84';
+        }
+    }
+
+    foreach (array_unique($candidates) as $bin) {
+        if (!is_file($bin) || !is_executable($bin)) {
+            continue;
+        }
+        $output = [];
+        $code = 1;
+        $probe = 'exit(PHP_VERSION_ID >= ' . $minimum . ' ? 0 : 1);';
+        @exec(escapeshellarg($bin) . ' -r ' . escapeshellarg($probe) . ' 2>/dev/null', $output, $code);
+        if ($code === 0) {
+            return $bin;
+        }
+    }
+
+    return null;
+}
+
+if (PHP_VERSION_ID < KODE_CLI_MIN_PHP) {
+    $php = kode_cli_locate_php(KODE_CLI_MIN_PHP);
+    if ($php === null) {
+        fwrite(
+            STDERR,
+            'kode 需要 PHP >= ' . (KODE_CLI_MIN_PHP / 10000) . '，当前为 ' . PHP_VERSION
+            . '。请升级 php，或用 KODE_PHP_BIN=/path/to/php8.4 指定解释器。' . PHP_EOL
+        );
+        exit(1);
+    }
+
+    $argv = isset($_SERVER['argv']) && is_array($_SERVER['argv']) ? $_SERVER['argv'] : [];
+    $self = (string) ($argv[0] ?? 'kode');
+    $command = escapeshellarg($php) . ' ' . escapeshellarg($self);
+    foreach (array_slice($argv, 1) as $arg) {
+        $command .= ' ' . escapeshellarg((string) $arg);
+    }
+
+    // passthru 保留子进程的 stdin/stdout/stderr 与退出码；KODE_PROJECT_ROOT 已在环境里。
+    passthru($command, $exitCode);
+    exit((int) $exitCode);
+}
+
+// 版本满足：骨架入口通常会先定义 KODE_PROJECT_ROOT；直接运行本文件时按安装位置推断。
+if (!defined('KODE_PROJECT_ROOT')) {
+    $projectRoot = getenv('KODE_PROJECT_ROOT');
+    if (!is_string($projectRoot) || $projectRoot === '' || !is_dir($projectRoot)) {
+        // vendor/kode/framework/bin -> 项目根
+        $projectRoot = dirname(__DIR__, 4);
+        if (!is_file($projectRoot . '/vendor/autoload.php')) {
+            // 框架仓库内直接开发：本文件位于 <repo>/bin，仓库根即包根。
+            $projectRoot = dirname(__DIR__);
+        }
+    }
+    define('KODE_PROJECT_ROOT', $projectRoot);
+}
+
+require dirname(__DIR__) . '/kode';
