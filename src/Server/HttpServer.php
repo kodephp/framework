@@ -15,6 +15,7 @@ use Kode\Http\Routing\RouteResult;
 use Kode\Http\Routing\RouteRunner;
 use Kode\Process\Http\Request as ProcessRequest;
 use Kode\Process\Kode;
+use Kode\Process\Protocol\HttpProtocol;
 use Kode\Process\Reactor\LoopFactory;
 use Kode\Process\Runtime\ConnectionInterface;
 use Kode\Process\Runtime\RuntimeInterface;
@@ -84,6 +85,20 @@ final class HttpServer
     public static function resolveGracefulTimeout(mixed $configured): int
     {
         return max(0, (int) $configured) ?: self::DEFAULT_GRACEFUL_TIMEOUT;
+    }
+
+    /**
+     * 归一请求体上限（字节）：未配置 / 0 / 负数一律回退 kode/process 的默认上限。
+     *
+     * 默认值直接取 {@see HttpProtocol::MAX_LENGTH}，不在框架里复制一份 10485760：
+     * 包侧调整默认时框架自然跟随，避免"配置说不限、底层仍断连"的口径漂移。
+     * 语义与 graceful_timeout 一致——0 表示"用默认"，不是"不限"。
+     */
+    public static function resolveMaxBody(mixed $configured): int
+    {
+        $bytes = (int) $configured;
+
+        return $bytes > 0 ? $bytes : HttpProtocol::MAX_LENGTH;
     }
 
     /** worker 心跳周期（秒）：同时也是停机排空的检查粒度。 */
@@ -169,6 +184,9 @@ final class HttpServer
         $configuredWorkers = (int) ($this->config['workers'] ?? 0);
         $workers = $configuredWorkers > 0 ? $configuredWorkers : $this->defaultWorkers();
         $maxRequest = max(0, (int) ($this->config['max_request'] ?? 0));
+        // 请求体上限：与上传配置中心的 max_mb_video 配套。0 / 未配置回退包侧默认，
+        // 超过时由 kode/process 在头块阶段回 413，不再出现"应用层收不到请求"的空连接。
+        $maxBody    = self::resolveMaxBody($this->config['max_body'] ?? null);
         $reusePort  = (bool) ($this->config['reuse_port'] ?? false);
         // 与 CLI 收尸同一口径（resolveName / processMatchToken）：去空白、空值回退默认名，
         // 否则改名后进程标题与匹配串会分叉。
@@ -235,6 +253,7 @@ final class HttpServer
         $runtime = Kode::serve($listen, [
             'workers'     => $workers,
             'maxRequest'  => $maxRequest,
+            'maxBody'     => $maxBody,
             'reusePort'   => $reusePort,
             'name'        => $name,
             // 优雅停机宽限：kode/process 收到 SIGTERM 后停收新连接，并等待在途连接

@@ -14,6 +14,10 @@ return [
     'port'        => (int) env('SERVER_PORT', 9527),
     'workers'     => (int) env('SERVER_WORKERS', 0), // 0 = 自动取 CPU 核心数
     'max_request' => (int) env('SERVER_MAX_REQUEST', 0),
+    // HTTP 请求体上限（字节）：0 = 用 kode/process 默认 10MB。
+    // 需要大文件上传时按最大单文件 × 一份余量设置（如 200MB = 209715200）；
+    // 超限由底层在头块阶段回 413。调大即放宽单连接内存占用，需配合并发上传限制。
+    'max_body'    => (int) env('SERVER_MAX_BODY', 0),
     'reuse_port'  => (bool) env('SERVER_REUSE_PORT', false),
     // 进程标题前缀（形如 "kode-http: worker"）。kode stop/restart 依据「{name}:」清理孤儿
     // worker，所以清理作用域是「同名进程」而不是「同端口」：一台机器跑多套 kode 时必须给
